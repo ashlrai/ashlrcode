@@ -57,6 +57,9 @@ import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown
 import { lsTool } from "./tools/ls.ts";
 import { getGitContext, formatGitPrompt } from "./config/git.ts";
 import { fileHistory } from "./state/file-history.ts";
+import { MCPManager } from "./mcp/manager.ts";
+import { createMCPTool } from "./tools/mcp-tool.ts";
+import { initTasks } from "./tools/tasks.ts";
 
 const VERSION = "0.7.0";
 
@@ -117,6 +120,21 @@ async function main() {
   registry.register(taskUpdateTool);
   registry.register(taskListTool);
   registry.register(lsTool);
+
+  // Set up hooks from settings
+  if (settings.hooks) {
+    registry.setHooks(settings.hooks);
+  }
+
+  // Connect MCP servers
+  const mcpManager = new MCPManager();
+  if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
+    await mcpManager.connectAll(settings.mcpServers);
+    // Register discovered MCP tools
+    for (const { serverName, tool } of mcpManager.getAllTools()) {
+      registry.register(createMCPTool(serverName, tool, mcpManager));
+    }
+  }
 
   // Load system prompt + project memories + git context
   let baseSystemPrompt = await loadSystemPrompt();
@@ -191,6 +209,9 @@ async function main() {
     session = new Session();
     await session.init(router.currentProvider.name, router.currentProvider.config.model);
   }
+
+  // Initialize task persistence
+  await initTasks(session.id);
 
   const state: AppState = {
     router,
@@ -268,8 +289,9 @@ async function main() {
     rl.prompt();
   });
 
-  rl.on("close", () => {
+  rl.on("close", async () => {
     console.log(chalk.dim(`\n${router.getCostSummary()}`));
+    await mcpManager.disconnectAll();
     process.exit(0);
   });
 }

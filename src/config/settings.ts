@@ -7,11 +7,15 @@ import { readFile, writeFile, mkdir } from "fs/promises";
 import { join } from "path";
 import { homedir } from "os";
 import type { ProviderRouterConfig } from "../providers/types.ts";
+import type { HooksConfig } from "./hooks.ts";
+import type { MCPServerConfig } from "../mcp/types.ts";
 
 export interface Settings {
   providers: ProviderRouterConfig;
   defaultModel?: string;
   maxTokens?: number;
+  hooks?: HooksConfig;
+  mcpServers?: Record<string, MCPServerConfig>;
 }
 
 const CONFIG_DIR = join(homedir(), ".ashlrcode");

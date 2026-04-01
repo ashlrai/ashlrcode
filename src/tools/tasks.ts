@@ -1,10 +1,14 @@
 /**
  * Task management tools — let the model track its own work.
  *
- * Tasks are stored in memory during a session.
+ * Tasks are persisted to disk at ~/.ashlrcode/tasks/<session-id>.json.
  * Pattern from Claude Code's TaskCreate/TaskUpdate/TaskList.
  */
 
+import { existsSync } from "fs";
+import { readFile, writeFile, mkdir } from "fs/promises";
+import { join } from "path";
+import { getConfigDir } from "../config/settings.ts";
 import type { Tool, ToolContext } from "./types.ts";
 
 interface Task {
@@ -17,6 +21,37 @@ interface Task {
 
 let tasks: Task[] = [];
 let nextId = 1;
+let sessionId: string | null = null;
+
+const TASKS_DIR = join(getConfigDir(), "tasks");
+
+function getTasksPath(): string | null {
+  if (!sessionId) return null;
+  return join(TASKS_DIR, `${sessionId}.json`);
+}
+
+async function saveTasks(): Promise<void> {
+  const path = getTasksPath();
+  if (!path) return;
+  await mkdir(TASKS_DIR, { recursive: true });
+  await writeFile(path, JSON.stringify({ tasks, nextId }, null, 2), "utf-8");
+}
+
+export async function initTasks(sid: string): Promise<void> {
+  sessionId = sid;
+  const path = getTasksPath();
+  if (path && existsSync(path)) {
+    try {
+      const raw = await readFile(path, "utf-8");
+      const data = JSON.parse(raw) as { tasks: Task[]; nextId: number };
+      tasks = data.tasks;
+      nextId = data.nextId;
+    } catch {
+      tasks = [];
+      nextId = 1;
+    }
+  }
+}
 
 export function resetTasks() {
   tasks = [];
@@ -65,6 +100,7 @@ export const taskCreateTool: Tool = {
       createdAt: new Date().toISOString(),
     };
     tasks.push(task);
+    await saveTasks();
     return `Task #${task.id} created: ${task.subject}`;
   },
 };
@@ -110,6 +146,7 @@ export const taskUpdateTool: Tool = {
     const task = tasks.find((t) => t.id === id);
     if (!task) return `Task #${id} not found`;
     task.status = status;
+    await saveTasks();
     return `Task #${id} updated to ${status}`;
   },
 };

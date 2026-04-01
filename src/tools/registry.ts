@@ -1,10 +1,12 @@
 /**
  * Tool registry — manages available tools and dispatches calls.
+ * Integrates with hook system for pre/post tool execution.
  */
 
 import type { Tool, ToolContext } from "./types.ts";
 import type { ToolDefinition } from "../providers/types.ts";
 import { toolToDefinition } from "./types.ts";
+import { runPreToolHooks, runPostToolHooks, type HooksConfig } from "../config/hooks.ts";
 
 function formatInputPreview(toolName: string, input: Record<string, unknown>): string {
   switch (toolName) {
@@ -21,9 +23,14 @@ function formatInputPreview(toolName: string, input: Record<string, unknown>): s
 
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
+  private hooks: HooksConfig = {};
 
   register(tool: Tool): void {
     this.tools.set(tool.name, tool);
+  }
+
+  setHooks(hooks: HooksConfig): void {
+    this.hooks = hooks;
   }
 
   get(name: string): Tool | undefined {
@@ -61,6 +68,12 @@ export class ToolRegistry {
       return { result: `Validation error: ${validationError}`, isError: true };
     }
 
+    // Run pre-tool hooks
+    const hookResult = await runPreToolHooks(this.hooks, toolName, input);
+    if (hookResult.action === "deny") {
+      return { result: hookResult.message ?? "Denied by hook", isError: true };
+    }
+
     // Check permissions for non-read-only tools
     if (!tool.isReadOnly()) {
       const inputPreview = formatInputPreview(toolName, input);
@@ -72,6 +85,10 @@ export class ToolRegistry {
 
     try {
       const result = await tool.call(input, context);
+
+      // Run post-tool hooks (fire and forget)
+      runPostToolHooks(this.hooks, toolName, input, result).catch(() => {});
+
       return { result, isError: false };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

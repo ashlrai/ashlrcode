@@ -10,6 +10,7 @@
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
+import { executeToolCalls } from "./tool-executor.ts";
 import type {
   Message,
   ContentBlock,
@@ -97,27 +98,25 @@ export async function runAgentLoop(
       break;
     }
 
-    // Execute tool calls and append results
+    // Execute tool calls (parallel for safe tools, sequential for unsafe)
+    const executionResults = await executeToolCalls(
+      toolCalls,
+      config.toolRegistry,
+      config.toolContext,
+      {
+        onToolStart: config.onToolStart,
+        onToolEnd: config.onToolEnd,
+      }
+    );
+
     const resultBlocks: ContentBlock[] = [];
-
-    for (const tc of toolCalls) {
-      config.onToolStart?.(tc.name, tc.input);
-
-      const { result, isError } = await config.toolRegistry.execute(
-        tc.name,
-        tc.input,
-        config.toolContext
-      );
-
-      config.onToolEnd?.(tc.name, result, isError);
-
-      allToolCalls.push({ name: tc.name, input: tc.input, result });
-
+    for (const er of executionResults) {
+      allToolCalls.push({ name: er.name, input: er.input, result: er.result });
       resultBlocks.push({
         type: "tool_result",
-        tool_use_id: tc.id,
-        content: result,
-        is_error: isError,
+        tool_use_id: er.toolCallId,
+        content: er.result,
+        is_error: er.isError,
       });
     }
 
