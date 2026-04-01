@@ -55,6 +55,10 @@ import {
 import { Spinner } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { lsTool } from "./tools/ls.ts";
+import { configTool } from "./tools/config.ts";
+import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.ts";
+import { webSearchTool } from "./tools/web-search.ts";
+import { toolSearchTool, initToolSearch } from "./tools/tool-search.ts";
 import { getGitContext, formatGitPrompt } from "./config/git.ts";
 import { fileHistory } from "./state/file-history.ts";
 import { MCPManager } from "./mcp/manager.ts";
@@ -64,7 +68,7 @@ import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 
-const VERSION = "0.9.0";
+const VERSION = "1.0.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -124,6 +128,12 @@ async function main() {
   registry.register(taskUpdateTool);
   registry.register(taskListTool);
   registry.register(lsTool);
+  registry.register(configTool);
+  registry.register(enterWorktreeTool);
+  registry.register(exitWorktreeTool);
+  registry.register(webSearchTool);
+  registry.register(toolSearchTool);
+  initToolSearch(registry);
 
   // Set up hooks from settings
   if (settings.hooks) {

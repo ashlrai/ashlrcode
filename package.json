@@ -1,6 +1,6 @@
 {
   "name": "ashlrcode",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Multi-provider AI coding agent CLI",
   "module": "src/cli.ts",
   "type": "module",
