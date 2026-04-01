@@ -3,8 +3,10 @@
  */
 
 import { writeFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
 import { dirname, resolve } from "path";
 import type { Tool, ToolContext } from "./types.ts";
+import { fileHistory } from "../state/file-history.ts";
 
 export const fileWriteTool: Tool = {
   name: "Write",
@@ -53,6 +55,11 @@ export const fileWriteTool: Tool = {
   async call(input, context) {
     const filePath = resolve(context.cwd, input.file_path as string);
     const content = input.content as string;
+
+    // Snapshot existing file before overwriting
+    if (existsSync(filePath)) {
+      await fileHistory.snapshot(filePath);
+    }
 
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, content, "utf-8");

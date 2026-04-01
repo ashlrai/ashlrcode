@@ -102,6 +102,12 @@ export class Session {
 
   async setTitle(title: string): Promise<void> {
     this.metadata.title = title;
+    // Persist the title update
+    await this.appendEntry({
+      type: "metadata",
+      timestamp: new Date().toISOString(),
+      data: { ...this.metadata, title },
+    });
   }
 
   private async appendEntry(entry: SessionEntry): Promise<void> {
@@ -155,4 +161,32 @@ export async function resumeSession(id: string): Promise<{
   const messages = await session.loadMessages();
   if (messages.length === 0) return null;
   return { session, messages };
+}
+
+/**
+ * Get the most recent session for a given working directory.
+ */
+export async function getLastSessionForCwd(cwd: string): Promise<string | null> {
+  const sessions = await listSessions(50);
+  const match = sessions.find((s) => s.cwd === cwd);
+  return match?.id ?? null;
+}
+
+/**
+ * Fork a session — create a new session with copied message history.
+ */
+export async function forkSession(
+  sourceId: string,
+  provider: string,
+  model: string
+): Promise<{ session: Session; messages: Message[] } | null> {
+  const source = new Session(sourceId);
+  const messages = await source.loadMessages();
+  if (messages.length === 0) return null;
+
+  const forked = new Session();
+  await forked.init(provider, model);
+  await forked.appendMessages(messages);
+
+  return { session: forked, messages };
 }

@@ -17,7 +17,7 @@ import { ProviderRouter } from "./providers/router.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { loadSettings } from "./config/settings.ts";
-import { Session, listSessions, resumeSession } from "./persistence/session.ts";
+import { Session, listSessions, resumeSession, getLastSessionForCwd, forkSession } from "./persistence/session.ts";
 import {
   needsCompaction,
   autoCompact,
@@ -56,8 +56,9 @@ import { Spinner } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { lsTool } from "./tools/ls.ts";
 import { getGitContext, formatGitPrompt } from "./config/git.ts";
+import { fileHistory } from "./state/file-history.ts";
 
-const VERSION = "0.5.0";
+const VERSION = "0.7.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -147,16 +148,43 @@ async function main() {
   let history: Message[] = [];
 
   const resumeId = getArg(args, "--resume");
+  const forkId = getArg(args, "--fork-session");
+  const continueFlag = args.includes("--continue") || args.includes("-c");
+
   if (resumeId) {
     const resumed = await resumeSession(resumeId);
     if (resumed) {
       session = resumed.session;
       history = resumed.messages;
-      console.log(
-        chalk.dim(`Resumed session ${resumeId} (${history.length} messages)`)
-      );
+      console.log(chalk.dim(`Resumed session ${resumeId} (${history.length} messages)`));
     } else {
       console.error(chalk.red(`Session ${resumeId} not found`));
+      process.exit(1);
+    }
+  } else if (continueFlag) {
+    const lastId = await getLastSessionForCwd(cwd);
+    if (lastId) {
+      const resumed = await resumeSession(lastId);
+      if (resumed) {
+        session = resumed.session;
+        history = resumed.messages;
+        console.log(chalk.dim(`Continued session ${lastId} (${history.length} messages)`));
+      } else {
+        session = new Session();
+        await session.init(router.currentProvider.name, router.currentProvider.config.model);
+      }
+    } else {
+      session = new Session();
+      await session.init(router.currentProvider.name, router.currentProvider.config.model);
+    }
+  } else if (forkId) {
+    const forked = await forkSession(forkId, router.currentProvider.name, router.currentProvider.config.model);
+    if (forked) {
+      session = forked.session;
+      history = forked.messages;
+      console.log(chalk.dim(`Forked session ${forkId} → ${session.id} (${history.length} messages)`));
+    } else {
+      console.error(chalk.red(`Session ${forkId} not found`));
       process.exit(1);
     }
   } else {
@@ -400,6 +428,42 @@ async function handleCommand(
           state.history.splice(lastUserIdx);
           console.log(chalk.dim(`Undid last turn (removed ${removed} messages).`));
         }
+      }
+      break;
+    }
+
+    case "/restore": {
+      if (!arg) {
+        const snapshots = fileHistory.getSnapshotFiles();
+        if (snapshots.length === 0) {
+          console.log(chalk.dim("No file snapshots available."));
+        } else {
+          console.log(chalk.bold("Files with snapshots:"));
+          for (const s of snapshots) {
+            console.log(chalk.dim(`  ${s.path} (${s.count} snapshot(s))`));
+          }
+          console.log(chalk.dim("\nUsage: /restore <file-path>"));
+        }
+      } else {
+        const restored = await fileHistory.restore(arg);
+        if (restored) {
+          console.log(chalk.green(`Restored: ${arg}`));
+        } else {
+          console.log(chalk.red(`No snapshot found for: ${arg}`));
+        }
+      }
+      break;
+    }
+
+    case "/tools": {
+      const tools = state.registry.getAll();
+      console.log(chalk.bold(`${tools.length} tools registered:`));
+      for (const tool of tools) {
+        const flags = [
+          tool.isReadOnly() ? chalk.green("read-only") : chalk.yellow("write"),
+          tool.isConcurrencySafe() ? "parallel" : "serial",
+        ].join(", ");
+        console.log(chalk.dim(`  ${chalk.bold(tool.name)} (${flags})`));
       }
       break;
     }

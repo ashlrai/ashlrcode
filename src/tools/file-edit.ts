@@ -7,6 +7,7 @@ import { readFile, writeFile } from "fs/promises";
 import { existsSync } from "fs";
 import { resolve } from "path";
 import type { Tool, ToolContext } from "./types.ts";
+import { fileHistory } from "../state/file-history.ts";
 
 export const fileEditTool: Tool = {
   name: "Edit",
@@ -75,6 +76,9 @@ export const fileEditTool: Tool = {
     if (!existsSync(filePath)) {
       return `File not found: ${filePath}`;
     }
+
+    // Snapshot before editing
+    await fileHistory.snapshot(filePath);
 
     const content = await readFile(filePath, "utf-8");
 
