@@ -97,6 +97,20 @@ export const fileEditTool: Tool = {
     const replacements = replaceAll
       ? content.split(oldString).length - 1
       : 1;
-    return `Replaced ${replacements} occurrence(s) in ${filePath}`;
+
+    // Show a mini diff
+    const oldLines = oldString.split("\n");
+    const newLines = newString.split("\n");
+    const diffLines: string[] = [];
+    for (const line of oldLines.slice(0, 3)) {
+      diffLines.push(`- ${line}`);
+    }
+    if (oldLines.length > 3) diffLines.push(`  ... (${oldLines.length} lines)`);
+    for (const line of newLines.slice(0, 3)) {
+      diffLines.push(`+ ${line}`);
+    }
+    if (newLines.length > 3) diffLines.push(`  ... (${newLines.length} lines)`);
+
+    return `Replaced ${replacements} occurrence(s) in ${filePath}\n${diffLines.join("\n")}`;
   },
 };

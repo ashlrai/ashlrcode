@@ -54,6 +54,8 @@ import {
 } from "./config/permissions.ts";
 import { Spinner } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
+import { lsTool } from "./tools/ls.ts";
+import { getGitContext, formatGitPrompt } from "./config/git.ts";
 
 const VERSION = "0.5.0";
 
@@ -113,13 +115,19 @@ async function main() {
   registry.register(taskCreateTool);
   registry.register(taskUpdateTool);
   registry.register(taskListTool);
+  registry.register(lsTool);
 
-  // Load system prompt + project memories
+  // Load system prompt + project memories + git context
   let baseSystemPrompt = await loadSystemPrompt();
 
   const memories = await loadMemories(process.cwd());
   if (memories.length > 0) {
     baseSystemPrompt += formatMemoriesForPrompt(memories);
+  }
+
+  const gitCtx = await getGitContext(process.cwd());
+  if (gitCtx.isRepo) {
+    baseSystemPrompt += "\n\n" + formatGitPrompt(gitCtx);
   }
 
   // Initialize agent tool with router/registry references
@@ -189,19 +197,31 @@ async function main() {
     process.exit(0);
   }
 
-  // Interactive REPL
+  // Interactive REPL with multi-line support
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
     prompt: getPrompt(),
   });
 
+  let multiLineBuffer = "";
+
   rl.prompt();
 
   rl.on("line", async (line) => {
-    const input = line.trim();
+    // Multi-line: if line ends with \, buffer and continue
+    if (line.endsWith("\\")) {
+      multiLineBuffer += line.slice(0, -1) + "\n";
+      rl.setPrompt(chalk.dim("... "));
+      rl.prompt();
+      return;
+    }
+
+    const input = (multiLineBuffer + line).trim();
+    multiLineBuffer = "";
 
     if (!input) {
+      rl.setPrompt(getPrompt());
       rl.prompt();
       return;
     }
@@ -380,6 +400,35 @@ async function handleCommand(
           state.history.splice(lastUserIdx);
           console.log(chalk.dim(`Undid last turn (removed ${removed} messages).`));
         }
+      }
+      break;
+    }
+
+    case "/diff": {
+      const proc = Bun.spawn(["git", "diff", "--stat"], {
+        cwd: process.cwd(),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const stdout = await new Response(proc.stdout).text();
+      if (stdout.trim()) {
+        console.log(stdout);
+      } else {
+        console.log(chalk.dim("No uncommitted changes."));
+      }
+      break;
+    }
+
+    case "/git": {
+      const gitInfo = await getGitContext(process.cwd());
+      if (!gitInfo.isRepo) {
+        console.log(chalk.dim("Not a git repository."));
+      } else {
+        console.log(chalk.bold("Git:"));
+        console.log(chalk.dim(`  Branch: ${gitInfo.branch}`));
+        console.log(chalk.dim(`  Remote: ${gitInfo.remoteUrl ?? "none"}`));
+        const changes = gitInfo.status?.split("\n").filter(Boolean).length ?? 0;
+        console.log(chalk.dim(`  Changes: ${changes > 0 ? changes : "clean"}`));
       }
       break;
     }
@@ -589,6 +638,8 @@ function formatToolPreview(name: string, input: Record<string, unknown>): string
       return `${input.url}`;
     case "Agent":
       return `${input.description}`;
+    case "LS":
+      return input.path ? `${input.path}` : ".";
     default:
       return JSON.stringify(input).slice(0, 100);
   }
@@ -618,12 +669,18 @@ ${chalk.bold("Commands:")}
   /cost           Show token usage and costs
   /history        Show conversation history
   /undo           Undo last turn
+  /diff           Show git diff --stat
+  /git            Show git repo info
   /compact        Compress conversation context
   /sessions       List saved sessions
   /model [name]   Show/switch model
   /clear          Clear conversation
   /help           Show this help
   /quit           Exit
+
+${chalk.bold("Tips:")}
+  End a line with \\ for multi-line input
+  Permissions: [y]es [a]lways [n]o [d]eny-always
 `);
 }
 
