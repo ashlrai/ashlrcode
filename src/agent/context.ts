@@ -1,0 +1,178 @@
+/**
+ * Context management — token estimation and automatic compression.
+ *
+ * Three-tier strategy from Claude Code:
+ * 1. autoCompact — summarize older messages when approaching token limit
+ * 2. snipCompact — remove stale tool results and zombie messages
+ * 3. contextCollapse — restructure for efficiency (future)
+ */
+
+import type { Message, ContentBlock } from "../providers/types.ts";
+import type { ProviderRouter } from "../providers/router.ts";
+
+export interface ContextConfig {
+  /** Max tokens before triggering compaction (default: 100000) */
+  maxContextTokens: number;
+  /** Tokens to reserve for the response (default: 8192) */
+  reserveTokens: number;
+  /** Number of recent messages to keep at full fidelity (default: 10) */
+  recentMessageCount: number;
+}
+
+const DEFAULT_CONFIG: ContextConfig = {
+  maxContextTokens: 100_000,
+  reserveTokens: 8192,
+  recentMessageCount: 10,
+};
+
+/**
+ * Estimate token count for messages.
+ * Uses ~4 chars per token heuristic (good enough for cost tracking).
+ */
+export function estimateTokens(messages: Message[]): number {
+  let chars = 0;
+  for (const msg of messages) {
+    if (typeof msg.content === "string") {
+      chars += msg.content.length;
+    } else {
+      for (const block of msg.content) {
+        chars += blockCharCount(block);
+      }
+    }
+  }
+  return Math.ceil(chars / 4);
+}
+
+function blockCharCount(block: ContentBlock): number {
+  switch (block.type) {
+    case "text":
+      return block.text.length;
+    case "tool_use":
+      return block.name.length + JSON.stringify(block.input).length;
+    case "tool_result":
+      return block.content.length;
+  }
+}
+
+/**
+ * Check if context needs compaction.
+ */
+export function needsCompaction(
+  messages: Message[],
+  systemPromptTokens: number,
+  config: Partial<ContextConfig> = {}
+): boolean {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
+  const messageTokens = estimateTokens(messages);
+  return messageTokens + systemPromptTokens > cfg.maxContextTokens - cfg.reserveTokens;
+}
+
+/**
+ * Tier 1: autoCompact — summarize older messages.
+ * Sends the older portion to the model for summarization,
+ * then replaces them with a compact summary.
+ */
+export async function autoCompact(
+  messages: Message[],
+  router: ProviderRouter,
+  config: Partial<ContextConfig> = {}
+): Promise<Message[]> {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
+
+  if (messages.length <= cfg.recentMessageCount) {
+    return messages; // Nothing to compact
+  }
+
+  // Split: older messages to summarize, recent messages to keep
+  const splitIndex = messages.length - cfg.recentMessageCount;
+  const olderMessages = messages.slice(0, splitIndex);
+  const recentMessages = messages.slice(splitIndex);
+
+  // Summarize older messages
+  const summary = await summarizeMessages(olderMessages, router);
+
+  // Return: summary + recent messages
+  return [
+    {
+      role: "user",
+      content: `[Context Summary — earlier conversation was compacted to save tokens]\n\n${summary}`,
+    },
+    {
+      role: "assistant",
+      content: "Understood. I have the context from our earlier conversation. Let me continue from where we left off.",
+    },
+    ...recentMessages,
+  ];
+}
+
+/**
+ * Tier 2: snipCompact — remove verbose tool results and stale messages.
+ */
+export function snipCompact(messages: Message[]): Message[] {
+  return messages.map((msg) => {
+    if (typeof msg.content === "string") return msg;
+
+    const trimmedBlocks = msg.content.map((block) => {
+      if (block.type === "tool_result" && block.content.length > 2000) {
+        // Truncate long tool results, keeping first and last portions
+        const truncated =
+          block.content.slice(0, 800) +
+          "\n\n[... truncated ...]\n\n" +
+          block.content.slice(-800);
+        return { ...block, content: truncated };
+      }
+      return block;
+    });
+
+    return { ...msg, content: trimmedBlocks };
+  });
+}
+
+/**
+ * Summarize a set of messages using the model.
+ */
+async function summarizeMessages(
+  messages: Message[],
+  router: ProviderRouter
+): Promise<string> {
+  const conversationText = messages
+    .map((msg) => {
+      const role = msg.role;
+      const content =
+        typeof msg.content === "string"
+          ? msg.content
+          : msg.content
+              .map((b) => {
+                if (b.type === "text") return b.text;
+                if (b.type === "tool_use")
+                  return `[Tool: ${b.name}(${JSON.stringify(b.input).slice(0, 200)})]`;
+                if (b.type === "tool_result")
+                  return `[Result: ${b.content.slice(0, 300)}]`;
+                return "";
+              })
+              .join("\n");
+      return `${role}: ${content}`;
+    })
+    .join("\n\n");
+
+  let summary = "";
+  const stream = router.stream({
+    systemPrompt:
+      "Summarize the following conversation concisely. Preserve key decisions, file paths mentioned, code changes made, and important context. Be thorough but compact. Output only the summary, no preamble.",
+    messages: [
+      {
+        role: "user",
+        content: `Summarize this conversation:\n\n${conversationText.slice(0, 50000)}`,
+      },
+    ],
+    tools: [],
+  });
+
+  for await (const event of stream) {
+    if (event.type === "text_delta" && event.text) {
+      summary += event.text;
+    }
+  }
+
+  return summary || "[Unable to generate summary]";
+}

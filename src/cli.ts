@@ -3,7 +3,8 @@
 /**
  * AshlrCode (ac) — Multi-provider AI coding agent CLI.
  *
- * Entry point: sets up providers, tools, and runs the interactive REPL.
+ * Entry point: sets up providers, tools, sessions, plan mode, context
+ * management, and runs the interactive REPL.
  */
 
 import { readFile } from "fs/promises";
@@ -16,6 +17,19 @@ import { ProviderRouter } from "./providers/router.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { loadSettings } from "./config/settings.ts";
+import { Session, listSessions, resumeSession } from "./persistence/session.ts";
+import {
+  needsCompaction,
+  autoCompact,
+  snipCompact,
+  estimateTokens,
+} from "./agent/context.ts";
+import {
+  isPlanMode,
+  getPlanModePrompt,
+  getPlanState,
+  exitPlanMode,
+} from "./planning/plan-mode.ts";
 import type { Message } from "./providers/types.ts";
 import type { ToolContext } from "./tools/types.ts";
 
@@ -26,8 +40,20 @@ import { fileWriteTool } from "./tools/file-write.ts";
 import { fileEditTool } from "./tools/file-edit.ts";
 import { globTool } from "./tools/glob.ts";
 import { grepTool } from "./tools/grep.ts";
+import { askUserTool } from "./tools/ask-user.ts";
+import { webFetchTool } from "./tools/web-fetch.ts";
+import { enterPlanTool, exitPlanTool, planWriteTool } from "./planning/plan-tools.ts";
 
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
+
+interface AppState {
+  router: ProviderRouter;
+  registry: ToolRegistry;
+  toolContext: ToolContext;
+  session: Session;
+  history: Message[];
+  baseSystemPrompt: string;
+}
 
 async function main() {
   const args = process.argv.slice(2);
@@ -48,7 +74,9 @@ async function main() {
   if (!settings.providers.primary.apiKey) {
     console.error(
       chalk.red("No API key configured.\n") +
-        chalk.dim("Set XAI_API_KEY environment variable or configure ~/.ashlrcode/settings.json")
+        chalk.dim(
+          "Set XAI_API_KEY environment variable or configure ~/.ashlrcode/settings.json"
+        )
     );
     process.exit(1);
   }
@@ -64,9 +92,14 @@ async function main() {
   registry.register(fileEditTool);
   registry.register(globTool);
   registry.register(grepTool);
+  registry.register(askUserTool);
+  registry.register(webFetchTool);
+  registry.register(enterPlanTool);
+  registry.register(exitPlanTool);
+  registry.register(planWriteTool);
 
   // Load system prompt
-  const systemPrompt = await loadSystemPrompt();
+  const baseSystemPrompt = await loadSystemPrompt();
 
   // Tool context
   const cwd = process.cwd();
@@ -77,27 +110,57 @@ async function main() {
     },
   };
 
+  // Session handling
+  let session: Session;
+  let history: Message[] = [];
+
+  const resumeId = getArg(args, "--resume");
+  if (resumeId) {
+    const resumed = await resumeSession(resumeId);
+    if (resumed) {
+      session = resumed.session;
+      history = resumed.messages;
+      console.log(
+        chalk.dim(`Resumed session ${resumeId} (${history.length} messages)`)
+      );
+    } else {
+      console.error(chalk.red(`Session ${resumeId} not found`));
+      process.exit(1);
+    }
+  } else {
+    session = new Session();
+    await session.init(router.currentProvider.name, router.currentProvider.config.model);
+  }
+
+  const state: AppState = {
+    router,
+    registry,
+    toolContext,
+    session,
+    history,
+    baseSystemPrompt,
+  };
+
+  // Header
+  const providerInfo = `${router.currentProvider.name}:${router.currentProvider.config.model}`;
   console.log(
     chalk.bold.cyan("AshlrCode") +
       chalk.dim(` v${VERSION}`) +
-      chalk.dim(` | ${router.currentProvider.name}:${router.currentProvider.config.model}`) +
-      chalk.dim(` | ${cwd}`)
+      chalk.dim(` | ${providerInfo}`) +
+      chalk.dim(` | session:${session.id}`)
   );
-  console.log(chalk.dim('Type your message. Use "/quit" to exit, "/cost" for usage stats.\n'));
+  console.log(chalk.dim(`${cwd}`));
+  console.log(
+    chalk.dim('Commands: /plan /cost /sessions /model /clear /quit\n')
+  );
 
   // Check for inline command
-  const inlineMessage = args.filter((a) => !a.startsWith("-")).join(" ");
-
-  const history: Message[] = [];
+  const inlineMessage = args
+    .filter((a) => !a.startsWith("-") && !a.startsWith("--"))
+    .join(" ");
 
   if (inlineMessage) {
-    // Single-shot mode
-    await runTurn(inlineMessage, history, {
-      systemPrompt,
-      router,
-      toolRegistry: registry,
-      toolContext,
-    });
+    await runTurn(inlineMessage, state);
     console.log(chalk.dim(`\n${router.getCostSummary()}`));
     process.exit(0);
   }
@@ -106,7 +169,7 @@ async function main() {
   const rl = createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: chalk.green("❯ "),
+    prompt: getPrompt(),
   });
 
   rl.prompt();
@@ -119,32 +182,17 @@ async function main() {
       return;
     }
 
-    if (input === "/quit" || input === "/exit" || input === "/q") {
-      console.log(chalk.dim(router.getCostSummary()));
-      process.exit(0);
-    }
-
-    if (input === "/cost") {
-      console.log(chalk.dim(router.getCostSummary()));
+    // Handle commands
+    if (input.startsWith("/")) {
+      await handleCommand(input, state, rl);
+      rl.setPrompt(getPrompt());
       rl.prompt();
       return;
     }
 
-    if (input === "/clear") {
-      history.length = 0;
-      console.log(chalk.dim("Conversation cleared."));
-      rl.prompt();
-      return;
-    }
-
-    await runTurn(input, history, {
-      systemPrompt,
-      router,
-      toolRegistry: registry,
-      toolContext,
-    });
-
-    console.log(""); // blank line after response
+    await runTurn(input, state);
+    console.log("");
+    rl.setPrompt(getPrompt());
     rl.prompt();
   });
 
@@ -154,41 +202,173 @@ async function main() {
   });
 }
 
-async function runTurn(
-  input: string,
-  history: Message[],
-  config: {
-    systemPrompt: string;
-    router: ProviderRouter;
-    toolRegistry: ToolRegistry;
-    toolContext: ToolContext;
+function getPrompt(): string {
+  if (isPlanMode()) {
+    return chalk.magenta("[plan] ❯ ");
   }
-) {
+  return chalk.green("❯ ");
+}
+
+async function handleCommand(
+  input: string,
+  state: AppState,
+  rl: ReturnType<typeof createInterface>
+): Promise<void> {
+  const [cmd, ...rest] = input.split(" ");
+  const arg = rest.join(" ").trim();
+
+  switch (cmd) {
+    case "/quit":
+    case "/exit":
+    case "/q":
+      console.log(chalk.dim(state.router.getCostSummary()));
+      process.exit(0);
+
+    case "/cost":
+      console.log(chalk.dim(state.router.getCostSummary()));
+      console.log(
+        chalk.dim(
+          `Context: ~${estimateTokens(state.history).toLocaleString()} tokens, ${state.history.length} messages`
+        )
+      );
+      break;
+
+    case "/clear":
+      state.history.length = 0;
+      if (isPlanMode()) exitPlanMode();
+      console.log(chalk.dim("Conversation cleared."));
+      break;
+
+    case "/plan":
+      if (isPlanMode()) {
+        const planState = getPlanState();
+        console.log(chalk.magenta("Plan mode is active."));
+        console.log(chalk.dim(`Plan file: ${planState.planFilePath}`));
+        console.log(chalk.dim(`Started: ${planState.startedAt}`));
+      } else {
+        console.log(
+          chalk.dim(
+            "Plan mode is not active. The model can enter plan mode by calling EnterPlan."
+          )
+        );
+        console.log(
+          chalk.dim(
+            'Tip: Ask the model to "plan first" and it will use plan mode.'
+          )
+        );
+      }
+      break;
+
+    case "/sessions": {
+      const sessions = await listSessions();
+      if (sessions.length === 0) {
+        console.log(chalk.dim("No saved sessions."));
+      } else {
+        console.log(chalk.bold("Recent sessions:"));
+        for (const s of sessions) {
+          const age = timeSince(new Date(s.updatedAt));
+          const title = s.title ?? s.cwd.split("/").pop() ?? s.id;
+          const current = s.id === state.session.id ? chalk.cyan(" (current)") : "";
+          console.log(
+            `  ${chalk.bold(s.id)}${current} — ${title} (${s.messageCount} msgs, ${age} ago)`
+          );
+        }
+        console.log(chalk.dim("\nResume with: ac --resume <id>"));
+      }
+      break;
+    }
+
+    case "/model":
+      if (arg) {
+        console.log(chalk.dim(`Model switching not yet implemented. Currently using: ${state.router.currentProvider.config.model}`));
+      } else {
+        console.log(
+          chalk.dim(
+            `Provider: ${state.router.currentProvider.name}\nModel: ${state.router.currentProvider.config.model}`
+          )
+        );
+      }
+      break;
+
+    case "/compact": {
+      const before = estimateTokens(state.history);
+      state.history = snipCompact(state.history);
+      state.history = await autoCompact(state.history, state.router);
+      const after = estimateTokens(state.history);
+      console.log(
+        chalk.dim(
+          `Compacted: ${before.toLocaleString()} → ${after.toLocaleString()} tokens`
+        )
+      );
+      break;
+    }
+
+    case "/help":
+      printCommands();
+      break;
+
+    default:
+      console.log(chalk.dim(`Unknown command: ${cmd}. Type /help for available commands.`));
+  }
+}
+
+async function runTurn(input: string, state: AppState): Promise<void> {
   try {
-    const result = await runAgentLoop(input, history, {
-      systemPrompt: config.systemPrompt,
-      router: config.router,
-      toolRegistry: config.toolRegistry,
-      toolContext: config.toolContext,
+    // Build system prompt (base + plan mode if active)
+    const systemPrompt =
+      state.baseSystemPrompt + getPlanModePrompt();
+
+    // Check if context needs compaction before this turn
+    const systemTokens = Math.ceil(systemPrompt.length / 4);
+    if (needsCompaction(state.history, systemTokens)) {
+      console.log(chalk.dim("  [compacting context...]"));
+      state.history = snipCompact(state.history);
+      state.history = await autoCompact(state.history, state.router);
+    }
+
+    const result = await runAgentLoop(input, state.history, {
+      systemPrompt,
+      router: state.router,
+      toolRegistry: state.registry,
+      toolContext: state.toolContext,
+      readOnly: isPlanMode(),
       onText: (text) => process.stdout.write(text),
-      onToolStart: (name, input) => {
-        console.log(chalk.dim(`\n  ┌ ${chalk.yellow(name)}`));
-        const preview = JSON.stringify(input).slice(0, 120);
-        console.log(chalk.dim(`  │ ${preview}`));
+      onToolStart: (name, toolInput) => {
+        const icon = isPlanMode() ? chalk.magenta("◆") : chalk.yellow("●");
+        console.log(chalk.dim(`\n  ${icon} ${chalk.bold(name)}`));
+        const preview = JSON.stringify(toolInput).slice(0, 120);
+        console.log(chalk.dim(`    ${preview}`));
       },
-      onToolEnd: (name, result, isError) => {
+      onToolEnd: (_name, result, isError) => {
         const status = isError ? chalk.red("✗") : chalk.green("✓");
-        const preview = result.split("\n")[0]?.slice(0, 100) ?? "";
-        console.log(chalk.dim(`  └ ${status} ${preview}\n`));
+        const lines = result.split("\n");
+        const preview = lines[0]?.slice(0, 100) ?? "";
+        const extra =
+          lines.length > 1
+            ? chalk.dim(` (+${lines.length - 1} lines)`)
+            : "";
+        console.log(chalk.dim(`    ${status} ${preview}${extra}\n`));
       },
     });
 
-    // Update history with new messages (skip the ones already in history)
-    history.length = 0;
-    history.push(...result.messages);
+    // Update history
+    state.history.length = 0;
+    state.history.push(...result.messages);
+
+    // Persist to session
+    await state.session.appendMessages(result.messages.slice(-2)); // last user + assistant pair
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(chalk.red(`\nError: ${message}`));
+
+    // If it's a rate limit, suggest fallback
+    if (message.includes("429") || message.includes("rate_limit")) {
+      console.error(
+        chalk.yellow(
+          "Rate limited. The router will automatically try the next provider on the next request."
+        )
+      );
+    }
   }
 }
 
@@ -200,7 +380,7 @@ async function loadSystemPrompt(): Promise<string> {
     prompt = await readFile(promptPath, "utf-8");
   }
 
-  // Load project-level ASHLR.md if it exists
+  // Load project-level ASHLR.md
   const projectConfig = join(process.cwd(), "ASHLR.md");
   if (existsSync(projectConfig)) {
     const projectPrompt = await readFile(projectConfig, "utf-8");
@@ -214,10 +394,25 @@ async function loadSystemPrompt(): Promise<string> {
     prompt += `\n\n# Project Instructions (CLAUDE.md)\n\n${claudePrompt}`;
   }
 
+  // Add environment context
+  prompt += `\n\n# Environment
+- Working directory: ${process.cwd()}
+- Platform: ${process.platform}
+- Date: ${new Date().toISOString().split("T")[0]}
+`;
+
   return prompt;
 }
 
-async function askPermission(tool: string, description: string): Promise<boolean> {
+async function askPermission(
+  tool: string,
+  description: string
+): Promise<boolean> {
+  // In plan mode, block non-read-only tools silently
+  if (isPlanMode()) {
+    return false;
+  }
+
   return new Promise((resolve) => {
     const rl = createInterface({
       input: process.stdin,
@@ -225,7 +420,7 @@ async function askPermission(tool: string, description: string): Promise<boolean
     });
 
     rl.question(
-      chalk.yellow(`\n  Allow ${tool}? `) +
+      chalk.yellow(`  Allow ${tool}? `) +
         chalk.dim(description) +
         chalk.yellow(" [y/N] "),
       (answer) => {
@@ -236,6 +431,37 @@ async function askPermission(tool: string, description: string): Promise<boolean
   });
 }
 
+function getArg(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx === -1) return undefined;
+  return args[idx + 1];
+}
+
+function timeSince(date: Date): string {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
+function printCommands() {
+  console.log(`
+${chalk.bold("Commands:")}
+  /plan           Show plan mode status
+  /cost           Show token usage and costs
+  /compact        Manually compress conversation context
+  /sessions       List saved sessions
+  /model          Show current model info
+  /clear          Clear conversation history
+  /help           Show this help
+  /quit           Exit
+`);
+}
+
 function printHelp() {
   console.log(`
 ${chalk.bold.cyan("AshlrCode")} ${chalk.dim(`v${VERSION}`)} — Multi-provider AI coding agent
@@ -243,23 +469,45 @@ ${chalk.bold.cyan("AshlrCode")} ${chalk.dim(`v${VERSION}`)} — Multi-provider A
 ${chalk.bold("USAGE")}
   ac [message]              Run with a single message (non-interactive)
   ac                        Start interactive REPL
+  ac --resume <id>          Resume a previous session
 
 ${chalk.bold("OPTIONS")}
   -h, --help                Show this help
   -v, --version             Show version
+  --resume <id>             Resume a saved session
 
 ${chalk.bold("COMMANDS")} (in REPL)
-  /quit, /exit, /q          Exit
+  /plan                     Show plan mode status
   /cost                     Show token usage and costs
-  /clear                    Clear conversation history
+  /compact                  Compress conversation context
+  /sessions                 List saved sessions
+  /model                    Show current model
+  /clear                    Clear conversation
+  /help                     Show available commands
+  /quit                     Exit
+
+${chalk.bold("TOOLS")} (available to the AI)
+  Bash                      Execute shell commands
+  Read                      Read files with line numbers
+  Write                     Create/overwrite files
+  Edit                      Exact string replacement
+  Glob                      Find files by pattern
+  Grep                      Search file contents
+  WebFetch                  Fetch URLs
+  AskUser                   Ask questions with structured options
+  EnterPlan                 Enter plan mode (read-only exploration)
+  PlanWrite                 Write to plan file
+  ExitPlan                  Exit plan mode
 
 ${chalk.bold("ENVIRONMENT")}
   XAI_API_KEY               xAI API key (primary provider)
   ANTHROPIC_API_KEY         Anthropic API key (fallback provider)
-  AC_MODEL                  Override default model (default: grok-4-1-fast-reasoning)
+  AC_MODEL                  Override default model
 
 ${chalk.bold("CONFIG")}
   ~/.ashlrcode/settings.json    Provider configuration
+  ~/.ashlrcode/sessions/        Saved sessions (JSONL)
+  ~/.ashlrcode/plans/           Plan files
   ./ASHLR.md                    Project-level instructions
   ./CLAUDE.md                   Also supported for compatibility
 `);
