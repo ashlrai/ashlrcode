@@ -60,8 +60,11 @@ import { fileHistory } from "./state/file-history.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { initTasks } from "./tools/tasks.ts";
+import { loadSkills } from "./skills/loader.ts";
+import { SkillRegistry } from "./skills/registry.ts";
+import { categorizeError } from "./agent/error-handler.ts";
 
-const VERSION = "0.7.0";
+const VERSION = "0.9.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -70,6 +73,7 @@ interface AppState {
   session: Session;
   history: Message[];
   baseSystemPrompt: string;
+  skillRegistry: SkillRegistry;
 }
 
 async function main() {
@@ -213,6 +217,14 @@ async function main() {
   // Initialize task persistence
   await initTasks(session.id);
 
+  // Load skills
+  const skillRegistry = new SkillRegistry();
+  const skills = await loadSkills(cwd);
+  skillRegistry.registerAll(skills);
+  if (skills.length > 0) {
+    console.log(chalk.dim(`  Skills: ${skills.map((s) => s.trigger).join(", ")}`));
+  }
+
   const state: AppState = {
     router,
     registry,
@@ -220,6 +232,7 @@ async function main() {
     session,
     history,
     baseSystemPrompt,
+    skillRegistry,
   };
 
   // Header
@@ -275,7 +288,20 @@ async function main() {
       return;
     }
 
-    // Handle commands
+    // Handle skills (slash commands that expand to prompts)
+    if (input.startsWith("/") && state.skillRegistry.isSkill(input.split(" ")[0]!)) {
+      const expanded = state.skillRegistry.expand(input);
+      if (expanded) {
+        console.log(chalk.dim(`  [skill: ${input.split(" ")[0]}]\n`));
+        await runTurn(expanded, state);
+        console.log("");
+        rl.setPrompt(getPrompt());
+        rl.prompt();
+        return;
+      }
+    }
+
+    // Handle built-in commands
     if (input.startsWith("/")) {
       await handleCommand(input, state, rl);
       rl.setPrompt(getPrompt());
@@ -477,6 +503,19 @@ async function handleCommand(
       break;
     }
 
+    case "/skills": {
+      const allSkills = state.skillRegistry.getAll();
+      if (allSkills.length === 0) {
+        console.log(chalk.dim("No skills loaded. Add .md files to ~/.ashlrcode/skills/"));
+      } else {
+        console.log(chalk.bold(`${allSkills.length} skills:`));
+        for (const s of allSkills) {
+          console.log(chalk.dim(`  ${chalk.bold(s.trigger)} — ${s.description}`));
+        }
+      }
+      break;
+    }
+
     case "/tools": {
       const tools = state.registry.getAll();
       console.log(chalk.bold(`${tools.length} tools registered:`));
@@ -605,18 +644,24 @@ async function runTurn(input: string, state: AppState): Promise<void> {
     // Persist to session
     await state.session.appendMessages(result.messages.slice(-2)); // last user + assistant pair
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(chalk.red(`\nError: ${message}`));
-
     spinner.stop();
 
-    // If it's a rate limit, suggest fallback
-    if (message.includes("429") || message.includes("rate_limit")) {
-      console.error(
-        chalk.yellow(
-          "Rate limited. The router will automatically try the next provider on the next request."
-        )
-      );
+    const error = err instanceof Error ? err : new Error(String(err));
+    const categorized = categorizeError(error);
+
+    switch (categorized.category) {
+      case "rate_limit":
+        console.error(chalk.yellow(`\nRate limited. The router will try the next provider automatically.`));
+        break;
+      case "auth":
+        console.error(chalk.red(`\nAuth error: ${categorized.message}`));
+        console.error(chalk.dim("Check your API key (XAI_API_KEY or ANTHROPIC_API_KEY)"));
+        break;
+      case "network":
+        console.error(chalk.red(`\nNetwork error: ${categorized.message}`));
+        break;
+      default:
+        console.error(chalk.red(`\nError: ${categorized.message}`));
     }
   }
 }
