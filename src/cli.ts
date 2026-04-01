@@ -43,8 +43,11 @@ import { grepTool } from "./tools/grep.ts";
 import { askUserTool } from "./tools/ask-user.ts";
 import { webFetchTool } from "./tools/web-fetch.ts";
 import { enterPlanTool, exitPlanTool, planWriteTool } from "./planning/plan-tools.ts";
+import { agentTool, initAgentTool } from "./tools/agent.ts";
+import { taskCreateTool, taskUpdateTool, taskListTool } from "./tools/tasks.ts";
+import { loadMemories, formatMemoriesForPrompt } from "./persistence/memory.ts";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -97,9 +100,21 @@ async function main() {
   registry.register(enterPlanTool);
   registry.register(exitPlanTool);
   registry.register(planWriteTool);
+  registry.register(agentTool);
+  registry.register(taskCreateTool);
+  registry.register(taskUpdateTool);
+  registry.register(taskListTool);
 
-  // Load system prompt
-  const baseSystemPrompt = await loadSystemPrompt();
+  // Load system prompt + project memories
+  let baseSystemPrompt = await loadSystemPrompt();
+
+  const memories = await loadMemories(process.cwd());
+  if (memories.length > 0) {
+    baseSystemPrompt += formatMemoriesForPrompt(memories);
+  }
+
+  // Initialize agent tool with router/registry references
+  initAgentTool(router, registry, baseSystemPrompt);
 
   // Tool context
   const cwd = process.cwd();
@@ -495,6 +510,8 @@ ${chalk.bold("TOOLS")} (available to the AI)
   Grep                      Search file contents
   WebFetch                  Fetch URLs
   AskUser                   Ask questions with structured options
+  Agent                     Spawn sub-agents for exploration
+  TaskCreate/Update/List    Track work progress
   EnterPlan                 Enter plan mode (read-only exploration)
   PlanWrite                 Write to plan file
   ExitPlan                  Exit plan mode
