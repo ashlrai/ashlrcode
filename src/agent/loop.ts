@@ -1,0 +1,176 @@
+/**
+ * Core agent loop — the heart of AshlrCode.
+ *
+ * Pattern from Claude Code's query.ts:
+ *   User Input → messages[] → Provider API (streaming) → stop_reason check
+ *     → "tool_use"? → Execute tool → Append result → Loop
+ *     → No tool_use? → Return text to user
+ */
+
+import type { ProviderRouter } from "../providers/router.ts";
+import type { ToolRegistry } from "../tools/registry.ts";
+import type { ToolContext } from "../tools/types.ts";
+import type {
+  Message,
+  ContentBlock,
+  StreamEvent,
+  ToolCall,
+  ToolDefinition,
+} from "../providers/types.ts";
+
+export interface AgentConfig {
+  systemPrompt: string;
+  router: ProviderRouter;
+  toolRegistry: ToolRegistry;
+  toolContext: ToolContext;
+  maxIterations?: number;
+  /** If true, only allow read-only tools (plan mode) */
+  readOnly?: boolean;
+  /** Callback for streaming text to the UI */
+  onText?: (text: string) => void;
+  /** Callback when a tool is being called */
+  onToolStart?: (name: string, input: Record<string, unknown>) => void;
+  /** Callback when a tool completes */
+  onToolEnd?: (name: string, result: string, isError: boolean) => void;
+}
+
+export interface AgentResult {
+  messages: Message[];
+  finalText: string;
+  toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }>;
+}
+
+/**
+ * Run the agent loop for a single user turn.
+ * Streams responses, executes tools, and loops until the model stops.
+ */
+export async function runAgentLoop(
+  userMessage: string,
+  history: Message[],
+  config: AgentConfig
+): Promise<AgentResult> {
+  const messages: Message[] = [
+    ...history,
+    { role: "user", content: userMessage },
+  ];
+
+  const tools = config.readOnly
+    ? config.toolRegistry.getReadOnlyDefinitions()
+    : config.toolRegistry.getDefinitions();
+
+  const maxIterations = config.maxIterations ?? 25;
+  const allToolCalls: AgentResult["toolCalls"] = [];
+  let finalText = "";
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const { text, toolCalls, stopReason } = await streamResponse(
+      messages,
+      tools,
+      config
+    );
+
+    finalText = text;
+
+    // Build assistant message with content blocks
+    const contentBlocks: ContentBlock[] = [];
+    if (text) {
+      contentBlocks.push({ type: "text", text });
+    }
+    for (const tc of toolCalls) {
+      contentBlocks.push({
+        type: "tool_use",
+        id: tc.id,
+        name: tc.name,
+        input: tc.input,
+      });
+    }
+
+    messages.push({
+      role: "assistant",
+      content: contentBlocks.length === 1 && contentBlocks[0]!.type === "text"
+        ? text
+        : contentBlocks,
+    });
+
+    // If no tool calls, we're done
+    if (stopReason !== "tool_use" || toolCalls.length === 0) {
+      break;
+    }
+
+    // Execute tool calls and append results
+    const resultBlocks: ContentBlock[] = [];
+
+    for (const tc of toolCalls) {
+      config.onToolStart?.(tc.name, tc.input);
+
+      const { result, isError } = await config.toolRegistry.execute(
+        tc.name,
+        tc.input,
+        config.toolContext
+      );
+
+      config.onToolEnd?.(tc.name, result, isError);
+
+      allToolCalls.push({ name: tc.name, input: tc.input, result });
+
+      resultBlocks.push({
+        type: "tool_result",
+        tool_use_id: tc.id,
+        content: result,
+        is_error: isError,
+      });
+    }
+
+    messages.push({ role: "user", content: resultBlocks });
+  }
+
+  return { messages, finalText, toolCalls: allToolCalls };
+}
+
+/**
+ * Stream a single API response, collecting text and tool calls.
+ */
+async function streamResponse(
+  messages: Message[],
+  tools: ToolDefinition[],
+  config: AgentConfig
+): Promise<{
+  text: string;
+  toolCalls: ToolCall[];
+  stopReason: string;
+}> {
+  let text = "";
+  const toolCalls: ToolCall[] = [];
+  let stopReason = "end_turn";
+
+  const stream = config.router.stream({
+    systemPrompt: config.systemPrompt,
+    messages,
+    tools,
+  });
+
+  for await (const event of stream) {
+    switch (event.type) {
+      case "text_delta":
+        if (event.text) {
+          text += event.text;
+          config.onText?.(event.text);
+        }
+        break;
+
+      case "tool_call_end":
+        if (event.toolCall?.id && event.toolCall?.name && event.toolCall?.input) {
+          toolCalls.push(event.toolCall as ToolCall);
+        }
+        break;
+
+      case "message_end":
+        if (event.stopReason) {
+          stopReason = event.stopReason;
+        }
+        break;
+    }
+  }
+
+  return { text, toolCalls, stopReason };
+}
