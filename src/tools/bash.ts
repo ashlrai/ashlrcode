@@ -34,7 +34,7 @@ export const bashTool: Tool = {
     return false;
   },
   isDestructive() {
-    return false; // We prompt for permission on all bash commands
+    return true; // Always prompt for permission
   },
   isConcurrencySafe() {
     return false;
@@ -50,15 +50,6 @@ export const bashTool: Tool = {
   async call(input, context) {
     const command = input.command as string;
     const timeout = (input.timeout as number) ?? DEFAULT_TIMEOUT;
-
-    // Always ask permission for bash commands
-    const allowed = await context.requestPermission(
-      "Bash",
-      `Run: ${command}`
-    );
-    if (!allowed) {
-      return "Permission denied by user";
-    }
 
     const proc = Bun.spawn(["bash", "-c", command], {
       cwd: context.cwd,

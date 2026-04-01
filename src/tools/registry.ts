@@ -6,6 +6,19 @@ import type { Tool, ToolContext } from "./types.ts";
 import type { ToolDefinition } from "../providers/types.ts";
 import { toolToDefinition } from "./types.ts";
 
+function formatInputPreview(toolName: string, input: Record<string, unknown>): string {
+  switch (toolName) {
+    case "Bash":
+      return `Run: ${input.command}`;
+    case "Write":
+      return `Write to: ${input.file_path}`;
+    case "Edit":
+      return `Edit: ${input.file_path}`;
+    default:
+      return JSON.stringify(input).slice(0, 100);
+  }
+}
+
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
 
@@ -48,12 +61,10 @@ export class ToolRegistry {
       return { result: `Validation error: ${validationError}`, isError: true };
     }
 
-    // Check permissions for destructive tools
-    if (tool.isDestructive()) {
-      const allowed = await context.requestPermission(
-        tool.name,
-        `Execute ${tool.name} (destructive operation)`
-      );
+    // Check permissions for non-read-only tools
+    if (!tool.isReadOnly()) {
+      const inputPreview = formatInputPreview(toolName, input);
+      const allowed = await context.requestPermission(toolName, inputPreview);
       if (!allowed) {
         return { result: "Permission denied by user", isError: true };
       }

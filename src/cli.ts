@@ -46,8 +46,14 @@ import { enterPlanTool, exitPlanTool, planWriteTool } from "./planning/plan-tool
 import { agentTool, initAgentTool } from "./tools/agent.ts";
 import { taskCreateTool, taskUpdateTool, taskListTool } from "./tools/tasks.ts";
 import { loadMemories, formatMemoriesForPrompt } from "./persistence/memory.ts";
+import {
+  loadPermissions,
+  checkPermission,
+  recordPermission,
+  allowForSession,
+} from "./config/permissions.ts";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -71,8 +77,9 @@ async function main() {
     process.exit(0);
   }
 
-  // Load settings
+  // Load settings and permissions
   const settings = await loadSettings();
+  await loadPermissions();
 
   if (!settings.providers.primary.apiKey) {
     console.error(
@@ -295,13 +302,29 @@ async function handleCommand(
 
     case "/model":
       if (arg) {
-        console.log(chalk.dim(`Model switching not yet implemented. Currently using: ${state.router.currentProvider.config.model}`));
+        // Model switching
+        const models: Record<string, string> = {
+          "grok-fast": "grok-4-1-fast-reasoning",
+          "grok-4": "grok-4-0314",
+          "grok-3": "grok-3-fast",
+          "sonnet": "claude-sonnet-4-6-20250514",
+          "opus": "claude-opus-4-6-20250514",
+          "haiku": "claude-haiku-4-5-20251001",
+        };
+        const resolved = models[arg] ?? arg;
+        state.router.currentProvider.config.model = resolved;
+        console.log(chalk.dim(`Switched to model: ${resolved}`));
       } else {
-        console.log(
-          chalk.dim(
-            `Provider: ${state.router.currentProvider.name}\nModel: ${state.router.currentProvider.config.model}`
-          )
-        );
+        console.log(chalk.bold("Current:"));
+        console.log(chalk.dim(`  Provider: ${state.router.currentProvider.name}`));
+        console.log(chalk.dim(`  Model: ${state.router.currentProvider.config.model}`));
+        console.log(chalk.bold("\nAliases:"));
+        console.log(chalk.dim("  grok-fast  → grok-4-1-fast-reasoning"));
+        console.log(chalk.dim("  grok-4     → grok-4-0314"));
+        console.log(chalk.dim("  grok-3     → grok-3-fast"));
+        console.log(chalk.dim("  sonnet     → claude-sonnet-4-6-20250514"));
+        console.log(chalk.dim("  opus       → claude-opus-4-6-20250514"));
+        console.log(chalk.dim("\nUsage: /model <alias or model-id>"));
       }
       break;
 
@@ -428,6 +451,11 @@ async function askPermission(
     return false;
   }
 
+  // Check permission system
+  const perm = checkPermission(tool);
+  if (perm === "allow") return true;
+  if (perm === "deny") return false;
+
   return new Promise((resolve) => {
     const rl = createInterface({
       input: process.stdin,
@@ -435,12 +463,33 @@ async function askPermission(
     });
 
     rl.question(
-      chalk.yellow(`  Allow ${tool}? `) +
+      chalk.yellow(`  Allow ${chalk.bold(tool)}? `) +
         chalk.dim(description) +
-        chalk.yellow(" [y/N] "),
-      (answer) => {
+        chalk.yellow("\n  [y]es / [a]lways / [n]o / [d]eny always: "),
+      async (answer) => {
         rl.close();
-        resolve(answer.toLowerCase().startsWith("y"));
+        const choice = answer.toLowerCase().trim();
+        switch (choice) {
+          case "y":
+          case "yes":
+            resolve(true);
+            break;
+          case "a":
+          case "always":
+            await recordPermission(tool, "always_allow");
+            console.log(chalk.dim(`    ${tool} will be auto-allowed from now on.`));
+            resolve(true);
+            break;
+          case "d":
+          case "deny":
+            await recordPermission(tool, "always_deny");
+            console.log(chalk.dim(`    ${tool} will be auto-denied from now on.`));
+            resolve(false);
+            break;
+          default:
+            resolve(false);
+            break;
+        }
       }
     );
   });
