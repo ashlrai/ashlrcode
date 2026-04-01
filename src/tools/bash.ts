@@ -1,10 +1,12 @@
 /**
- * BashTool — execute shell commands with timeout and output capture.
+ * BashTool — execute shell commands with timeout and live output streaming.
  */
 
+import chalk from "chalk";
 import type { Tool, ToolContext } from "./types.ts";
 
 const DEFAULT_TIMEOUT = 120_000; // 2 minutes
+const LIVE_OUTPUT_THRESHOLD = 5_000; // Stream live after 5s
 
 export const bashTool: Tool = {
   name: "Bash",
@@ -34,7 +36,7 @@ export const bashTool: Tool = {
     return false;
   },
   isDestructive() {
-    return true; // Always prompt for permission
+    return true;
   },
   isConcurrencySafe() {
     return false;
@@ -63,19 +65,57 @@ export const bashTool: Tool = {
     }, timeout);
 
     try {
-      const [stdout, stderr] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-      ]);
+      // Collect output with live streaming for long-running commands
+      let stdout = "";
+      let stderr = "";
+      let liveMode = false;
+      const startTime = Date.now();
 
+      // Read stdout in chunks
+      const reader = proc.stdout.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        stdout += chunk;
+
+        // Switch to live output after threshold
+        if (!liveMode && Date.now() - startTime > LIVE_OUTPUT_THRESHOLD) {
+          liveMode = true;
+          process.stderr.write(chalk.dim("    [live output]\n"));
+          // Print buffered content
+          if (stdout.length > chunk.length) {
+            process.stderr.write(chalk.dim(stdout.slice(0, -chunk.length)));
+          }
+        }
+        if (liveMode) {
+          process.stderr.write(chalk.dim(chunk));
+        }
+      }
+
+      stderr = await new Response(proc.stderr).text();
       const exitCode = await proc.exited;
       clearTimeout(timeoutId);
+
+      if (liveMode) {
+        process.stderr.write("\n");
+      }
 
       let result = "";
       if (stdout) result += stdout;
       if (stderr) result += (result ? "\n" : "") + stderr;
       if (exitCode !== 0) {
         result += `\nExit code: ${exitCode}`;
+      }
+
+      // Truncate very long output for the model
+      if (result.length > 50_000) {
+        result =
+          result.slice(0, 20_000) +
+          `\n\n[... truncated ${result.length - 40_000} chars ...]\n\n` +
+          result.slice(-20_000);
       }
 
       return result || "(no output)";

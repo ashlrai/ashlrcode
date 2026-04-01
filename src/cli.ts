@@ -52,8 +52,10 @@ import {
   recordPermission,
   allowForSession,
 } from "./config/permissions.ts";
+import { Spinner } from "./ui/spinner.ts";
+import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 
-const VERSION = "0.4.0";
+const VERSION = "0.5.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -341,6 +343,47 @@ async function handleCommand(
       break;
     }
 
+    case "/history": {
+      if (state.history.length === 0) {
+        console.log(chalk.dim("No messages yet."));
+      } else {
+        let turnNum = 0;
+        for (const msg of state.history) {
+          if (msg.role === "user" && typeof msg.content === "string") {
+            turnNum++;
+            const preview = msg.content.length > 80 ? msg.content.slice(0, 77) + "..." : msg.content;
+            console.log(chalk.cyan(`  ${turnNum}. `) + preview);
+          } else if (msg.role === "assistant" && typeof msg.content === "string") {
+            const preview = msg.content.length > 80 ? msg.content.slice(0, 77) + "..." : msg.content;
+            console.log(chalk.dim(`     → ${preview}`));
+          }
+        }
+      }
+      break;
+    }
+
+    case "/undo": {
+      // Remove last user + assistant turn
+      if (state.history.length < 2) {
+        console.log(chalk.dim("Nothing to undo."));
+      } else {
+        // Find and remove the last user message and everything after
+        let lastUserIdx = -1;
+        for (let i = state.history.length - 1; i >= 0; i--) {
+          if (state.history[i]!.role === "user") {
+            lastUserIdx = i;
+            break;
+          }
+        }
+        if (lastUserIdx >= 0) {
+          const removed = state.history.length - lastUserIdx;
+          state.history.splice(lastUserIdx);
+          console.log(chalk.dim(`Undid last turn (removed ${removed} messages).`));
+        }
+      }
+      break;
+    }
+
     case "/help":
       printCommands();
       break;
@@ -351,6 +394,9 @@ async function handleCommand(
 }
 
 async function runTurn(input: string, state: AppState): Promise<void> {
+  const spinner = new Spinner("Thinking");
+  let firstTextReceived = false;
+
   try {
     // Build system prompt (base + plan mode if active)
     const systemPrompt =
@@ -364,20 +410,42 @@ async function runTurn(input: string, state: AppState): Promise<void> {
       state.history = await autoCompact(state.history, state.router);
     }
 
+    // Start spinner
+    spinner.start();
+    resetMarkdown();
+
+    // Auto-title session from first message
+    if (state.history.length === 0) {
+      const title = input.length > 60 ? input.slice(0, 57) + "..." : input;
+      await state.session.setTitle(title);
+    }
+
     const result = await runAgentLoop(input, state.history, {
       systemPrompt,
       router: state.router,
       toolRegistry: state.registry,
       toolContext: state.toolContext,
       readOnly: isPlanMode(),
-      onText: (text) => process.stdout.write(text),
+      onText: (text) => {
+        if (!firstTextReceived) {
+          spinner.stop();
+          firstTextReceived = true;
+        }
+        // Render markdown formatting
+        const rendered = renderMarkdownDelta(text);
+        process.stdout.write(rendered);
+      },
       onToolStart: (name, toolInput) => {
+        spinner.stop();
+        firstTextReceived = false;
         const icon = isPlanMode() ? chalk.magenta("◆") : chalk.yellow("●");
         console.log(chalk.dim(`\n  ${icon} ${chalk.bold(name)}`));
-        const preview = JSON.stringify(toolInput).slice(0, 120);
+        const preview = formatToolPreview(name, toolInput);
         console.log(chalk.dim(`    ${preview}`));
+        spinner.start(`Running ${name}`);
       },
       onToolEnd: (_name, result, isError) => {
+        spinner.stop();
         const status = isError ? chalk.red("✗") : chalk.green("✓");
         const lines = result.split("\n");
         const preview = lines[0]?.slice(0, 100) ?? "";
@@ -389,6 +457,12 @@ async function runTurn(input: string, state: AppState): Promise<void> {
       },
     });
 
+    spinner.stop();
+
+    // Flush any remaining markdown buffer
+    const remaining = flushMarkdown();
+    if (remaining) process.stdout.write(remaining);
+
     // Update history
     state.history.length = 0;
     state.history.push(...result.messages);
@@ -398,6 +472,8 @@ async function runTurn(input: string, state: AppState): Promise<void> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(chalk.red(`\nError: ${message}`));
+
+    spinner.stop();
 
     // If it's a rate limit, suggest fallback
     if (message.includes("429") || message.includes("rate_limit")) {
@@ -495,6 +571,29 @@ async function askPermission(
   });
 }
 
+function formatToolPreview(name: string, input: Record<string, unknown>): string {
+  switch (name) {
+    case "Bash":
+      return `$ ${input.command}`;
+    case "Read":
+      return `${input.file_path}${input.offset ? `:${input.offset}` : ""}`;
+    case "Write":
+      return `→ ${input.file_path}`;
+    case "Edit":
+      return `${input.file_path}`;
+    case "Glob":
+      return `${input.pattern}${input.path ? ` in ${input.path}` : ""}`;
+    case "Grep":
+      return `/${input.pattern}/${input.path ? ` in ${input.path}` : ""}`;
+    case "WebFetch":
+      return `${input.url}`;
+    case "Agent":
+      return `${input.description}`;
+    default:
+      return JSON.stringify(input).slice(0, 100);
+  }
+}
+
 function getArg(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx === -1) return undefined;
@@ -517,10 +616,12 @@ function printCommands() {
 ${chalk.bold("Commands:")}
   /plan           Show plan mode status
   /cost           Show token usage and costs
-  /compact        Manually compress conversation context
+  /history        Show conversation history
+  /undo           Undo last turn
+  /compact        Compress conversation context
   /sessions       List saved sessions
-  /model          Show current model info
-  /clear          Clear conversation history
+  /model [name]   Show/switch model
+  /clear          Clear conversation
   /help           Show this help
   /quit           Exit
 `);
