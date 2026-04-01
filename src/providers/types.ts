@@ -44,6 +44,10 @@ export interface StreamEvent {
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  /** xAI-specific: cost in USD ticks (1 tick = $0.000001) */
+  costTicks?: number;
+  /** Reasoning tokens used by the model (separate from output) */
+  reasoningTokens?: number;
 }
 
 export interface ProviderConfig {
