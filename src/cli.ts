@@ -64,6 +64,8 @@ import { fileHistory } from "./state/file-history.ts";
 import { memorySaveTool, memoryListTool, memoryDeleteTool } from "./tools/memory.ts";
 import { notebookEditTool } from "./tools/notebook-edit.ts";
 import { sendMessageTool } from "./tools/send-message.ts";
+import { sleepTool } from "./tools/sleep.ts";
+import { todoWriteTool } from "./tools/todo-write.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { initTasks } from "./tools/tasks.ts";
@@ -71,7 +73,7 @@ import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -141,6 +143,8 @@ async function main() {
   registry.register(memoryDeleteTool);
   registry.register(notebookEditTool);
   registry.register(sendMessageTool);
+  registry.register(sleepTool);
+  registry.register(todoWriteTool);
   initToolSearch(registry);
 
   // Set up hooks from settings
