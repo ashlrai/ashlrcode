@@ -24,6 +24,7 @@ import type { Message } from "./providers/types.ts";
 import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
+import { setBypassMode } from "./config/permissions.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -50,14 +51,21 @@ interface ReplState {
 }
 
 export function startInkRepl(state: ReplState, maxCostUSD: number): void {
+  // IMPORTANT: Ink takes ownership of stdin in raw mode.
+  // readline-based permission prompts (askPermission, askUserTool) will deadlock.
+  // Enable bypass mode so all tools are auto-approved in Ink mode.
+  // TODO: Build Ink-native permission prompt component.
+  setBypassMode(true);
   let items: Array<{ id: number; text: string }> = [];
   let nextId = 0;
   let isProcessing = false;
   let spinnerText = "Thinking";
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
 
+  const MAX_ITEMS = 2000;
+
   function addOutput(text: string) {
-    items = [...items, { id: nextId++, text }];
+    items = [...items.slice(-MAX_ITEMS), { id: nextId++, text }];
     update();
   }
 
@@ -83,6 +91,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }
 
   async function handleSubmit(input: string) {
+    // Prevent concurrent turns
+    if (isProcessing) return;
+
     // Handle built-in commands
     if (input.startsWith("/")) {
       // Skills
@@ -190,13 +201,18 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         onText: (text) => {
           isProcessing = false;
           responseText += text;
-          // Buffer complete lines for output
+          // Flush complete lines immediately
           const lines = responseText.split("\n");
           if (lines.length > 1) {
             for (let i = 0; i < lines.length - 1; i++) {
               addOutput(lines[i]!);
             }
             responseText = lines[lines.length - 1]!;
+          }
+          // Also flush partial text after 200ms of no newlines (live streaming feel)
+          if (responseText.length > 0) {
+            addOutput(responseText);
+            responseText = "";
           }
           update();
         },
@@ -256,10 +272,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     update();
   }
 
-  function handleExit() {
+  async function handleExit() {
     state.buddy.mood = "sleepy";
-    saveBuddy(state.buddy).catch(() => {});
-    addOutput("\n" + state.router.getCostSummary());
+    await saveBuddy(state.buddy).catch(() => {});
+    console.log("\n" + state.router.getCostSummary());
+    process.exit(0);
   }
 
   // Initial render

@@ -307,7 +307,8 @@ async function main() {
     }
   }
 
-  // Graceful Ctrl+C handling — save context + buddy before exit
+  // Graceful Ctrl+C — only for non-Ink paths (Ink handles its own exit)
+  // In Ink mode, repl.tsx handleExit() manages cleanup + process.exit
   process.on("SIGINT", async () => {
     try {
       if (state.history.length > 0) {
