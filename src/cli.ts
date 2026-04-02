@@ -84,6 +84,7 @@ import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { runSetupWizard, needsSetup } from "./setup.ts";
 import { loadProjectConfig } from "./config/project-config.ts";
+import { startInkRepl } from "./repl.tsx";
 import { VERSION } from "./version.ts";
 let maxCostUSD = Infinity;
 
@@ -335,112 +336,8 @@ async function main() {
     process.exit(0);
   }
 
-  // Interactive REPL with multi-line support
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: getPrompt(),
-  });
-
-  let multiLineBuffer = "";
-
-  const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
-
-  /** Input area: status → line → prompt (prompt MUST be last for cursor) */
-  function showPrompt() {
-    if (!printMode) {
-      const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
-      const ctxUsed = estimateTokens(state.history);
-      const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
-      printStatusLine(
-        getCurrentMode(),
-        state.history.length > 0 ? ctxPct : 0,
-        formatTk(ctxUsed),
-        formatTk(ctxLimit),
-        state.buddy.name,
-        state.buddy.mood
-      );
-      printInputLine();
-    }
-    rl.prompt(); // MUST be last — cursor stays here
-  }
-
-  // Shift+Tab mode cycling — updates prompt in-place (no new lines)
-  if (process.stdin.isTTY) {
-    process.stdin.on("data", (data: Buffer) => {
-      const seq = data.toString();
-      if (seq === "\x1b[Z") { // Shift+Tab escape sequence
-        cycleMode();
-        rl.setPrompt(getPrompt());
-        // Clear current line and redraw prompt in-place
-        process.stdout.write("\r\x1b[K");
-        rl.prompt(true); // true = preserveCurrentLine
-      }
-    });
-  }
-
-  showPrompt();
-
-  rl.on("line", async (line) => {
-    // Multi-line: if line ends with \, buffer and continue
-    if (line.endsWith("\\")) {
-      multiLineBuffer += line.slice(0, -1) + "\n";
-      rl.setPrompt(chalk.dim("... "));
-      rl.prompt();
-      return;
-    }
-
-    const input = (multiLineBuffer + line).trim();
-    multiLineBuffer = "";
-
-    if (!input) {
-      rl.setPrompt(getPrompt());
-      showPrompt();
-      return;
-    }
-
-    // Handle skills (slash commands that expand to prompts)
-    if (input.startsWith("/") && state.skillRegistry.isSkill(input.split(" ")[0]!)) {
-      const expanded = state.skillRegistry.expand(input);
-      if (expanded) {
-        console.log("\n" + theme.accent(`  ⚡ Running skill: ${theme.toolName(input.split(" ")[0]!)}`) + "\n");
-        await runTurn(expanded, state);
-        console.log("");
-        rl.setPrompt(getPrompt());
-        showPrompt();
-        return;
-      }
-    }
-
-    // Handle built-in commands
-    if (input.startsWith("/")) {
-      await handleCommand(input, state, rl);
-      rl.setPrompt(getPrompt());
-      showPrompt();
-      return;
-    }
-
-    await runTurn(input, state);
-    // Show turn separator after each turn
-    if (!printMode && state.history.length > 0) {
-      const turnCount = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
-      printTurnSeparator({
-        turnNumber: turnCount,
-        cost: `$${state.router.costs.totalCostUSD.toFixed(4)}`,
-        buddyName: state.buddy.name,
-        buddyMood: state.buddy.mood,
-      });
-    }
-    console.log("");
-    rl.setPrompt(getPrompt());
-    showPrompt();
-  });
-
-  rl.on("close", async () => {
-    console.log(chalk.dim(`\n${router.getCostSummary()}`));
-    await mcpManager.disconnectAll();
-    process.exit(0);
-  });
+  // Interactive REPL — use Ink for proper cursor positioning
+  startInkRepl(state, maxCostUSD);
 }
 
 function getPrompt(): string {
