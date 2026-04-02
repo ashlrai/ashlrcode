@@ -12,7 +12,7 @@ import { runAgentLoop } from "./agent/loop.ts";
 import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact } from "./agent/context.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
-import { getBuddyReaction, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy } from "./ui/buddy.ts";
+import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy } from "./ui/buddy.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
@@ -84,6 +84,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       contextLimit: formatTk(ctxLimit),
       buddyName: state.buddy.name,
       buddyQuip: getQuip(state.buddy.mood),
+      buddyArt: getBuddyArt(state.buddy),
       items,
       isProcessing,
       spinnerText,

@@ -3,10 +3,11 @@
  *
  * Uses Ink's <Static> for scrollable output above,
  * and a live InputBox pinned at the bottom.
+ * Status line uses flexbox for proper right-alignment.
  */
 
 import React, { useState, useCallback } from "react";
-import { Box, Text, Static, useInput, useApp } from "ink";
+import { Box, Text, Static, useInput, useApp, Spacer } from "ink";
 import TextInput from "ink-text-input";
 
 interface OutputItem {
@@ -24,10 +25,14 @@ interface AppProps {
   contextLimit: string;
   buddyName: string;
   buddyQuip: string;
+  buddyArt: string[];
   items: OutputItem[];
   isProcessing: boolean;
   spinnerText: string;
 }
+
+// Spinner frames
+const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 export function App({
   onSubmit,
@@ -39,6 +44,7 @@ export function App({
   contextLimit,
   buddyName,
   buddyQuip,
+  buddyArt,
   items,
   isProcessing,
   spinnerText,
@@ -62,7 +68,7 @@ export function App({
   });
 
   // Context bar
-  const barWidth = 10;
+  const barWidth = 12;
   const filled = Math.round((contextPercent / 100) * barWidth);
   const empty = barWidth - filled;
   const ctxColor = contextPercent < 50 ? "green" : contextPercent < 75 ? "yellow" : "red";
@@ -78,7 +84,7 @@ export function App({
 
       {/* Spinner when processing */}
       {isProcessing && (
-        <Text dimColor>  ⠋ {spinnerText}</Text>
+        <Text dimColor>  {SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]} {spinnerText}</Text>
       )}
 
       {/* Input box */}
@@ -98,18 +104,36 @@ export function App({
       </Box>
       <Text dimColor>{line}</Text>
 
-      {/* Status line */}
-      <Box>
-        <Text color={modeColor} bold>❯❯ </Text>
-        <Text color={modeColor}>{mode} mode</Text>
-        <Text dimColor> (shift+tab to cycle)</Text>
-        <Text>{"        "}</Text>
-        <Text color={ctxColor}>{"█".repeat(filled)}</Text>
-        <Text dimColor>{"░".repeat(empty)}</Text>
-        <Text> </Text>
-        <Text color={ctxColor}>{contextPercent}%</Text>
-        <Text dimColor> · {contextUsed}/{contextLimit}</Text>
-        <Text dimColor> · {buddyName}: "{buddyQuip}"</Text>
+      {/* Status line — mode left, context + buddy right */}
+      <Box justifyContent="space-between">
+        {/* Left: mode */}
+        <Box>
+          <Text color={modeColor} bold>❯❯ </Text>
+          <Text color={modeColor}>{mode} mode</Text>
+          <Text dimColor> (shift+tab to cycle)</Text>
+        </Box>
+
+        {/* Right: context bar + buddy */}
+        <Box>
+          <Text color={ctxColor}>{"█".repeat(filled)}</Text>
+          <Text dimColor>{"░".repeat(empty)}</Text>
+          <Text> </Text>
+          <Text color={ctxColor}>{contextPercent}%</Text>
+          <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+          <Text>{"   "}</Text>
+          {/* Buddy — far right */}
+          <Box flexDirection="column" alignItems="flex-end">
+            {buddyArt.map((artLine, i) => (
+              <Text key={i} dimColor>{artLine}</Text>
+            ))}
+            <Text color="cyan">{buddyName}</Text>
+          </Box>
+        </Box>
+      </Box>
+
+      {/* Buddy quip — right aligned */}
+      <Box justifyContent="flex-end">
+        <Text dimColor italic>"{buddyQuip}"</Text>
       </Box>
     </Box>
   );

@@ -169,6 +169,13 @@ export async function saveBuddy(buddy: BuddyData): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
+ * Get the buddy's ASCII art lines.
+ */
+export function getBuddyArt(buddy: BuddyData): string[] {
+  return ASCII_ART[buddy.species] ?? ["(?)"];
+}
+
+/**
  * Print the buddy's ASCII art with its name and mood.
  * Designed to sit neatly under the startup banner.
  */
