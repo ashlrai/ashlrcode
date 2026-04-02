@@ -346,18 +346,13 @@ async function main() {
 
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
 
-  /** Input box: line → prompt → line → status (cursor jumps back to prompt) */
+  /** Input area: status → line → prompt (prompt MUST be last for cursor) */
   function showPrompt() {
-    if (!printMode) printInputLine();           // ── top line ──
-    rl.prompt();                                 // ❯ _
     if (!printMode) {
-      process.stdout.write("\x1b[s");           // save cursor at prompt
-      console.log("");                           // newline
-      printInputLine();                          // ── bottom line ──
       const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
       const ctxUsed = estimateTokens(state.history);
       const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
-      printStatusLine(                           // ❯❯ mode ... ctx
+      printStatusLine(
         getCurrentMode(),
         state.history.length > 0 ? ctxPct : 0,
         formatTk(ctxUsed),
@@ -365,8 +360,9 @@ async function main() {
         state.buddy.name,
         state.buddy.mood
       );
-      process.stdout.write("\x1b[u");           // restore cursor to prompt
+      printInputLine();
     }
+    rl.prompt(); // MUST be last — cursor stays here
   }
 
   // Shift+Tab mode cycling — updates prompt in-place (no new lines)
