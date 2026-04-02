@@ -20,7 +20,7 @@ export class MCPClient {
     resolve: (value: unknown) => void;
     reject: (error: Error) => void;
   }>();
-  private buffer = "";
+  private rawBuffer = Buffer.alloc(0);
   private serverInfo: MCPInitializeResult | null = null;
   private _tools: MCPToolInfo[] = [];
 
@@ -121,21 +121,23 @@ export class MCPClient {
   private send(message: Record<string, unknown>): void {
     if (!this.proc) throw new Error("MCP client not connected");
     const json = JSON.stringify(message);
-    const data = `Content-Length: ${Buffer.byteLength(json)}\r\n\r\n${json}`;
-    this.proc.stdin.write(data);
+    // Use Buffer.byteLength for spec-correct Content-Length (UTF-8 bytes)
+    // Write as Buffer to ensure byte-level consistency with the header
+    const header = `Content-Length: ${Buffer.byteLength(json, "utf-8")}\r\n\r\n`;
+    const buf = Buffer.concat([Buffer.from(header), Buffer.from(json, "utf-8")]);
+    this.proc.stdin.write(buf);
   }
 
   private async readLoop(): Promise<void> {
     if (!this.proc) return;
 
     const reader = this.proc.stdout.getReader();
-    const decoder = new TextDecoder();
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        this.buffer += decoder.decode(value, { stream: true });
+        this.rawBuffer = Buffer.concat([this.rawBuffer, Buffer.from(value)]);
         this.processBuffer();
       }
     } catch {
@@ -151,15 +153,16 @@ export class MCPClient {
 
   private processBuffer(): void {
     while (true) {
-      // Look for Content-Length header
-      const headerEnd = this.buffer.indexOf("\r\n\r\n");
+      // Look for Content-Length header in byte buffer
+      const separator = Buffer.from("\r\n\r\n");
+      const headerEnd = this.rawBuffer.indexOf(separator);
       if (headerEnd === -1) break;
 
-      const header = this.buffer.slice(0, headerEnd);
+      const header = this.rawBuffer.subarray(0, headerEnd).toString("utf-8");
       const match = header.match(/Content-Length:\s*(\d+)/i);
       if (!match) {
         // Skip malformed header
-        this.buffer = this.buffer.slice(headerEnd + 4);
+        this.rawBuffer = this.rawBuffer.subarray(headerEnd + 4);
         continue;
       }
 
@@ -167,10 +170,10 @@ export class MCPClient {
       const bodyStart = headerEnd + 4;
       const bodyEnd = bodyStart + contentLength;
 
-      if (this.buffer.length < bodyEnd) break; // Need more data
+      if (this.rawBuffer.length < bodyEnd) break; // Need more data
 
-      const body = this.buffer.slice(bodyStart, bodyEnd);
-      this.buffer = this.buffer.slice(bodyEnd);
+      const body = this.rawBuffer.subarray(bodyStart, bodyEnd).toString("utf-8");
+      this.rawBuffer = this.rawBuffer.subarray(bodyEnd);
 
       try {
         const message = JSON.parse(body) as JsonRpcResponse;

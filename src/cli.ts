@@ -646,6 +646,7 @@ async function handleCommand(
 async function runTurn(input: string, state: AppState, printMode = false): Promise<void> {
   const spinner = printMode ? null : new Spinner("Thinking");
   let firstTextReceived = false;
+  const preTurnMessageCount = state.history.length;
 
   try {
     // Check cost budget
@@ -738,8 +739,11 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     state.history.length = 0;
     state.history.push(...result.messages);
 
-    // Persist to session
-    await state.session.appendMessages(result.messages.slice(-2)); // last user + assistant pair
+    // Persist all new messages from this turn (not just last 2)
+    const newMessages = result.messages.slice(preTurnMessageCount);
+    if (newMessages.length > 0) {
+      await state.session.appendMessages(newMessages);
+    }
   } catch (err) {
     spinner?.stop();
 

@@ -92,8 +92,17 @@ function matchesHook(
   // Match tool name
   if (hook.toolName) {
     if (hook.toolName.includes("*")) {
-      const regex = new RegExp("^" + hook.toolName.replace(/\*/g, ".*") + "$");
-      if (!regex.test(toolName)) return false;
+      try {
+        // Escape regex metacharacters, then expand * to .*
+        const escaped = hook.toolName
+          .replace(/[.+?^${}()|[\]\\]/g, "\\$&")
+          .replace(/\*/g, ".*");
+        const regex = new RegExp("^" + escaped + "$");
+        if (!regex.test(toolName)) return false;
+      } catch {
+        // Invalid pattern, fall back to exact match
+        if (hook.toolName !== toolName) return false;
+      }
     } else if (hook.toolName !== toolName) {
       return false;
     }

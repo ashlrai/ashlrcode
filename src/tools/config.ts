@@ -60,11 +60,17 @@ export const configTool: Tool = {
     const settings = await loadSettings();
 
     switch (op) {
-      case "list":
-        return JSON.stringify(settings, null, 2);
+      case "list": {
+        const sanitized = redactSecrets(JSON.parse(JSON.stringify(settings)));
+        return JSON.stringify(sanitized, null, 2);
+      }
 
       case "get": {
         const key = input.key as string;
+        // Block direct access to API keys
+        if (key.toLowerCase().includes("apikey") || key.toLowerCase().includes("api_key")) {
+          return "API keys are redacted for security. View them in ~/.ashlrcode/settings.json directly.";
+        }
         const value = getNestedValue(settings as unknown as Record<string, unknown>, key);
         if (value === undefined) return `Setting not found: ${key}`;
         return typeof value === "object"
@@ -74,6 +80,10 @@ export const configTool: Tool = {
 
       case "set": {
         const key = input.key as string;
+        // Block setting API keys via the tool (security)
+        if (key.toLowerCase().includes("apikey") || key.toLowerCase().includes("api_key")) {
+          return "Cannot set API keys via Config tool. Set them as environment variables or edit ~/.ashlrcode/settings.json directly.";
+        }
         const value = input.value as string;
         setNestedValue(settings as unknown as Record<string, unknown>, key, value);
         await saveSettings(settings);
@@ -85,6 +95,22 @@ export const configTool: Tool = {
     }
   },
 };
+
+function redactSecrets(obj: Record<string, unknown>): Record<string, unknown> {
+  const result = { ...obj };
+  for (const [key, value] of Object.entries(result)) {
+    if (key.toLowerCase().includes("apikey") || key.toLowerCase().includes("api_key") || key.toLowerCase().includes("token") || key.toLowerCase().includes("secret")) {
+      result[key] = "[redacted]";
+    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      result[key] = redactSecrets(value as Record<string, unknown>);
+    } else if (Array.isArray(value)) {
+      result[key] = value.map((v) =>
+        typeof v === "object" && v !== null ? redactSecrets(v as Record<string, unknown>) : v
+      );
+    }
+  }
+  return result;
+}
 
 function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
   const keys = path.split(".");

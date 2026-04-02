@@ -64,17 +64,17 @@ export const bashTool: Tool = {
       proc.kill();
     }, timeout);
 
+    // Start reading stderr concurrently (prevents deadlock if pipe buffer fills)
+    const stderrPromise = new Response(proc.stderr).text();
+
+    // Read stdout in chunks
+    const reader = proc.stdout.getReader();
+
     try {
       // Collect output with live streaming for long-running commands
       let stdout = "";
       let liveMode = false;
       const startTime = Date.now();
-
-      // Start reading stderr concurrently (prevents deadlock if pipe buffer fills)
-      const stderrPromise = new Response(proc.stderr).text();
-
-      // Read stdout in chunks
-      const reader = proc.stdout.getReader();
       const decoder = new TextDecoder();
 
       while (true) {
@@ -123,8 +123,9 @@ export const bashTool: Tool = {
       return result || "(no output)";
     } catch {
       clearTimeout(timeoutId);
-      // Drain stderr to prevent resource leak
-      try { await new Response(proc.stderr).text(); } catch {}
+      // Release stdout reader lock and drain stderr
+      try { reader.releaseLock(); } catch {}
+      try { await stderrPromise; } catch {}
       return "Command timed out";
     }
   },
