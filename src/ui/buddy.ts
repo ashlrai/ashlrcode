@@ -202,24 +202,75 @@ export function printBuddy(buddy: BuddyData): void {
  * Simple in-memory mood tracker. Mutates the buddy object directly.
  * Call `saveBuddy()` when the session ends to persist final state.
  */
+let consecutiveSuccesses = 0;
+let totalToolCallsThisSession = 0;
+
 export function recordToolCallSuccess(buddy: BuddyData): void {
   buddy.toolCalls++;
   buddy.mood = "happy";
+  consecutiveSuccesses++;
+  totalToolCallsThisSession++;
 }
 
 export function recordThinking(buddy: BuddyData): void {
   buddy.mood = "thinking";
 }
 
+export function recordError(buddy: BuddyData): void {
+  buddy.mood = "sleepy";
+  consecutiveSuccesses = 0;
+}
+
 export function recordIdle(buddy: BuddyData): void {
   buddy.mood = "sleepy";
 }
 
+// ---------------------------------------------------------------------------
+// Speech bubbles — small reactions to major events
+// ---------------------------------------------------------------------------
+
+type BuddyEvent = "first_tool" | "success" | "error" | "streak" | "compact" | "exit" | "mode_switch";
+
+const REACTIONS: Record<BuddyEvent, string[]> = {
+  first_tool: ["Let's go!", "Here we go!", "Time to code!", "On it!"],
+  success: ["Nice!", "Got it!", "Done!", "Easy!"],
+  error: ["Oops...", "Hmm...", "Let me think...", "We'll fix it!"],
+  streak: ["On fire!", "Unstoppable!", "Crushing it!", "Flow state!"],
+  compact: ["Getting cozy...", "Tidying up!", "Making room!", "Spring cleaning!"],
+  exit: ["See you!", "Bye for now!", "Until next time!", "Sweet dreams!"],
+  mode_switch: ["Switching gears!", "New vibes!", "Mode changed!", "Let's try this!"],
+};
+
 /**
- * Bump session count and reset mood to sleepy for a fresh session.
+ * Get a buddy reaction for an event. Returns a formatted speech bubble.
+ */
+export function getBuddyReaction(buddy: BuddyData, event: BuddyEvent): string {
+  // Streak detection
+  if (event === "success" && consecutiveSuccesses >= 5) {
+    event = "streak";
+  }
+
+  const phrases = REACTIONS[event];
+  if (!phrases) return "";
+  const phrase = phrases[Math.floor(Math.random() * phrases.length)]!;
+
+  const moodIcon = buddy.mood === "happy" ? "♥" : buddy.mood === "thinking" ? "…" : "z";
+  return theme.accentDim(`  ${buddy.name} ${moodIcon} "${phrase}"`);
+}
+
+/**
+ * Check if this is the first tool call of the session.
+ */
+export function isFirstToolCall(): boolean {
+  return totalToolCallsThisSession === 1;
+}
+
+/**
+ * Bump session count. Don't reset mood — let it carry from last session.
  */
 export async function startSession(buddy: BuddyData): Promise<void> {
   buddy.totalSessions++;
-  buddy.mood = "sleepy";
+  consecutiveSuccesses = 0;
+  totalToolCallsThisSession = 0;
   await saveBuddy(buddy);
 }

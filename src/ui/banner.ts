@@ -76,9 +76,38 @@ export function printSeparator(width?: number): void {
 }
 
 /**
- * Print a thin separator between user/assistant turns.
+ * Print a rich separator between turns with session context.
  */
-export function printTurnSeparator(): void {
-  const w = Math.min(process.stdout.columns || 80, 60);
-  console.log(c.muted("\n  " + "·".repeat(w - 2)));
+export function printTurnSeparator(info?: {
+  turnNumber?: number;
+  cost?: string;
+  buddyName?: string;
+  buddyMood?: string;
+}): void {
+  const w = Math.min(process.stdout.columns || 80, 65);
+
+  if (!info) {
+    console.log(c.muted("\n  " + "─".repeat(w - 2)));
+    return;
+  }
+
+  const parts: string[] = [];
+  if (info.turnNumber) parts.push(`turn ${info.turnNumber}`);
+  if (info.cost) parts.push(info.cost);
+  if (info.buddyName && info.buddyMood) {
+    const moodIcon = info.buddyMood === "happy" ? "♥" : info.buddyMood === "thinking" ? "…" : "z";
+    parts.push(`${info.buddyName} ${moodIcon}`);
+  }
+
+  const label = parts.length > 0 ? ` ${parts.join(" · ")} ` : "";
+  const lineLen = Math.max(0, w - label.length - 4);
+  const leftLen = Math.floor(lineLen / 2);
+  const rightLen = lineLen - leftLen;
+
+  console.log(
+    "\n" +
+    c.muted("  " + "─".repeat(leftLen)) +
+    c.dim(label) +
+    c.muted("─".repeat(rightLen))
+  );
 }

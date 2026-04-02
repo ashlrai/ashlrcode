@@ -61,7 +61,7 @@ import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown
 import { printBanner, printTurnSeparator } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
-import { loadBuddy, printBuddy, saveBuddy, recordToolCallSuccess, type BuddyData } from "./ui/buddy.ts";
+import { loadBuddy, printBuddy, saveBuddy, startSession, recordToolCallSuccess, recordThinking, recordError, getBuddyReaction, isFirstToolCall, type BuddyData } from "./ui/buddy.ts";
 import { theme, styleCost, styleTokens } from "./ui/theme.ts";
 import { lsTool } from "./tools/ls.ts";
 import { configTool } from "./tools/config.ts";
@@ -95,6 +95,7 @@ interface AppState {
   history: Message[];
   baseSystemPrompt: string;
   skillRegistry: SkillRegistry;
+  buddy: BuddyData;
 }
 
 async function main() {
@@ -267,6 +268,10 @@ async function main() {
   skillRegistry.registerAll(skills);
   // Skills loaded silently — use /skills to list them
 
+  // Load buddy (don't reset mood — let it carry from last session)
+  const buddy = await loadBuddy();
+  await startSession(buddy);
+
   const state: AppState = {
     router,
     registry,
@@ -275,16 +280,12 @@ async function main() {
     history,
     baseSystemPrompt,
     skillRegistry,
+    buddy,
   };
 
   // Set initial mode based on flags
   if (dangerouslySkipPermissions) setMode("yolo");
   else if (autoAcceptEditsFlag) setMode("accept-edits");
-
-  // Load buddy
-  const buddy = await loadBuddy();
-  buddy.totalSessions++;
-  buddy.mood = "happy";
 
   // Header (suppress in print mode)
   if (!printMode) {
@@ -301,8 +302,8 @@ async function main() {
       if (state.history.length > 0) {
         await state.session.appendMessages(state.history.slice(-2));
       }
-      buddy.mood = "sleepy";
-      await saveBuddy(buddy);
+      state.buddy.mood = "sleepy";
+      await saveBuddy(state.buddy);
     } catch {}
     if (!printMode) {
       console.log(chalk.dim(`\n${router.getCostSummary()}`));
@@ -392,7 +393,13 @@ async function main() {
     // Show context usage + separator after each turn
     if (!printMode && state.history.length > 0) {
       console.log(renderContextBar(state.history, state.router.currentProvider.name));
-      printTurnSeparator();
+      const turnCount = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
+      printTurnSeparator({
+        turnNumber: turnCount,
+        cost: `$${state.router.costs.totalCostUSD.toFixed(4)}`,
+        buddyName: state.buddy.name,
+        buddyMood: state.buddy.mood,
+      });
     }
     console.log("");
     rl.setPrompt(getPrompt());
@@ -652,6 +659,28 @@ async function handleCommand(
       break;
     }
 
+    case "/buddy": {
+      if (arg === "name" || arg?.startsWith("name ")) {
+        const newName = arg.replace("name", "").trim();
+        if (newName) {
+          state.buddy.name = newName;
+          await saveBuddy(state.buddy);
+          console.log(theme.success(`  Buddy renamed to ${newName}!`));
+        } else {
+          console.log(theme.tertiary("  Usage: /buddy name <new-name>"));
+        }
+      } else {
+        printBuddy(state.buddy);
+        console.log(theme.primary(`  Name: ${state.buddy.name}`));
+        console.log(theme.primary(`  Species: ${state.buddy.species}`));
+        console.log(theme.primary(`  Mood: ${state.buddy.mood}`));
+        console.log(theme.tertiary(`  Sessions: ${state.buddy.totalSessions}`));
+        console.log(theme.tertiary(`  Lifetime tool calls: ${state.buddy.toolCalls}`));
+        console.log(theme.tertiary(`\n  Rename: /buddy name <new-name>`));
+      }
+      break;
+    }
+
     case "/effort": {
       const levels = ["fast", "balanced", "thorough"];
       if (!arg) {
@@ -776,15 +805,25 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         if (printMode) return;
         spinner?.stop();
         firstTextReceived = false;
+        recordThinking(state.buddy);
         const icon = isPlanMode() ? theme.plan("◆") : theme.toolIcon("●");
         console.log(`\n  ${icon} ${theme.toolName(name)}`);
         const preview = formatToolPreview(name, toolInput);
         console.log(theme.tertiary(`    ${preview}`));
+        // Show buddy reaction on first tool call
+        if (isFirstToolCall()) {
+          console.log(getBuddyReaction(state.buddy, "first_tool"));
+        }
         spinner?.start(getToolPhrase(name));
       },
       onToolEnd: (_name, result, isError) => {
         if (printMode) return;
         spinner?.stop();
+        if (isError) {
+          recordError(state.buddy);
+        } else {
+          recordToolCallSuccess(state.buddy);
+        }
         const status = isError ? theme.error("✗") : theme.success("✓");
         const lines = result.split("\n");
         const preview = lines[0]?.slice(0, 100) ?? "";
@@ -792,7 +831,12 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
           lines.length > 1
             ? theme.tertiary(` (+${lines.length - 1} lines)`)
             : "";
-        console.log(theme.tertiary(`    ${status} ${preview}${extra}\n`));
+        console.log(theme.tertiary(`    ${status} ${preview}${extra}`));
+        // Show buddy reaction on errors or streaks
+        if (isError) {
+          console.log(getBuddyReaction(state.buddy, "error"));
+        }
+        console.log("");
       },
     });
 
