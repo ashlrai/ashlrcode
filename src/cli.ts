@@ -344,32 +344,24 @@ async function main() {
 
   let multiLineBuffer = "";
 
-  /** Show input area: line → prompt → line → status (like Claude Code) */
-  function showPrompt() {
-    if (!printMode) {
-      const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
-      const ctxUsed = estimateTokens(state.history);
-      const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
-      const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
+  const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
 
-      // Top line of input box
-      printInputLine();
-    }
-    // Prompt (user types here)
+  /** Show input area: line → prompt → line → status + context bar + buddy */
+  function showPrompt() {
+    if (!printMode) printInputLine();
     rl.prompt();
     if (!printMode) {
-      // Bottom line of input box
       printInputLine();
-      // Status line under the box: mode + context
       const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
       const ctxUsed = estimateTokens(state.history);
       const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
-      const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
       printStatusLine(
         getCurrentMode(),
-        state.history.length > 0 ? ctxPct : undefined,
+        state.history.length > 0 ? ctxPct : 0,
         formatTk(ctxUsed),
-        formatTk(ctxLimit)
+        formatTk(ctxLimit),
+        state.buddy.name,
+        state.buddy.mood
       );
     }
   }

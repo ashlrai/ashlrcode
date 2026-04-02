@@ -13,7 +13,6 @@ const LOGO = [
   "   ╱      ╲    ┴ ┴└─┘┴ ┴┴─┘┴└─  └─┘└─┘─┴┘└─┘",
 ];
 
-// Color gradient — bright cyan to deep blue
 const c = {
   bright: chalk.hex("#00E5FF"),
   mid: chalk.hex("#00ACC1"),
@@ -24,6 +23,10 @@ const c = {
   provider: chalk.hex("#00E5FF"),
   model: chalk.hex("#546E7A"),
   muted: chalk.hex("#37474F"),
+  green: chalk.hex("#00E676"),
+  yellow: chalk.hex("#FFD600"),
+  red: chalk.hex("#FF1744"),
+  magenta: chalk.hex("#E040FB"),
 };
 
 export function printBanner(
@@ -34,95 +37,96 @@ export function printBanner(
   buddyArt?: string
 ): void {
   console.log("");
-
-  // Print logo with gradient
   const colors = [c.bright, c.mid, c.deep, c.dim];
   LOGO.forEach((line, i) => {
-    const colorFn = colors[i % colors.length]!;
-    console.log(colorFn(line));
+    console.log(colors[i % colors.length]!(line));
   });
-
-  // Separator line
   printSeparator();
 
-  // Info line
   const parts = [
     c.version(`v${version}`),
     c.provider(provider) + c.model(`:${model}`),
   ];
-
   let modeStr = "";
   if (mode === "yolo") modeStr = chalk.bgHex("#D32F2F").white.bold(" YOLO ");
   else if (mode === "accept-edits") modeStr = chalk.bgHex("#F9A825").black(" EDITS ");
   else if (mode === "plan") modeStr = chalk.bgHex("#7B1FA2").white(" PLAN ");
 
   console.log("   " + parts.join(c.muted(" · ")) + (modeStr ? `  ${modeStr}` : ""));
-
-  // Show buddy if provided
-  if (buddyArt) {
-    console.log(buddyArt);
-  }
-
+  if (buddyArt) console.log(buddyArt);
   console.log("");
 }
 
-/**
- * Print a styled horizontal separator line.
- */
 export function printSeparator(width?: number): void {
   const w = width ?? Math.min(process.stdout.columns || 80, 70);
   console.log(c.separator("   " + "─".repeat(w - 3)));
 }
 
 /**
- * Print a clean horizontal line above the prompt (Claude Code style).
+ * Print a clean horizontal line for the input box.
  */
 export function printInputLine(): void {
   const w = Math.min(process.stdout.columns || 80, 70);
-  console.log(c.dim("─".repeat(w)));
+  console.log(c.muted("─".repeat(w)));
 }
 
 /**
- * Print the status line below the prompt: mode on left, context on right.
- * Like Claude Code's "❯❯ bypass permissions on (shift+tab to cycle)"
+ * Print the status line below input box.
+ * Mode on left, colored context bar on right, buddy quip at end.
+ *
+ * Layout: ❯❯ yolo mode (shift+tab)          ████░░░░ 12% · 240K/2M
  */
-export function printStatusLine(mode: string, contextPercent?: number, contextUsed?: string, contextLimit?: string): void {
-  const w = Math.min(process.stdout.columns || 80, 70);
-
-  // Left side: mode indicator
-  let left = "";
+export function printStatusLine(
+  mode: string,
+  contextPercent?: number,
+  contextUsed?: string,
+  contextLimit?: string,
+  buddyName?: string,
+  buddyMood?: string
+): void {
+  // Left: mode
+  let modeLabel = "";
   switch (mode) {
     case "yolo":
-      left = c.bright("❯❯") + " " + chalk.hex("#FF1744")("yolo mode");
+      modeLabel = c.red("❯❯") + " " + c.red("yolo mode");
       break;
     case "plan":
-      left = c.bright("❯❯") + " " + chalk.hex("#E040FB")("plan mode");
+      modeLabel = c.magenta("❯❯") + " " + c.magenta("plan mode");
       break;
     case "accept-edits":
-      left = c.bright("❯❯") + " " + chalk.hex("#FFD600")("auto-edits");
+      modeLabel = c.yellow("❯❯") + " " + c.yellow("auto-edits");
       break;
     default:
-      left = c.dim("❯❯") + " " + c.dim("normal");
+      modeLabel = c.muted("❯❯") + " " + c.muted("normal mode");
+  }
+  modeLabel += " " + c.muted("(shift+tab to cycle)");
+
+  // Right: context bar
+  let ctxDisplay = "";
+  if (contextPercent !== undefined && contextPercent >= 0) {
+    const barWidth = 10;
+    const filled = Math.round((contextPercent / 100) * barWidth);
+    const empty = barWidth - filled;
+    const barColor = contextPercent < 50 ? c.green : contextPercent < 75 ? c.yellow : c.red;
+    const pctColor = contextPercent < 50 ? c.green : contextPercent < 75 ? c.yellow : c.red;
+
+    ctxDisplay =
+      barColor("█".repeat(filled)) +
+      c.muted("░".repeat(empty)) +
+      " " +
+      pctColor(`${contextPercent}%`) +
+      c.muted(` · ${contextUsed ?? "0"}/${contextLimit ?? "?"}`);
   }
 
-  left += " " + c.dim("(shift+tab to cycle)");
-
-  // Right side: context percentage
-  let right = "";
-  if (contextPercent !== undefined && contextPercent > 0) {
-    const ctxColor = contextPercent < 50 ? chalk.hex("#00E676") : contextPercent < 75 ? chalk.hex("#FFD600") : chalk.hex("#FF1744");
-    right = ctxColor(`${contextPercent}%`) + c.dim(` ctx`);
-    if (contextUsed && contextLimit) {
-      right += c.dim(` · ${contextUsed}/${contextLimit}`);
-    }
+  // Buddy quip
+  let buddyQuip = "";
+  if (buddyName && buddyMood) {
+    const moodIcon = buddyMood === "happy" ? "♥" : buddyMood === "thinking" ? "…" : "z";
+    buddyQuip = c.muted(` · ${buddyName} ${moodIcon}`);
   }
 
-  // Pad between left and right
-  const plainLeftLen = mode.length + 25; // approximate visible chars
-  const plainRightLen = right ? (contextPercent?.toString().length ?? 0) + 20 : 0;
-  const padding = Math.max(2, w - plainLeftLen - plainRightLen);
-
-  console.log(left + " ".repeat(padding) + right);
+  console.log(modeLabel + "          " + ctxDisplay + buddyQuip);
+  console.log(""); // Extra breathing room at bottom
 }
 
 /**
@@ -157,7 +161,7 @@ export function printTurnSeparator(info?: {
   console.log(
     "\n" +
     c.muted("  " + "─".repeat(leftLen)) +
-    c.dim(label) +
+    c.separator(label) +
     c.muted("─".repeat(rightLen))
   );
 }
