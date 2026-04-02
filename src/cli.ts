@@ -61,6 +61,7 @@ import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown
 import { printBanner, printTurnSeparator } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
+import { loadBuddy, printBuddy, saveBuddy, recordToolCallSuccess, type BuddyData } from "./ui/buddy.ts";
 import { theme, styleCost, styleTokens } from "./ui/theme.ts";
 import { lsTool } from "./tools/ls.ts";
 import { configTool } from "./tools/config.ts";
@@ -280,21 +281,28 @@ async function main() {
   if (dangerouslySkipPermissions) setMode("yolo");
   else if (autoAcceptEditsFlag) setMode("accept-edits");
 
+  // Load buddy
+  const buddy = await loadBuddy();
+  buddy.totalSessions++;
+  buddy.mood = "happy";
+
   // Header (suppress in print mode)
   if (!printMode) {
     const startMode = dangerouslySkipPermissions ? "yolo" : autoAcceptEditsFlag ? "accept-edits" : undefined;
     printBanner(VERSION, router.currentProvider.name, router.currentProvider.config.model, startMode);
-    console.log(chalk.dim(`  ${cwd}`));
-    console.log(chalk.dim(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to exit.\n`));
+    printBuddy(buddy);
+    console.log(theme.tertiary(`  ${cwd}`));
+    console.log(theme.tertiary(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to exit.\n`));
   }
 
-  // Graceful Ctrl+C handling — save context before exit
+  // Graceful Ctrl+C handling — save context + buddy before exit
   process.on("SIGINT", async () => {
     try {
-      // Save any in-flight conversation history
       if (state.history.length > 0) {
         await state.session.appendMessages(state.history.slice(-2));
       }
+      buddy.mood = "sleepy";
+      await saveBuddy(buddy);
     } catch {}
     if (!printMode) {
       console.log(chalk.dim(`\n${router.getCostSummary()}`));

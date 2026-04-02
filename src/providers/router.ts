@@ -52,6 +52,22 @@ export class ProviderRouter {
           ...config,
           baseURL: config.baseURL ?? "https://api.openai.com/v1",
         }, [0, 0]);
+      case "ollama":
+        return createOpenAICompatibleProvider("ollama", {
+          ...config,
+          apiKey: config.apiKey || "ollama",
+          baseURL: config.baseURL ?? "http://localhost:11434/v1",
+        }, [0, 0]); // Free — local model
+      case "groq":
+        return createOpenAICompatibleProvider("groq", {
+          ...config,
+          baseURL: config.baseURL ?? "https://api.groq.com/openai/v1",
+        }, [0.05, 0.10]);
+      case "deepseek":
+        return createOpenAICompatibleProvider("deepseek", {
+          ...config,
+          baseURL: config.baseURL ?? "https://api.deepseek.com/v1",
+        }, [0.14, 0.28]);
       default:
         throw new Error(`Unknown provider: ${config.provider}`);
     }
