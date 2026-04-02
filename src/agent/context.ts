@@ -25,6 +25,23 @@ const DEFAULT_CONFIG: ContextConfig = {
   recentMessageCount: 10,
 };
 
+/** Provider-aware context limits (in tokens). */
+const PROVIDER_CONTEXT_LIMITS: Record<string, number> = {
+  xai: 2_000_000,
+  anthropic: 200_000,
+};
+
+/**
+ * Get the context token limit for a given provider.
+ */
+export function getProviderContextLimit(providerName: string): number {
+  const lower = providerName.toLowerCase();
+  for (const [key, limit] of Object.entries(PROVIDER_CONTEXT_LIMITS)) {
+    if (lower.includes(key)) return limit;
+  }
+  return DEFAULT_CONFIG.maxContextTokens;
+}
+
 /**
  * Estimate token count for messages.
  * Uses ~4 chars per token heuristic (good enough for cost tracking).
@@ -56,14 +73,18 @@ function blockCharCount(block: ContentBlock): number {
 
 /**
  * Check if context needs compaction.
+ *
+ * @param actualTokensUsed - If provided, uses the real token count from the
+ *   last API response instead of the chars/4 estimate.
  */
 export function needsCompaction(
   messages: Message[],
   systemPromptTokens: number,
-  config: Partial<ContextConfig> = {}
+  config: Partial<ContextConfig> = {},
+  actualTokensUsed?: number
 ): boolean {
   const cfg = { ...DEFAULT_CONFIG, ...config };
-  const messageTokens = estimateTokens(messages);
+  const messageTokens = actualTokensUsed ?? estimateTokens(messages);
   return messageTokens + systemPromptTokens > cfg.maxContextTokens - cfg.reserveTokens;
 }
 

@@ -11,6 +11,7 @@ import type {
   StreamEvent,
   ToolCall,
 } from "./types.ts";
+import { categorizeError } from "../agent/error-handler.ts";
 
 export function createXAIProvider(config: ProviderConfig): Provider {
   const client = new OpenAI({
@@ -40,14 +41,18 @@ export function createXAIProvider(config: ProviderConfig): Provider {
         ...request.messages.flatMap(convertMessage),
       ];
 
-      const stream = await client.chat.completions.create({
-        model: config.model,
-        messages,
-        tools: tools.length > 0 ? tools : undefined,
-        max_tokens: request.maxTokens ?? config.maxTokens ?? 8192,
-        stream: true,
-        stream_options: { include_usage: true },
-      });
+      const stream = await retryStreamCreate(
+        () =>
+          client.chat.completions.create({
+            model: config.model,
+            messages,
+            tools: tools.length > 0 ? tools : undefined,
+            max_tokens: request.maxTokens ?? config.maxTokens ?? 8192,
+            stream: true,
+            stream_options: { include_usage: true },
+          }),
+        "xai"
+      );
 
       const toolCalls = new Map<number, { id: string; name: string; args: string }>();
 
@@ -187,4 +192,53 @@ function convertMessage(
   }
 
   return [{ role: msg.role === "tool" ? "user" : msg.role, content: textParts }];
+}
+
+/**
+ * Retry API stream creation with category-aware backoff.
+ * - Rate limit (429): up to 3 retries, exponential backoff from 1s
+ * - Network errors: up to 2 retries, 2s base delay
+ * - Auth errors (401/403): fail immediately
+ */
+async function retryStreamCreate<T>(
+  fn: () => Promise<T>,
+  providerName: string
+): Promise<T> {
+  const MAX_RETRIES_RATE_LIMIT = 3;
+  const MAX_RETRIES_NETWORK = 2;
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err as Error;
+      const categorized = categorizeError(lastError);
+
+      // Auth errors: fail immediately
+      if (categorized.category === "auth") {
+        throw new Error(
+          `[${providerName}] Authentication failed — check your API key. (${lastError.message})`
+        );
+      }
+
+      const maxRetries =
+        categorized.category === "rate_limit"
+          ? MAX_RETRIES_RATE_LIMIT
+          : categorized.category === "network"
+            ? MAX_RETRIES_NETWORK
+            : 0;
+
+      if (!categorized.retryable || attempt >= maxRetries) {
+        throw lastError;
+      }
+
+      const baseDelay = categorized.category === "rate_limit" ? 1000 : 2000;
+      const delay = baseDelay * Math.pow(2, attempt);
+      process.stderr.write(
+        `[${providerName}] ${categorized.category} error, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...\n`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
 }

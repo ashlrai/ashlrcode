@@ -23,6 +23,7 @@ import {
   autoCompact,
   snipCompact,
   estimateTokens,
+  getProviderContextLimit,
 } from "./agent/context.ts";
 import {
   isPlanMode,
@@ -66,6 +67,7 @@ import { notebookEditTool } from "./tools/notebook-edit.ts";
 import { sendMessageTool } from "./tools/send-message.ts";
 import { sleepTool } from "./tools/sleep.ts";
 import { todoWriteTool } from "./tools/todo-write.ts";
+import { diffTool } from "./tools/diff.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { initTasks } from "./tools/tasks.ts";
@@ -73,7 +75,7 @@ import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -145,6 +147,7 @@ async function main() {
   registry.register(sendMessageTool);
   registry.register(sleepTool);
   registry.register(todoWriteTool);
+  registry.register(diffTool);
   initToolSearch(registry);
 
   // Set up hooks from settings
@@ -612,8 +615,13 @@ async function runTurn(input: string, state: AppState): Promise<void> {
       state.baseSystemPrompt + getPlanModePrompt();
 
     // Check if context needs compaction before this turn
+    // Use actual token counts from the cost tracker when available
     const systemTokens = Math.ceil(systemPrompt.length / 4);
-    if (needsCompaction(state.history, systemTokens)) {
+    const actualTokensUsed = state.router.costs.totalInputTokens > 0
+      ? state.router.costs.totalInputTokens
+      : undefined;
+    const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
+    if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit }, actualTokensUsed)) {
       console.log(chalk.dim("  [compacting context...]"));
       state.history = snipCompact(state.history);
       state.history = await autoCompact(state.history, state.router);
