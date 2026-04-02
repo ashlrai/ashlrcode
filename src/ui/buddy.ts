@@ -165,9 +165,21 @@ const ASCII_ART: Record<Species, Record<Mood, string[][]>> = {
   },
 };
 
-// Animation frame counter
+// Animation frame counter — started/stopped explicitly to avoid leaked handles
 let animFrame = 0;
-setInterval(() => { animFrame++; }, 1500);
+let animInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startBuddyAnimation(): void {
+  if (animInterval) return;
+  animInterval = setInterval(() => { animFrame++; }, 1500);
+}
+
+export function stopBuddyAnimation(): void {
+  if (animInterval) {
+    clearInterval(animInterval);
+    animInterval = null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Name pool

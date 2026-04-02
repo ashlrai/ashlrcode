@@ -307,9 +307,11 @@ async function main() {
     }
   }
 
-  // Graceful Ctrl+C — only for non-Ink paths (Ink handles its own exit)
+  // Graceful Ctrl+C — only for non-interactive paths (--print, single-shot)
   // In Ink mode, repl.tsx handleExit() manages cleanup + process.exit
-  process.on("SIGINT", async () => {
+  // Only register SIGINT for non-Ink paths. Ink handles its own exit.
+  const isNonInteractive = printMode || args.some(a => !a.startsWith("-") && !a.startsWith("--"));
+  if (isNonInteractive) process.on("SIGINT", async () => {
     try {
       if (state.history.length > 0) {
         await state.session.appendMessages(state.history.slice(-2));

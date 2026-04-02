@@ -12,7 +12,7 @@ import { runAgentLoop } from "./agent/loop.ts";
 import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact } from "./agent/context.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
-import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy } from "./ui/buddy.ts";
+import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
@@ -87,13 +87,15 @@ interface ReplState {
 }
 
 export function startInkRepl(state: ReplState, maxCostUSD: number): void {
-  // IMPORTANT: Ink takes ownership of stdin in raw mode.
-  // readline-based permission prompts (askPermission, askUserTool) will deadlock.
-  // Enable bypass mode so all tools are auto-approved in Ink mode.
-  // TODO: Build Ink-native permission prompt component.
+  // Ink owns stdin in raw mode — readline prompts would deadlock.
+  // Auto-approve all tools. TODO: Build Ink-native permission prompts.
   setBypassMode(true);
-  let items: Array<{ id: number; text: string }> = [];
-  let nextId = 0;
+  startBuddyAnimation();
+
+  let items: Array<{ id: number; text: string }> = [
+    { id: 0, text: theme.warning("  ⚠ All tools auto-approved (Ink mode). Use with care.") },
+  ];
+  let nextId = 1;
   let isProcessing = false;
   let spinnerText = "Thinking";
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
@@ -238,7 +240,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         onText: (text) => {
           isProcessing = false;
           responseText += text;
-          // Flush complete lines immediately
+          // Only flush COMPLETE lines to Static (they can't be re-rendered)
           const lines = responseText.split("\n");
           if (lines.length > 1) {
             for (let i = 0; i < lines.length - 1; i++) {
@@ -246,11 +248,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
             }
             responseText = lines[lines.length - 1]!;
           }
-          // Also flush partial text after 200ms of no newlines (live streaming feel)
-          if (responseText.length > 0) {
-            addOutput(responseText);
-            responseText = "";
-          }
+          // Partial line stays in spinnerText for live display (re-renderable)
+          spinnerText = responseText;
           update();
         },
         onToolStart: (name, toolInput) => {
@@ -310,6 +309,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }
 
   async function handleExit() {
+    stopBuddyAnimation();
     state.buddy.mood = "sleepy";
     await saveBuddy(state.buddy).catch(() => {});
     console.log("\n" + state.router.getCostSummary());
