@@ -261,11 +261,11 @@ function highlightCode(line: string, lang: string): string {
 }
 
 function renderInline(text: string): string {
-  // Bold: **text**
-  text = text.replace(/\*\*([^*]+)\*\*/g, chalk.bold("$1"));
+  // Bold: **text** — use replacer function so chalk wraps the captured group
+  text = text.replace(/\*\*([^*]+)\*\*/g, (_match, g1) => chalk.bold(g1));
 
   // Inline code: `text`
-  text = text.replace(/`([^`]+)`/g, chalk.cyan("`$1`"));
+  text = text.replace(/`([^`]+)`/g, (_match, g1) => chalk.cyan(`\`${g1}\``));
 
   return text;
 }

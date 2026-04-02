@@ -262,7 +262,7 @@ export function getBuddyReaction(buddy: BuddyData, event: BuddyEvent): string {
  * Check if this is the first tool call of the session.
  */
 export function isFirstToolCall(): boolean {
-  return totalToolCallsThisSession === 1;
+  return totalToolCallsThisSession === 0; // Called in onToolStart, before recordToolCallSuccess increments
 }
 
 /**

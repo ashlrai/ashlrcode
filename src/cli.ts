@@ -884,6 +884,7 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     }
   } catch (err) {
     spinner?.stop();
+    resetMarkdown(); // Ensure markdown state is clean after errors
 
     const error = err instanceof Error ? err : new Error(String(err));
     const categorized = categorizeError(error);
