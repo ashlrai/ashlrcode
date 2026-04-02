@@ -25,6 +25,9 @@ import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
 import { setBypassMode } from "./config/permissions.ts";
+import { scanCodebase } from "./autopilot/scanner.ts";
+import { WorkQueue } from "./autopilot/queue.ts";
+import { DEFAULT_CONFIG } from "./autopilot/types.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -88,9 +91,12 @@ interface ReplState {
 
 export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Ink owns stdin in raw mode — readline prompts would deadlock.
-  // Auto-approve all tools. TODO: Build Ink-native permission prompts.
   setBypassMode(true);
   startBuddyAnimation();
+
+  // Autopilot work queue
+  const workQueue = new WorkQueue(state.toolContext.cwd);
+  workQueue.load().catch(() => {});
 
   let items: Array<{ id: number; text: string }> = [
     { id: 0, text: theme.warning("  ⚠ All tools auto-approved (Ink mode). Use with care.") },
@@ -146,14 +152,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
 
       // Commands
-      const handled = handleCommand(input);
+      const handled = await handleCommand(input);
       if (handled) return;
     }
 
     await runTurnInk(input);
   }
 
-  function handleCommand(input: string): boolean {
+  async function handleCommand(input: string): Promise<boolean> {
     const [cmd, ...rest] = input.split(" ");
     const arg = rest.join(" ").trim();
 
@@ -198,6 +204,152 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           addOutput(`\n  ${state.router.currentProvider.name}:${state.router.currentProvider.config.model}\n`);
         }
         return true;
+      case "/autopilot": {
+        const subCmd = arg?.split(" ")[0];
+
+        if (!subCmd || subCmd === "scan") {
+          // Run scan
+          addOutput(theme.accent("\n  🔍 Scanning codebase for work items...\n"));
+          isProcessing = true;
+          spinnerText = "Scanning";
+          update();
+
+          try {
+            const scanCtx = {
+              cwd: state.toolContext.cwd,
+              runCommand: async (cmd: string) => {
+                const proc = Bun.spawn(["bash", "-c", cmd], {
+                  cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe",
+                });
+                return await new Response(proc.stdout).text();
+              },
+              searchFiles: async (pattern: string, path?: string) => {
+                const fg = await import("fast-glob");
+                const files = await fg.default(pattern, {
+                  cwd: path ? `${state.toolContext.cwd}/${path}` : state.toolContext.cwd,
+                  absolute: false, ignore: ["**/node_modules/**", "**/.git/**"],
+                });
+                return files.join("\n");
+              },
+              grepContent: async (pattern: string, glob?: string) => {
+                const args = ["bash", "-c", `grep -rn '${pattern}' ${state.toolContext.cwd} ${glob ? `--include='${glob}'` : ""} 2>/dev/null | head -50`];
+                const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+                return await new Response(proc.stdout).text();
+              },
+            };
+
+            const discovered = await scanCodebase(scanCtx, DEFAULT_CONFIG.scanTypes);
+            const added = workQueue.addItems(discovered);
+            await workQueue.save();
+
+            const stats = workQueue.getStats();
+            addOutput(theme.success(`  ✓ Scan complete: ${discovered.length} issues found, ${added} new\n`));
+
+            // Show summary by type
+            const byType = new Map<string, number>();
+            for (const item of discovered) {
+              byType.set(item.type, (byType.get(item.type) ?? 0) + 1);
+            }
+            for (const [type, count] of byType) {
+              addOutput(theme.secondary(`    ${type}: ${count}`));
+            }
+
+            addOutput(theme.tertiary(`\n  Queue: ${stats.discovered ?? 0} pending · ${stats.approved ?? 0} approved · ${stats.completed ?? 0} done`));
+            addOutput(theme.tertiary(`  Use /autopilot queue to see items, /autopilot approve all to approve\n`));
+
+          } catch (err) {
+            addOutput(theme.error(`  Scan failed: ${err instanceof Error ? err.message : String(err)}\n`));
+          }
+
+          isProcessing = false;
+          update();
+          return true;
+        }
+
+        if (subCmd === "queue" || subCmd === "status") {
+          const pending = workQueue.getByStatus("discovered");
+          const approved = workQueue.getByStatus("approved");
+          const stats = workQueue.getStats();
+
+          addOutput(theme.accent(`\n  📋 Autopilot Queue\n`));
+          addOutput(theme.tertiary(`  ${stats.discovered ?? 0} discovered · ${stats.approved ?? 0} approved · ${stats.in_progress ?? 0} in progress · ${stats.completed ?? 0} done\n`));
+
+          if (pending.length > 0) {
+            addOutput(theme.primary("  Pending (needs approval):"));
+            for (const item of pending.slice(0, 15)) {
+              const pColor = item.priority === "critical" ? theme.error : item.priority === "high" ? theme.warning : theme.secondary;
+              addOutput(`  ${pColor(`[${item.priority}]`)} ${theme.accent(item.id)} ${item.title}`);
+            }
+            if (pending.length > 15) addOutput(theme.tertiary(`  ... and ${pending.length - 15} more`));
+          }
+
+          if (approved.length > 0) {
+            addOutput(theme.primary("\n  Approved (ready to execute):"));
+            for (const item of approved.slice(0, 10)) {
+              addOutput(`  ${theme.success("✓")} ${theme.accent(item.id)} ${item.title}`);
+            }
+          }
+
+          addOutput(theme.tertiary(`\n  /autopilot approve <id> — approve one`));
+          addOutput(theme.tertiary(`  /autopilot approve all — approve all`));
+          addOutput(theme.tertiary(`  /autopilot run — execute next approved item\n`));
+          return true;
+        }
+
+        if (subCmd === "approve") {
+          const target = arg?.split(" ").slice(1).join(" ");
+          if (target === "all") {
+            const count = workQueue.approveAll();
+            await workQueue.save();
+            addOutput(theme.success(`\n  ✓ Approved ${count} items\n`));
+          } else if (target) {
+            const ok = workQueue.approve(target);
+            await workQueue.save();
+            addOutput(ok ? theme.success(`\n  ✓ Approved ${target}\n`) : theme.error(`\n  Item ${target} not found or already approved\n`));
+          } else {
+            addOutput(theme.tertiary("\n  Usage: /autopilot approve <id> or /autopilot approve all\n"));
+          }
+          return true;
+        }
+
+        if (subCmd === "run") {
+          const next = workQueue.getNextApproved();
+          if (!next) {
+            addOutput(theme.tertiary("\n  No approved items to execute. Run /autopilot scan then /autopilot approve all\n"));
+            return true;
+          }
+
+          workQueue.startItem(next.id);
+          await workQueue.save();
+          addOutput(theme.accent(`\n  🚀 Executing: ${next.title}\n`));
+
+          // Execute through the agent loop
+          const prompt = `Fix this issue:\n\nType: ${next.type}\nFile: ${next.file}${next.line ? `:${next.line}` : ""}\nDescription: ${next.description}\n\nMake the fix, then verify it works.`;
+          await runTurnInk(prompt);
+
+          workQueue.completeItem(next.id);
+          await workQueue.save();
+          addOutput(theme.success(`  ✓ Completed: ${next.title}\n`));
+
+          // Check for more
+          const remaining = workQueue.getByStatus("approved").length;
+          if (remaining > 0) {
+            addOutput(theme.tertiary(`  ${remaining} more approved items. /autopilot run to continue\n`));
+          }
+          return true;
+        }
+
+        // Help
+        addOutput(theme.accent("\n  🤖 Autopilot — autonomous work discovery\n"));
+        addOutput(theme.secondary("  /autopilot scan        — scan codebase for issues"));
+        addOutput(theme.secondary("  /autopilot queue       — show work queue"));
+        addOutput(theme.secondary("  /autopilot approve all — approve all discovered items"));
+        addOutput(theme.secondary("  /autopilot approve <id>— approve one item"));
+        addOutput(theme.secondary("  /autopilot run         — execute next approved item"));
+        addOutput(theme.tertiary("\n  Workflow: scan → review queue → approve → run\n"));
+        return true;
+      }
+
       default:
         if (cmd?.startsWith("/")) {
           addOutput(theme.tertiary(`\n  Unknown command: ${cmd}\n`));
