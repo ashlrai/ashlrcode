@@ -1,17 +1,15 @@
 /**
- * Context window usage visualization.
- *
- * Shows a progress bar indicating how full the context window is.
+ * Context window usage visualization with themed colors.
  */
 
-import chalk from "chalk";
+import { theme, styleTokens } from "./theme.ts";
 import { estimateTokens, getProviderContextLimit } from "../agent/context.ts";
 import type { Message } from "../providers/types.ts";
 
-const BAR_WIDTH = 20;
+const BAR_WIDTH = 24;
 
 /**
- * Render the context usage bar.
+ * Render the context usage bar with color-coded progress.
  */
 export function renderContextBar(
   messages: Message[],
@@ -22,49 +20,41 @@ export function renderContextBar(
   const used = estimateTokens(messages) + systemPromptTokens;
   const percentage = Math.min(100, Math.round((used / limit) * 100));
 
+  if (percentage < 1 && messages.length < 3) return ""; // Don't show on first message
+
   const filled = Math.round((percentage / 100) * BAR_WIDTH);
   const empty = BAR_WIDTH - filled;
 
-  // Color based on usage
-  let colorFn: (s: string) => string;
-  if (percentage < 50) {
-    colorFn = chalk.green;
+  // Color based on usage level
+  let barColor: (s: string) => string;
+  let label: string;
+  if (percentage < 25) {
+    barColor = theme.success;
+    label = theme.secondary(`${percentage}%`);
+  } else if (percentage < 50) {
+    barColor = theme.success;
+    label = theme.secondary(`${percentage}%`);
   } else if (percentage < 75) {
-    colorFn = chalk.yellow;
+    barColor = theme.warning;
+    label = theme.warning(`${percentage}%`);
   } else {
-    colorFn = chalk.red;
+    barColor = theme.error;
+    label = theme.error(`${percentage}%`);
   }
 
-  const bar = colorFn("█".repeat(filled)) + chalk.dim("░".repeat(empty));
-  const label = formatTokenCount(used);
-  const limitLabel = formatTokenCount(limit);
+  const filledBar = barColor("█".repeat(filled));
+  const emptyBar = theme.muted("░".repeat(empty));
 
-  return chalk.dim("  Context: ") + bar + chalk.dim(` ${percentage}% (${label} / ${limitLabel})`);
-}
-
-/**
- * Render a compact inline context indicator for the prompt line.
- */
-export function renderContextInline(
-  messages: Message[],
-  providerName: string
-): string {
-  const limit = getProviderContextLimit(providerName);
-  const used = estimateTokens(messages);
-  const percentage = Math.min(100, Math.round((used / limit) * 100));
-
-  if (percentage < 25) return ""; // Don't show when context is mostly empty
-
-  let colorFn: (s: string) => string;
-  if (percentage < 50) colorFn = chalk.green;
-  else if (percentage < 75) colorFn = chalk.yellow;
-  else colorFn = chalk.red;
-
-  return colorFn(`${percentage}%`);
-}
-
-function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(0)}K`;
-  return `${count}`;
+  return (
+    theme.tertiary("  ctx ") +
+    theme.muted("[") +
+    filledBar +
+    emptyBar +
+    theme.muted("] ") +
+    label +
+    theme.muted(" · ") +
+    styleTokens(used) +
+    theme.muted(" / ") +
+    styleTokens(limit)
+  );
 }

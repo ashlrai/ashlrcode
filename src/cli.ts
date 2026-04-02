@@ -56,11 +56,12 @@ import {
   setAutoAcceptEdits,
   isBypassMode,
 } from "./config/permissions.ts";
-import { Spinner } from "./ui/spinner.ts";
+import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { printBanner } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
+import { theme, styleCost, styleTokens } from "./ui/theme.ts";
 import { lsTool } from "./tools/ls.ts";
 import { configTool } from "./tools/config.ts";
 import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.ts";
@@ -719,23 +720,23 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         if (printMode) return;
         spinner?.stop();
         firstTextReceived = false;
-        const icon = isPlanMode() ? chalk.magenta("◆") : chalk.yellow("●");
-        console.log(chalk.dim(`\n  ${icon} ${chalk.bold(name)}`));
+        const icon = isPlanMode() ? theme.plan("◆") : theme.toolIcon("●");
+        console.log(`\n  ${icon} ${theme.toolName(name)}`);
         const preview = formatToolPreview(name, toolInput);
-        console.log(chalk.dim(`    ${preview}`));
-        spinner?.start(`Running ${name}`);
+        console.log(theme.tertiary(`    ${preview}`));
+        spinner?.start(getToolPhrase(name));
       },
       onToolEnd: (_name, result, isError) => {
         if (printMode) return;
         spinner?.stop();
-        const status = isError ? chalk.red("✗") : chalk.green("✓");
+        const status = isError ? theme.error("✗") : theme.success("✓");
         const lines = result.split("\n");
         const preview = lines[0]?.slice(0, 100) ?? "";
         const extra =
           lines.length > 1
-            ? chalk.dim(` (+${lines.length - 1} lines)`)
+            ? theme.tertiary(` (+${lines.length - 1} lines)`)
             : "";
-        console.log(chalk.dim(`    ${status} ${preview}${extra}\n`));
+        console.log(theme.tertiary(`    ${status} ${preview}${extra}\n`));
       },
     });
 

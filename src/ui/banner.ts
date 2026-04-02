@@ -1,13 +1,21 @@
 /**
  * ASCII art banner for AshlrCode startup.
+ * Uses gradient-style coloring for a premium feel.
  */
 
 import chalk from "chalk";
 
-const LOGO = [
-  "   ╔═╗┌─┐┬ ┬┬  ┬─┐╔═╗┌─┐┌┬┐┌─┐",
-  "   ╠═╣└─┐├─┤│  ├┬┘║  │ │ ││├┤ ",
-  "   ╩ ╩└─┘┴ ┴┴─┘┴└─╚═╝└─┘─┴┘└─┘",
+const LOGO_LINES = [
+  "   ╔═╗┌─┐┬ ┬┬  ┬─┐  ╔═╗┌─┐┌┬┐┌─┐",
+  "   ╠═╣└─┐├─┤│  ├┬┘  ║  │ │ ││├┤ ",
+  "   ╩ ╩└─┘┴ ┴┴─┘┴└─  ╚═╝└─┘─┴┘└─┘",
+];
+
+// Gradient from bright cyan to blue
+const GRADIENT = [
+  chalk.hex("#00E5FF"),  // bright cyan
+  chalk.hex("#00B8D4"),  // mid cyan
+  chalk.hex("#0091EA"),  // blue
 ];
 
 export function printBanner(
@@ -18,25 +26,29 @@ export function printBanner(
 ): void {
   console.log("");
 
-  // Print logo in cyan
-  for (const line of LOGO) {
-    console.log(chalk.cyan(line));
-  }
+  // Print logo with gradient
+  LOGO_LINES.forEach((line, i) => {
+    const colorFn = GRADIENT[i % GRADIENT.length]!;
+    console.log(colorFn(line));
+  });
 
-  // Info line
-  const parts: string[] = [
-    chalk.dim(`v${version}`),
-    chalk.dim(`${provider}:${model}`),
-  ];
+  // Separator
+  console.log(chalk.hex("#1a1a2e")("   " + "─".repeat(34)));
 
+  // Info line with styled segments
+  const versionStr = chalk.hex("#888")(`v${version}`);
+  const providerStr = chalk.hex("#00E5FF")(provider) + chalk.hex("#555")(`:${model}`);
+
+  let modeStr = "";
   if (mode === "yolo") {
-    parts.push(chalk.red.bold("YOLO"));
+    modeStr = chalk.bgRed.white.bold(" YOLO ");
   } else if (mode === "accept-edits") {
-    parts.push(chalk.yellow("auto-edits"));
+    modeStr = chalk.bgYellow.black(" EDITS ");
   } else if (mode === "plan") {
-    parts.push(chalk.magenta("plan"));
+    modeStr = chalk.bgMagenta.white(" PLAN ");
   }
 
-  console.log(chalk.dim("   ") + parts.join(chalk.dim(" | ")));
+  const infoParts = [`   ${versionStr}`, providerStr];
+  console.log(infoParts.join(chalk.hex("#333")(" · ")) + (modeStr ? `  ${modeStr}` : ""));
   console.log("");
 }

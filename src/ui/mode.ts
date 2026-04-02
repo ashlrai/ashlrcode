@@ -3,7 +3,7 @@
  * Shift+Tab (escape sequence \x1b[Z) cycles modes.
  */
 
-import chalk from "chalk";
+import { theme } from "./theme.ts";
 import {
   setBypassMode,
   setAutoAcceptEdits,
@@ -63,16 +63,7 @@ export function cycleMode(): Mode {
 }
 
 export function getPromptForMode(): string {
-  switch (currentMode) {
-    case "normal":
-      return chalk.green("❯ ");
-    case "plan":
-      return chalk.magenta("[plan] ❯ ");
-    case "accept-edits":
-      return chalk.yellow("[edits] ❯ ");
-    case "yolo":
-      return chalk.red("[YOLO] ❯ ");
-  }
+  return theme.prompt[currentMode === "accept-edits" ? "edits" : currentMode];
 }
 
 export function getModeLabel(): string {
@@ -80,10 +71,10 @@ export function getModeLabel(): string {
     case "normal":
       return "";
     case "plan":
-      return chalk.magenta("PLAN");
+      return theme.plan("PLAN");
     case "accept-edits":
-      return chalk.yellow("EDITS");
+      return theme.warning("EDITS");
     case "yolo":
-      return chalk.red("YOLO");
+      return theme.error("YOLO");
   }
 }
