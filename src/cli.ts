@@ -58,7 +58,7 @@ import {
 } from "./config/permissions.ts";
 import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
-import { printBanner, printTurnSeparator } from "./ui/banner.ts";
+import { printBanner, printTurnSeparator, printPromptGuardrail } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
 import { loadBuddy, printBuddy, saveBuddy, startSession, recordToolCallSuccess, recordThinking, recordError, getBuddyReaction, isFirstToolCall, type BuddyData } from "./ui/buddy.ts";
@@ -344,6 +344,12 @@ async function main() {
 
   let multiLineBuffer = "";
 
+  /** Show guardrail + prompt */
+  function showPrompt() {
+    if (!printMode) printPromptGuardrail();
+    rl.prompt();
+  }
+
   // Shift+Tab mode cycling
   if (process.stdin.isTTY) {
     process.stdin.on("data", (data: Buffer) => {
@@ -353,12 +359,12 @@ async function main() {
         const modeLabel = newMode === "normal" ? "normal" : newMode;
         process.stdout.write(`\r\x1b[K${chalk.dim(`  Mode: ${modeLabel}`)}\n`);
         rl.setPrompt(getPrompt());
-        rl.prompt();
+        showPrompt();
       }
     });
   }
 
-  rl.prompt();
+  showPrompt();
 
   rl.on("line", async (line) => {
     // Multi-line: if line ends with \, buffer and continue
@@ -374,7 +380,7 @@ async function main() {
 
     if (!input) {
       rl.setPrompt(getPrompt());
-      rl.prompt();
+      showPrompt();
       return;
     }
 
@@ -382,11 +388,11 @@ async function main() {
     if (input.startsWith("/") && state.skillRegistry.isSkill(input.split(" ")[0]!)) {
       const expanded = state.skillRegistry.expand(input);
       if (expanded) {
-        console.log(chalk.dim(`  [skill: ${input.split(" ")[0]}]\n`));
+        console.log(theme.tertiary(`  [skill: ${input.split(" ")[0]}]\n`));
         await runTurn(expanded, state);
         console.log("");
         rl.setPrompt(getPrompt());
-        rl.prompt();
+        showPrompt();
         return;
       }
     }
@@ -395,7 +401,7 @@ async function main() {
     if (input.startsWith("/")) {
       await handleCommand(input, state, rl);
       rl.setPrompt(getPrompt());
-      rl.prompt();
+      showPrompt();
       return;
     }
 
@@ -413,7 +419,7 @@ async function main() {
     }
     console.log("");
     rl.setPrompt(getPrompt());
-    rl.prompt();
+    showPrompt();
   });
 
   rl.on("close", async () => {

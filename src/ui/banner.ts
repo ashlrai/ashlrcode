@@ -68,11 +68,18 @@ export function printBanner(
 
 /**
  * Print a styled horizontal separator line.
- * Use between conversation turns for visual clarity.
  */
 export function printSeparator(width?: number): void {
   const w = width ?? Math.min(process.stdout.columns || 80, 70);
   console.log(c.separator("   " + "─".repeat(w - 3)));
+}
+
+/**
+ * Print a thin guardrail line above the prompt to frame the input area.
+ */
+export function printPromptGuardrail(): void {
+  const w = Math.min(process.stdout.columns || 80, 60);
+  process.stdout.write(c.dim("  " + "╌".repeat(w - 2) + "\n"));
 }
 
 /**
