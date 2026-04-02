@@ -1,80 +1,98 @@
 /**
- * Unified color theme for AshlrCode CLI.
+ * Premium color theme for AshlrCode CLI.
  *
- * Consistent palette across all UI elements for a premium feel.
+ * Vibrant, warm palette with high contrast and visual hierarchy.
+ * Inspired by modern terminal apps (Warp, Fig, Ghostty).
  */
 
-import chalk, { type ChalkInstance } from "chalk";
+import chalk from "chalk";
 
 export const theme = {
-  // Primary accent — bright cyan (matches AshlrAI brand)
-  accent: chalk.hex("#00E5FF"),
-  accentDim: chalk.hex("#00838F"),
+  // ── Brand accent (vibrant cyan-blue gradient) ──
+  accent: chalk.hex("#38BDF8"),       // sky-400 — bright, inviting
+  accentBold: chalk.hex("#38BDF8").bold,
+  accentDim: chalk.hex("#0EA5E9"),    // sky-500
 
-  // Success / tools completing
-  success: chalk.hex("#00E676"),
-  successDim: chalk.hex("#1B5E20"),
+  // ── Success (emerald green) ──
+  success: chalk.hex("#34D399"),      // emerald-400
+  successDim: chalk.hex("#059669"),
 
-  // Warning / approaching limits
-  warning: chalk.hex("#FFD600"),
-  warningDim: chalk.hex("#F57F17"),
+  // ── Warning (amber) ──
+  warning: chalk.hex("#FBBF24"),      // amber-400
+  warningDim: chalk.hex("#D97706"),
 
-  // Error / failures
-  error: chalk.hex("#FF1744"),
-  errorDim: chalk.hex("#B71C1C"),
+  // ── Error (rose) ──
+  error: chalk.hex("#FB7185"),        // rose-400
+  errorDim: chalk.hex("#E11D48"),
 
-  // Info / secondary content
-  info: chalk.hex("#82B1FF"),
-  infoDim: chalk.hex("#455A64"),
+  // ── Info (violet) ──
+  info: chalk.hex("#A78BFA"),         // violet-400
+  infoDim: chalk.hex("#7C3AED"),
 
-  // Plan mode
-  plan: chalk.hex("#E040FB"),
-  planDim: chalk.hex("#7B1FA2"),
+  // ── Plan mode (fuchsia) ──
+  plan: chalk.hex("#E879F9"),         // fuchsia-400
+  planDim: chalk.hex("#C026D3"),
 
-  // Text hierarchy
-  primary: chalk.hex("#E0E0E0"),     // main text
-  secondary: chalk.hex("#9E9E9E"),   // secondary info
-  tertiary: chalk.hex("#616161"),    // de-emphasized
-  muted: chalk.hex("#424242"),       // very dim
+  // ── Text hierarchy ──
+  primary: chalk.hex("#F1F5F9"),      // slate-100 — bright, readable
+  secondary: chalk.hex("#94A3B8"),    // slate-400 — secondary info
+  tertiary: chalk.hex("#64748B"),     // slate-500 — de-emphasized
+  muted: chalk.hex("#475569"),        // slate-600 — very dim
+  ghost: chalk.hex("#334155"),        // slate-700 — barely visible
 
-  // Special
-  cost: chalk.hex("#FFD54F"),        // cost/money display
-  tokens: chalk.hex("#80DEEA"),      // token counts
-  path: chalk.hex("#A5D6A7"),        // file paths
+  // ── Semantic colors ──
+  cost: chalk.hex("#FCD34D"),         // amber-300
+  tokens: chalk.hex("#67E8F9"),       // cyan-300
+  path: chalk.hex("#86EFAC"),         // green-300
+  keyword: chalk.hex("#38BDF8"),      // sky-400 — code keywords
+  string: chalk.hex("#34D399"),       // emerald-400 — strings
+  comment: chalk.hex("#64748B"),      // slate-500
 
-  // Tool categories
-  toolName: chalk.hex("#00E5FF").bold,
-  toolIcon: chalk.hex("#00B8D4"),
-  toolResult: chalk.hex("#B0BEC5"),
+  // ── Tool display ──
+  toolName: chalk.hex("#38BDF8").bold, // sky-400 bold
+  toolIcon: chalk.hex("#67E8F9"),      // cyan-300
+  toolResult: chalk.hex("#CBD5E1"),    // slate-300
 
-  // Prompt styles
+  // ── Separators & borders ──
+  border: chalk.hex("#334155"),        // slate-700
+  borderBright: chalk.hex("#475569"),  // slate-600
+
+  // ── Prompt (colored ❯ per mode) ──
   prompt: {
-    normal: chalk.hex("#00E676")("❯ "),
-    plan: chalk.hex("#E040FB")("❯ "),
-    edits: chalk.hex("#FFD600")("❯ "),
-    yolo: chalk.hex("#FF1744")("❯ "),
+    normal: chalk.hex("#34D399")("❯ "),    // emerald
+    plan: chalk.hex("#E879F9")("❯ "),      // fuchsia
+    edits: chalk.hex("#FBBF24")("❯ "),     // amber
+    yolo: chalk.hex("#FB7185")("❯ "),      // rose
   },
 } as const;
 
-/**
- * Format a file path with consistent styling.
- */
+// ── Helper formatters ──
+
 export function stylePath(p: string): string {
   return theme.path(p);
 }
 
-/**
- * Format a cost value.
- */
 export function styleCost(usd: number): string {
   return theme.cost(`$${usd < 0.01 ? usd.toFixed(6) : usd.toFixed(4)}`);
 }
 
-/**
- * Format token count.
- */
 export function styleTokens(count: number): string {
   if (count >= 1_000_000) return theme.tokens(`${(count / 1_000_000).toFixed(1)}M`);
   if (count >= 1_000) return theme.tokens(`${(count / 1_000).toFixed(0)}K`);
   return theme.tokens(`${count}`);
+}
+
+/**
+ * Style a label with a colored badge background.
+ */
+export function badge(text: string, color: "accent" | "success" | "warning" | "error" | "plan"): string {
+  const colors: Record<string, [string, string]> = {
+    accent: ["#0EA5E9", "#F1F5F9"],
+    success: ["#059669", "#F1F5F9"],
+    warning: ["#D97706", "#1C1917"],
+    error: ["#E11D48", "#F1F5F9"],
+    plan: ["#C026D3", "#F1F5F9"],
+  };
+  const [bg, fg] = colors[color] ?? ["#334155", "#F1F5F9"];
+  return chalk.bgHex(bg!).hex(fg!).bold(` ${text} `);
 }

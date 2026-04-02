@@ -83,28 +83,29 @@ The user can always type a custom answer beyond the provided options.`;
 
     // Top separator
     console.log("");
-    console.log(theme.accent("─".repeat(w)));
+    console.log(theme.border("─".repeat(w)));
     console.log("");
 
-    // Question
-    console.log(theme.accent("  ?  ") + theme.primary(question));
+    // Question with styled icon
+    console.log(theme.accentBold("  ✦  ") + theme.primary(question));
     console.log("");
 
     // Options — each on its own block with spacing
     options.forEach((opt, i) => {
-      const num = theme.accent(`  ${i + 1}  `);
-      const label = theme.toolName(opt.label);
-      console.log(`${num}${label}`);
+      const num = theme.accent(`  ${i + 1} `);
+      const dot = theme.accent("→");
+      const label = theme.accentBold(` ${opt.label}`);
+      console.log(`${num}${dot}${label}`);
       console.log(theme.secondary(`       ${opt.description}`));
       if (i < options.length - 1) console.log(""); // spacing between options
     });
 
     console.log("");
-    console.log(theme.tertiary(`  ${options.length + 1}   Other (type your own answer)`));
+    console.log(theme.muted(`  ${options.length + 1} → Other (type your own answer)`));
 
     // Bottom separator
     console.log("");
-    console.log(theme.accent("─".repeat(w)));
+    console.log(theme.border("─".repeat(w)));
 
     // Input prompt
     const answer = await promptUser(theme.accent("  Choice: "));

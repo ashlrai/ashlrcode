@@ -14,19 +14,19 @@ const LOGO = [
 ];
 
 const c = {
-  bright: chalk.hex("#00E5FF"),
-  mid: chalk.hex("#00ACC1"),
-  deep: chalk.hex("#0077B6"),
-  dim: chalk.hex("#004E7C"),
-  separator: chalk.hex("#1E3A5F"),
-  version: chalk.hex("#78909C"),
-  provider: chalk.hex("#00E5FF"),
-  model: chalk.hex("#546E7A"),
-  muted: chalk.hex("#37474F"),
-  green: chalk.hex("#00E676"),
-  yellow: chalk.hex("#FFD600"),
-  red: chalk.hex("#FF1744"),
-  magenta: chalk.hex("#E040FB"),
+  bright: chalk.hex("#7DD3FC"),   // sky-300
+  mid: chalk.hex("#38BDF8"),      // sky-400
+  deep: chalk.hex("#0EA5E9"),     // sky-500
+  dim: chalk.hex("#0284C7"),      // sky-600
+  separator: chalk.hex("#334155"), // slate-700
+  version: chalk.hex("#94A3B8"),  // slate-400
+  provider: chalk.hex("#38BDF8"), // sky-400
+  model: chalk.hex("#64748B"),    // slate-500
+  muted: chalk.hex("#475569"),    // slate-600
+  green: chalk.hex("#34D399"),    // emerald-400
+  yellow: chalk.hex("#FBBF24"),   // amber-400
+  red: chalk.hex("#FB7185"),      // rose-400
+  magenta: chalk.hex("#E879F9"),  // fuchsia-400
 };
 
 export function printBanner(
@@ -48,9 +48,9 @@ export function printBanner(
     c.provider(provider) + c.model(`:${model}`),
   ];
   let modeStr = "";
-  if (mode === "yolo") modeStr = chalk.bgHex("#D32F2F").white.bold(" YOLO ");
-  else if (mode === "accept-edits") modeStr = chalk.bgHex("#F9A825").black(" EDITS ");
-  else if (mode === "plan") modeStr = chalk.bgHex("#7B1FA2").white(" PLAN ");
+  if (mode === "yolo") modeStr = chalk.bgHex("#E11D48").hex("#FFF").bold(" YOLO ");
+  else if (mode === "accept-edits") modeStr = chalk.bgHex("#D97706").hex("#FFF").bold(" EDITS ");
+  else if (mode === "plan") modeStr = chalk.bgHex("#C026D3").hex("#FFF").bold(" PLAN ");
 
   console.log("   " + parts.join(c.muted(" · ")) + (modeStr ? `  ${modeStr}` : ""));
   if (buddyArt) console.log(buddyArt);
@@ -67,7 +67,7 @@ export function printSeparator(width?: number): void {
  */
 export function printInputLine(): void {
   const w = process.stdout.columns || 80;
-  console.log(c.muted("─".repeat(w)));
+  console.log(c.separator("─".repeat(w)));
 }
 
 /**
