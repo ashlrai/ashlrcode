@@ -61,6 +61,9 @@ import { webSearchTool } from "./tools/web-search.ts";
 import { toolSearchTool, initToolSearch } from "./tools/tool-search.ts";
 import { getGitContext, formatGitPrompt } from "./config/git.ts";
 import { fileHistory } from "./state/file-history.ts";
+import { memorySaveTool, memoryListTool, memoryDeleteTool } from "./tools/memory.ts";
+import { notebookEditTool } from "./tools/notebook-edit.ts";
+import { sendMessageTool } from "./tools/send-message.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { initTasks } from "./tools/tasks.ts";
@@ -68,7 +71,7 @@ import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 
-const VERSION = "1.0.0";
+const VERSION = "1.1.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -133,6 +136,11 @@ async function main() {
   registry.register(exitWorktreeTool);
   registry.register(webSearchTool);
   registry.register(toolSearchTool);
+  registry.register(memorySaveTool);
+  registry.register(memoryListTool);
+  registry.register(memoryDeleteTool);
+  registry.register(notebookEditTool);
+  registry.register(sendMessageTool);
   initToolSearch(registry);
 
   // Set up hooks from settings
@@ -508,6 +516,19 @@ async function handleCommand(
           console.log(chalk.green(`Restored: ${arg}`));
         } else {
           console.log(chalk.red(`No snapshot found for: ${arg}`));
+        }
+      }
+      break;
+    }
+
+    case "/memory": {
+      const mems = await loadMemories(process.cwd());
+      if (mems.length === 0) {
+        console.log(chalk.dim("No memories for this project. The model can save memories using MemorySave."));
+      } else {
+        console.log(chalk.bold(`${mems.length} project memories:`));
+        for (const m of mems) {
+          console.log(chalk.dim(`  ${chalk.bold(m.name)} (${m.type}): ${m.description || m.content.slice(0, 60)}`));
         }
       }
       break;
