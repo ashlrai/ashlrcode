@@ -344,10 +344,23 @@ async function main() {
 
   let multiLineBuffer = "";
 
-  /** Show clean input area with breathing room */
+  /** Show input area: line → prompt → line → status (like Claude Code) */
   function showPrompt() {
     if (!printMode) {
-      // Status line first (mode + context)
+      const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
+      const ctxUsed = estimateTokens(state.history);
+      const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
+      const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
+
+      // Top line of input box
+      printInputLine();
+    }
+    // Prompt (user types here)
+    rl.prompt();
+    if (!printMode) {
+      // Bottom line of input box
+      printInputLine();
+      // Status line under the box: mode + context
       const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
       const ctxUsed = estimateTokens(state.history);
       const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
@@ -358,10 +371,7 @@ async function main() {
         formatTk(ctxUsed),
         formatTk(ctxLimit)
       );
-      // Separator line
-      printInputLine();
     }
-    rl.prompt();
   }
 
   // Shift+Tab mode cycling — updates prompt in-place (no new lines)
@@ -824,6 +834,12 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     // Capture message count AFTER compaction (not before)
     const preTurnMessageCount = state.history.length;
 
+    // Echo user input as a styled message (so it stays visible during output)
+    if (!printMode) {
+      console.log("\n" + theme.accent("  ❯ ") + theme.primary(input.length > 100 ? input.slice(0, 97) + "..." : input));
+      console.log("");
+    }
+
     const result = await runAgentLoop(input, state.history, {
       systemPrompt,
       router: state.router,
@@ -834,9 +850,10 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         if (!firstTextReceived) {
           spinner?.stop();
           firstTextReceived = true;
+          if (!printMode) console.log(""); // breathing room before response
         }
         if (printMode) {
-          process.stdout.write(text); // Raw output for piping
+          process.stdout.write(text);
         } else {
           const rendered = renderMarkdownDelta(text);
           process.stdout.write(rendered);
@@ -847,11 +864,10 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         spinner?.stop();
         firstTextReceived = false;
         recordThinking(state.buddy);
-        const icon = isPlanMode() ? theme.plan("◆") : theme.toolIcon("●");
-        console.log(`\n  ${icon} ${theme.toolName(name)}`);
+        const icon = isPlanMode() ? theme.plan("◆") : theme.toolIcon("◆");
         const preview = formatToolPreview(name, toolInput);
+        console.log(`\n  ${icon} ${theme.toolName(name)}`);
         console.log(theme.tertiary(`    ${preview}`));
-        // Show buddy reaction on first tool call
         if (isFirstToolCall()) {
           console.log(getBuddyReaction(state.buddy, "first_tool"));
         }
@@ -865,15 +881,14 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         } else {
           recordToolCallSuccess(state.buddy);
         }
-        const status = isError ? theme.error("✗") : theme.success("✓");
+        const status = isError ? theme.error("  ✗") : theme.success("  ✓");
         const lines = result.split("\n");
-        const preview = lines[0]?.slice(0, 100) ?? "";
+        const preview = lines[0]?.slice(0, 90) ?? "";
         const extra =
           lines.length > 1
             ? theme.tertiary(` (+${lines.length - 1} lines)`)
             : "";
-        console.log(theme.tertiary(`    ${status} ${preview}${extra}`));
-        // Show buddy reaction on errors or streaks
+        console.log(`${status} ${theme.toolResult(preview)}${extra}`);
         if (isError) {
           console.log(getBuddyReaction(state.buddy, "error"));
         }
