@@ -42,6 +42,24 @@ let state: PermissionState = {
   sessionAllow: new Set(),
 };
 
+/** Bypass mode — when true, all permissions are auto-approved */
+let bypassMode = false;
+
+/** Auto-accept edits — when true, Write/Edit are auto-approved but Bash still asks */
+let autoAcceptEdits = false;
+
+export function setBypassMode(enabled: boolean): void {
+  bypassMode = enabled;
+}
+
+export function setAutoAcceptEdits(enabled: boolean): void {
+  autoAcceptEdits = enabled;
+}
+
+export function isBypassMode(): boolean {
+  return bypassMode;
+}
+
 export async function loadPermissions(): Promise<void> {
   if (!existsSync(PERMISSIONS_PATH)) return;
 
@@ -69,8 +87,14 @@ async function savePermissions(): Promise<void> {
  * Returns: "allow" (auto-approved), "deny" (auto-blocked), "ask" (prompt user)
  */
 export function checkPermission(toolName: string): "allow" | "deny" | "ask" {
+  // Bypass mode — approve everything
+  if (bypassMode) return "allow";
+
   // Read-only tools are always allowed
   if (READ_ONLY_AUTO_ALLOW.has(toolName)) return "allow";
+
+  // Auto-accept edits mode — approve Write/Edit but still ask for Bash
+  if (autoAcceptEdits && (toolName === "Write" || toolName === "Edit")) return "allow";
 
   // Check persistent deny
   if (state.alwaysDeny.has(toolName)) return "deny";

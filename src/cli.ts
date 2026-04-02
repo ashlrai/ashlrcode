@@ -52,6 +52,9 @@ import {
   checkPermission,
   recordPermission,
   allowForSession,
+  setBypassMode,
+  setAutoAcceptEdits,
+  isBypassMode,
 } from "./config/permissions.ts";
 import { Spinner } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
@@ -76,7 +79,8 @@ import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { runSetupWizard, needsSetup } from "./setup.ts";
 
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
+let maxCostUSD = Infinity;
 
 interface AppState {
   router: ProviderRouter;
@@ -105,8 +109,21 @@ async function main() {
   let settings = await loadSettings();
   await loadPermissions();
 
+  // Parse mode flags
+  const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions") || args.includes("--yolo");
+  const autoAcceptEditsFlag = args.includes("--auto-accept-edits");
+  const printMode = args.includes("--print");
+  const maxCostArg = getArg(args, "--max-cost");
+  maxCostUSD = maxCostArg ? parseFloat(maxCostArg) : Infinity;
+
+  if (dangerouslySkipPermissions) {
+    setBypassMode(true);
+  }
+  if (autoAcceptEditsFlag) {
+    setAutoAcceptEdits(true);
+  }
+
   if (needsSetup(settings)) {
-    // First-run setup wizard
     const newSettings = await runSetupWizard();
     settings = newSettings;
   }
@@ -255,22 +272,39 @@ async function main() {
     skillRegistry,
   };
 
-  // Header
-  const providerInfo = `${router.currentProvider.name}:${router.currentProvider.config.model}`;
-  console.log("");
-  console.log(
-    chalk.bold.cyan("  AshlrCode") +
-      chalk.dim(` v${VERSION}`) +
-      chalk.dim(` | ${providerInfo}`)
-  );
-  console.log(chalk.dim(`  ${cwd}`));
-  console.log(
-    chalk.dim(`  Type a message to start. /help for commands, /skills for skills, Ctrl+C to exit.\n`)
-  );
+  // Header (suppress in print mode)
+  if (!printMode) {
+    const providerInfo = `${router.currentProvider.name}:${router.currentProvider.config.model}`;
+    const modeFlags = [
+      dangerouslySkipPermissions ? chalk.red("YOLO") : null,
+      autoAcceptEditsFlag ? chalk.yellow("auto-edits") : null,
+      maxCostUSD < Infinity ? chalk.dim(`max:$${maxCostUSD}`) : null,
+    ].filter(Boolean).join(" ");
 
-  // Graceful Ctrl+C handling
-  process.on("SIGINT", () => {
-    console.log(chalk.dim(`\n${router.getCostSummary()}`));
+    console.log("");
+    console.log(
+      chalk.bold.cyan("  AshlrCode") +
+        chalk.dim(` v${VERSION}`) +
+        chalk.dim(` | ${providerInfo}`) +
+        (modeFlags ? ` | ${modeFlags}` : "")
+    );
+    console.log(chalk.dim(`  ${cwd}`));
+    console.log(
+      chalk.dim(`  Type a message to start. /help for commands, /skills for skills, Ctrl+C to exit.\n`)
+    );
+  }
+
+  // Graceful Ctrl+C handling — save context before exit
+  process.on("SIGINT", async () => {
+    try {
+      // Save any in-flight conversation history
+      if (state.history.length > 0) {
+        await state.session.appendMessages(state.history.slice(-2));
+      }
+    } catch {}
+    if (!printMode) {
+      console.log(chalk.dim(`\n${router.getCostSummary()}`));
+    }
     mcpManager.disconnectAll().catch(() => {});
     process.exit(0);
   });
@@ -281,8 +315,10 @@ async function main() {
     .join(" ");
 
   if (inlineMessage) {
-    await runTurn(inlineMessage, state);
-    console.log(chalk.dim(`\n${router.getCostSummary()}`));
+    await runTurn(inlineMessage, state, printMode);
+    if (!printMode) {
+      console.log(chalk.dim(`\n${router.getCostSummary()}`));
+    }
     process.exit(0);
   }
 
@@ -607,27 +643,41 @@ async function handleCommand(
   }
 }
 
-async function runTurn(input: string, state: AppState): Promise<void> {
-  const spinner = new Spinner("Thinking");
+async function runTurn(input: string, state: AppState, printMode = false): Promise<void> {
+  const spinner = printMode ? null : new Spinner("Thinking");
   let firstTextReceived = false;
 
   try {
+    // Check cost budget
+    if (maxCostUSD < Infinity && state.router.costs.totalCostUSD >= maxCostUSD) {
+      console.error(chalk.yellow(`\n  Cost limit reached ($${state.router.costs.totalCostUSD.toFixed(4)} >= $${maxCostUSD}). Use --max-cost to increase.`));
+      return;
+    }
+
     // Build system prompt (base + plan mode if active)
     const systemPrompt =
       state.baseSystemPrompt + getPlanModePrompt();
 
     // Check if context needs compaction before this turn
-    // Use estimated tokens from message history (not cumulative API totals)
     const systemTokens = Math.ceil(systemPrompt.length / 4);
     const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
+
+    // Warn at 50% and 75% of context limit
+    const currentTokens = estimateTokens(state.history) + systemTokens;
+    if (!printMode && currentTokens > contextLimit * 0.75) {
+      console.log(chalk.yellow(`  ⚠ Context at ${Math.round((currentTokens / contextLimit) * 100)}% of ${contextLimit.toLocaleString()} token limit`));
+    } else if (!printMode && currentTokens > contextLimit * 0.5) {
+      console.log(chalk.dim(`  Context at ${Math.round((currentTokens / contextLimit) * 100)}% of limit`));
+    }
+
     if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit })) {
-      console.log(chalk.dim("  [compacting context...]"));
+      if (!printMode) console.log(chalk.dim("  [compacting context...]"));
       state.history = snipCompact(state.history);
       state.history = await autoCompact(state.history, state.router);
     }
 
-    // Start spinner
-    spinner.start();
+    // Start spinner (not in print mode)
+    spinner?.start();
     resetMarkdown();
 
     // Auto-title session from first message
@@ -644,24 +694,29 @@ async function runTurn(input: string, state: AppState): Promise<void> {
       readOnly: isPlanMode(),
       onText: (text) => {
         if (!firstTextReceived) {
-          spinner.stop();
+          spinner?.stop();
           firstTextReceived = true;
         }
-        // Render markdown formatting
-        const rendered = renderMarkdownDelta(text);
-        process.stdout.write(rendered);
+        if (printMode) {
+          process.stdout.write(text); // Raw output for piping
+        } else {
+          const rendered = renderMarkdownDelta(text);
+          process.stdout.write(rendered);
+        }
       },
       onToolStart: (name, toolInput) => {
-        spinner.stop();
+        if (printMode) return;
+        spinner?.stop();
         firstTextReceived = false;
         const icon = isPlanMode() ? chalk.magenta("◆") : chalk.yellow("●");
         console.log(chalk.dim(`\n  ${icon} ${chalk.bold(name)}`));
         const preview = formatToolPreview(name, toolInput);
         console.log(chalk.dim(`    ${preview}`));
-        spinner.start(`Running ${name}`);
+        spinner?.start(`Running ${name}`);
       },
       onToolEnd: (_name, result, isError) => {
-        spinner.stop();
+        if (printMode) return;
+        spinner?.stop();
         const status = isError ? chalk.red("✗") : chalk.green("✓");
         const lines = result.split("\n");
         const preview = lines[0]?.slice(0, 100) ?? "";
@@ -673,7 +728,7 @@ async function runTurn(input: string, state: AppState): Promise<void> {
       },
     });
 
-    spinner.stop();
+    spinner?.stop();
 
     // Flush any remaining markdown buffer
     const remaining = flushMarkdown();
@@ -686,7 +741,7 @@ async function runTurn(input: string, state: AppState): Promise<void> {
     // Persist to session
     await state.session.appendMessages(result.messages.slice(-2)); // last user + assistant pair
   } catch (err) {
-    spinner.stop();
+    spinner?.stop();
 
     const error = err instanceof Error ? err : new Error(String(err));
     const categorized = categorizeError(error);
@@ -867,9 +922,15 @@ ${chalk.bold("USAGE")}
   ac --resume <id>          Resume a previous session
 
 ${chalk.bold("OPTIONS")}
-  -h, --help                Show this help
-  -v, --version             Show version
-  --resume <id>             Resume a saved session
+  -h, --help                          Show this help
+  -v, --version                       Show version
+  -c, --continue                      Resume last session in this directory
+  --resume <id>                       Resume a specific session
+  --fork-session <id>                 Copy session into new session
+  --dangerously-skip-permissions      Auto-approve all tool calls (alias: --yolo)
+  --auto-accept-edits                 Auto-approve Write/Edit (Bash still asks)
+  --print                             Output only text (for piping)
+  --max-cost <dollars>                Stop when cost exceeds limit
 
 ${chalk.bold("COMMANDS")} (in REPL)
   /plan                     Show plan mode status
