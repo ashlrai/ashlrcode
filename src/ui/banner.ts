@@ -75,11 +75,24 @@ export function printSeparator(width?: number): void {
 }
 
 /**
- * Print a thin guardrail line above the prompt to frame the input area.
+ * Print the top border of the input box.
  */
-export function printPromptGuardrail(): void {
+export function printInputBoxTop(): void {
   const w = Math.min(process.stdout.columns || 80, 60);
-  process.stdout.write(c.dim("  " + "╌".repeat(w - 2) + "\n"));
+  process.stdout.write(c.dim("  ╭" + "─".repeat(w - 4) + "╮\n"));
+}
+
+/**
+ * Print the bottom border of the input box (after user submits).
+ */
+export function printInputBoxBottom(): void {
+  const w = Math.min(process.stdout.columns || 80, 60);
+  console.log(c.dim("  ╰" + "─".repeat(w - 4) + "╯"));
+}
+
+// Legacy alias
+export function printPromptGuardrail(): void {
+  printInputBoxTop();
 }
 
 /**

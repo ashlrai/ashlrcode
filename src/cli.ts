@@ -58,7 +58,7 @@ import {
 } from "./config/permissions.ts";
 import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
-import { printBanner, printTurnSeparator, printPromptGuardrail } from "./ui/banner.ts";
+import { printBanner, printTurnSeparator, printInputBoxTop, printInputBoxBottom } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
 import { loadBuddy, printBuddy, saveBuddy, startSession, recordToolCallSuccess, recordThinking, recordError, getBuddyReaction, isFirstToolCall, type BuddyData } from "./ui/buddy.ts";
@@ -344,22 +344,22 @@ async function main() {
 
   let multiLineBuffer = "";
 
-  /** Show guardrail + prompt */
+  /** Show input box top border + prompt */
   function showPrompt() {
-    if (!printMode) printPromptGuardrail();
+    if (!printMode) printInputBoxTop();
     rl.prompt();
   }
 
-  // Shift+Tab mode cycling
+  // Shift+Tab mode cycling — updates prompt in-place (no new lines)
   if (process.stdin.isTTY) {
     process.stdin.on("data", (data: Buffer) => {
       const seq = data.toString();
       if (seq === "\x1b[Z") { // Shift+Tab escape sequence
-        const newMode = cycleMode();
-        const modeLabel = newMode === "normal" ? "normal" : newMode;
-        process.stdout.write(`\r\x1b[K${chalk.dim(`  Mode: ${modeLabel}`)}\n`);
+        cycleMode();
         rl.setPrompt(getPrompt());
-        showPrompt();
+        // Clear current line and redraw prompt in-place
+        process.stdout.write("\r\x1b[K");
+        rl.prompt(true); // true = preserveCurrentLine
       }
     });
   }
@@ -377,6 +377,9 @@ async function main() {
 
     const input = (multiLineBuffer + line).trim();
     multiLineBuffer = "";
+
+    // Close the input box bottom border
+    if (!printMode && input) printInputBoxBottom();
 
     if (!input) {
       rl.setPrompt(getPrompt());
