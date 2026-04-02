@@ -75,24 +75,54 @@ export function printSeparator(width?: number): void {
 }
 
 /**
- * Print the top border of the input box.
+ * Print a clean horizontal line above the prompt (Claude Code style).
  */
-export function printInputBoxTop(): void {
-  const w = Math.min(process.stdout.columns || 80, 60);
-  process.stdout.write(c.dim("  ╭" + "─".repeat(w - 4) + "╮\n"));
+export function printInputLine(): void {
+  const w = Math.min(process.stdout.columns || 80, 70);
+  console.log(c.dim("─".repeat(w)));
 }
 
 /**
- * Print the bottom border of the input box (after user submits).
+ * Print the status line below the prompt: mode on left, context on right.
+ * Like Claude Code's "❯❯ bypass permissions on (shift+tab to cycle)"
  */
-export function printInputBoxBottom(): void {
-  const w = Math.min(process.stdout.columns || 80, 60);
-  console.log(c.dim("  ╰" + "─".repeat(w - 4) + "╯"));
-}
+export function printStatusLine(mode: string, contextPercent?: number, contextUsed?: string, contextLimit?: string): void {
+  const w = Math.min(process.stdout.columns || 80, 70);
 
-// Legacy alias
-export function printPromptGuardrail(): void {
-  printInputBoxTop();
+  // Left side: mode indicator
+  let left = "";
+  switch (mode) {
+    case "yolo":
+      left = c.bright("❯❯") + " " + chalk.hex("#FF1744")("yolo mode");
+      break;
+    case "plan":
+      left = c.bright("❯❯") + " " + chalk.hex("#E040FB")("plan mode");
+      break;
+    case "accept-edits":
+      left = c.bright("❯❯") + " " + chalk.hex("#FFD600")("auto-edits");
+      break;
+    default:
+      left = c.dim("❯❯") + " " + c.dim("normal");
+  }
+
+  left += " " + c.dim("(shift+tab to cycle)");
+
+  // Right side: context percentage
+  let right = "";
+  if (contextPercent !== undefined && contextPercent > 0) {
+    const ctxColor = contextPercent < 50 ? chalk.hex("#00E676") : contextPercent < 75 ? chalk.hex("#FFD600") : chalk.hex("#FF1744");
+    right = ctxColor(`${contextPercent}%`) + c.dim(` ctx`);
+    if (contextUsed && contextLimit) {
+      right += c.dim(` · ${contextUsed}/${contextLimit}`);
+    }
+  }
+
+  // Pad between left and right
+  const plainLeftLen = mode.length + 25; // approximate visible chars
+  const plainRightLen = right ? (contextPercent?.toString().length ?? 0) + 20 : 0;
+  const padding = Math.max(2, w - plainLeftLen - plainRightLen);
+
+  console.log(left + " ".repeat(padding) + right);
 }
 
 /**

@@ -58,7 +58,7 @@ import {
 } from "./config/permissions.ts";
 import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
-import { printBanner, printTurnSeparator, printInputBoxTop, printInputBoxBottom } from "./ui/banner.ts";
+import { printBanner, printTurnSeparator, printInputLine, printStatusLine } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
 import { loadBuddy, printBuddy, saveBuddy, startSession, recordToolCallSuccess, recordThinking, recordError, getBuddyReaction, isFirstToolCall, type BuddyData } from "./ui/buddy.ts";
@@ -344,10 +344,25 @@ async function main() {
 
   let multiLineBuffer = "";
 
-  /** Show input box top border + prompt */
+  /** Show clean input area: line → status → prompt */
   function showPrompt() {
-    if (!printMode) printInputBoxTop();
+    if (!printMode) {
+      printInputLine();
+    }
     rl.prompt();
+    if (!printMode) {
+      // Print status line below prompt
+      const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
+      const ctxUsed = estimateTokens(state.history);
+      const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
+      const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
+      printStatusLine(
+        getCurrentMode(),
+        state.history.length > 0 ? ctxPct : undefined,
+        formatTk(ctxUsed),
+        formatTk(ctxLimit)
+      );
+    }
   }
 
   // Shift+Tab mode cycling — updates prompt in-place (no new lines)
@@ -378,9 +393,6 @@ async function main() {
     const input = (multiLineBuffer + line).trim();
     multiLineBuffer = "";
 
-    // Close the input box bottom border
-    if (!printMode && input) printInputBoxBottom();
-
     if (!input) {
       rl.setPrompt(getPrompt());
       showPrompt();
@@ -409,9 +421,8 @@ async function main() {
     }
 
     await runTurn(input, state);
-    // Show context usage + separator after each turn
+    // Show turn separator after each turn
     if (!printMode && state.history.length > 0) {
-      console.log(renderContextBar(state.history, state.router.currentProvider.name));
       const turnCount = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
       printTurnSeparator({
         turnNumber: turnCount,
