@@ -1,15 +1,20 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { Session, resumeSession } from "../persistence/session.ts";
-import { rmSync, existsSync, mkdirSync } from "fs";
+import { rmSync, existsSync, mkdtempSync } from "fs";
 import { join } from "path";
-import { homedir } from "os";
-
-// Sessions are stored under ~/.ashlrcode/sessions/
-// We'll use real file I/O but clean up after each test
-const SESSIONS_DIR = join(homedir(), ".ashlrcode", "sessions");
+import { tmpdir } from "os";
+import { setConfigDirForTests } from "../config/settings.ts";
 
 describe("Session", () => {
   const testIds: string[] = [];
+  let configDir: string;
+  let sessionsDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "ashlrcode-session-test-"));
+    sessionsDir = join(configDir, "sessions");
+    setConfigDirForTests(configDir);
+  });
 
   function trackId(id: string) {
     testIds.push(id);
@@ -17,13 +22,8 @@ describe("Session", () => {
   }
 
   afterEach(() => {
-    // Clean up test session files
-    for (const id of testIds) {
-      const path = join(SESSIONS_DIR, `${id}.jsonl`);
-      if (existsSync(path)) {
-        rmSync(path);
-      }
-    }
+    setConfigDirForTests(null);
+    if (existsSync(configDir)) rmSync(configDir, { recursive: true, force: true });
     testIds.length = 0;
   });
 
@@ -44,7 +44,7 @@ describe("Session", () => {
     const session = new Session(id);
     await session.init("xai", "grok-4");
 
-    const path = join(SESSIONS_DIR, `${id}.jsonl`);
+    const path = join(sessionsDir, `${id}.jsonl`);
     expect(existsSync(path)).toBe(true);
 
     const content = await Bun.file(path).text();
@@ -65,7 +65,7 @@ describe("Session", () => {
       content: "Hi there!",
     });
 
-    const path = join(SESSIONS_DIR, `${id}.jsonl`);
+    const path = join(sessionsDir, `${id}.jsonl`);
     const lines = (await Bun.file(path).text()).trim().split("\n");
     // 1 metadata + 2 messages = 3 lines
     expect(lines.length).toBe(3);
@@ -102,7 +102,7 @@ describe("Session", () => {
     await session.init("xai", "grok");
     await session.setTitle("My cool session");
 
-    const path = join(SESSIONS_DIR, `${id}.jsonl`);
+    const path = join(sessionsDir, `${id}.jsonl`);
     const lines = (await Bun.file(path).text()).trim().split("\n");
     const lastEntry = JSON.parse(lines[lines.length - 1]!);
     expect(lastEntry.type).toBe("metadata");
@@ -112,12 +112,16 @@ describe("Session", () => {
 
 describe("resumeSession", () => {
   const testIds: string[] = [];
+  let configDir: string;
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "ashlrcode-resume-test-"));
+    setConfigDirForTests(configDir);
+  });
 
   afterEach(() => {
-    for (const id of testIds) {
-      const path = join(SESSIONS_DIR, `${id}.jsonl`);
-      if (existsSync(path)) rmSync(path);
-    }
+    setConfigDirForTests(null);
+    if (existsSync(configDir)) rmSync(configDir, { recursive: true, force: true });
     testIds.length = 0;
   });
 

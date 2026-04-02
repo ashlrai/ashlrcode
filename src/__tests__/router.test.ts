@@ -1,12 +1,24 @@
 import { test, expect, describe } from "bun:test";
 import { ProviderRouter, type CostTracker } from "../providers/router.ts";
-import type { Provider, ProviderRouterConfig, StreamEvent, TokenUsage } from "../providers/types.ts";
+import type { TokenUsage } from "../providers/types.ts";
 
 // We can't easily test the full router without real providers, but we can test
 // the cost tracking logic by creating a router and inspecting its costs property.
 // The constructor requires valid provider config, so we'll test what we can.
 
 describe("ProviderRouter cost tracking", () => {
+  test("uses the provider-specific name for OpenAI-compatible configs", () => {
+    const router = new ProviderRouter({
+      primary: {
+        provider: "openai",
+        apiKey: "test-key",
+        model: "gpt-test",
+      },
+    });
+
+    expect(router.currentProvider.name).toBe("openai");
+  });
+
   test("getCostSummary returns formatted string with zero usage", () => {
     // Create a minimal router - this will try to create a provider.
     // We need to test the cost summary formatting, so we access costs directly.

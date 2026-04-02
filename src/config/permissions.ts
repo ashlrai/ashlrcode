@@ -26,7 +26,9 @@ interface PersistedPermissions {
   alwaysDeny: string[];
 }
 
-const PERMISSIONS_PATH = join(getConfigDir(), "permissions.json");
+function getPermissionsPath(): string {
+  return join(getConfigDir(), "permissions.json");
+}
 
 // Default read-only tools that never need permission
 const READ_ONLY_AUTO_ALLOW = new Set([
@@ -61,10 +63,11 @@ export function isBypassMode(): boolean {
 }
 
 export async function loadPermissions(): Promise<void> {
-  if (!existsSync(PERMISSIONS_PATH)) return;
+  const permissionsPath = getPermissionsPath();
+  if (!existsSync(permissionsPath)) return;
 
   try {
-    const raw = await readFile(PERMISSIONS_PATH, "utf-8");
+    const raw = await readFile(permissionsPath, "utf-8");
     const data = JSON.parse(raw) as PersistedPermissions;
     state.alwaysAllow = new Set(data.alwaysAllow ?? []);
     state.alwaysDeny = new Set(data.alwaysDeny ?? []);
@@ -79,7 +82,7 @@ async function savePermissions(): Promise<void> {
     alwaysAllow: Array.from(state.alwaysAllow),
     alwaysDeny: Array.from(state.alwaysDeny),
   };
-  await writeFile(PERMISSIONS_PATH, JSON.stringify(data, null, 2), "utf-8");
+  await writeFile(getPermissionsPath(), JSON.stringify(data, null, 2), "utf-8");
 }
 
 /**
@@ -144,4 +147,14 @@ export function allowForSession(toolName: string): void {
 
 export function getPermissionState(): PermissionState {
   return state;
+}
+
+export function resetPermissionsForTests(): void {
+  state = {
+    alwaysAllow: new Set(),
+    alwaysDeny: new Set(),
+    sessionAllow: new Set(),
+  };
+  bypassMode = false;
+  autoAcceptEdits = false;
 }

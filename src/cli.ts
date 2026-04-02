@@ -58,6 +58,9 @@ import {
 } from "./config/permissions.ts";
 import { Spinner } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
+import { printBanner } from "./ui/banner.ts";
+import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
+import { renderContextBar } from "./ui/context-bar.ts";
 import { lsTool } from "./tools/ls.ts";
 import { configTool } from "./tools/config.ts";
 import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.ts";
@@ -78,8 +81,8 @@ import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { runSetupWizard, needsSetup } from "./setup.ts";
-
-const VERSION = "1.5.0";
+import { loadProjectConfig } from "./config/project-config.ts";
+import { VERSION } from "./version.ts";
 let maxCostUSD = Infinity;
 
 interface AppState {
@@ -169,14 +172,14 @@ async function main() {
     registry.setHooks(settings.hooks);
   }
 
-  // Connect MCP servers
+  // Connect MCP servers in background (don't block startup)
   const mcpManager = new MCPManager();
   if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
-    await mcpManager.connectAll(settings.mcpServers);
-    // Register discovered MCP tools
-    for (const { serverName, tool } of mcpManager.getAllTools()) {
-      registry.register(createMCPTool(serverName, tool, mcpManager));
-    }
+    mcpManager.connectAll(settings.mcpServers).then(() => {
+      for (const { serverName, tool } of mcpManager.getAllTools()) {
+        registry.register(createMCPTool(serverName, tool, mcpManager));
+      }
+    }).catch(() => {});
   }
 
   // Load system prompt + project memories + git context
@@ -272,26 +275,16 @@ async function main() {
     skillRegistry,
   };
 
+  // Set initial mode based on flags
+  if (dangerouslySkipPermissions) setMode("yolo");
+  else if (autoAcceptEditsFlag) setMode("accept-edits");
+
   // Header (suppress in print mode)
   if (!printMode) {
-    const providerInfo = `${router.currentProvider.name}:${router.currentProvider.config.model}`;
-    const modeFlags = [
-      dangerouslySkipPermissions ? chalk.red("YOLO") : null,
-      autoAcceptEditsFlag ? chalk.yellow("auto-edits") : null,
-      maxCostUSD < Infinity ? chalk.dim(`max:$${maxCostUSD}`) : null,
-    ].filter(Boolean).join(" ");
-
-    console.log("");
-    console.log(
-      chalk.bold.cyan("  AshlrCode") +
-        chalk.dim(` v${VERSION}`) +
-        chalk.dim(` | ${providerInfo}`) +
-        (modeFlags ? ` | ${modeFlags}` : "")
-    );
+    const startMode = dangerouslySkipPermissions ? "yolo" : autoAcceptEditsFlag ? "accept-edits" : undefined;
+    printBanner(VERSION, router.currentProvider.name, router.currentProvider.config.model, startMode);
     console.log(chalk.dim(`  ${cwd}`));
-    console.log(
-      chalk.dim(`  Type a message to start. /help for commands, /skills for skills, Ctrl+C to exit.\n`)
-    );
+    console.log(chalk.dim(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to exit.\n`));
   }
 
   // Graceful Ctrl+C handling — save context before exit
@@ -330,6 +323,20 @@ async function main() {
   });
 
   let multiLineBuffer = "";
+
+  // Shift+Tab mode cycling
+  if (process.stdin.isTTY) {
+    process.stdin.on("data", (data: Buffer) => {
+      const seq = data.toString();
+      if (seq === "\x1b[Z") { // Shift+Tab escape sequence
+        const newMode = cycleMode();
+        const modeLabel = newMode === "normal" ? "normal" : newMode;
+        process.stdout.write(`\r\x1b[K${chalk.dim(`  Mode: ${modeLabel}`)}\n`);
+        rl.setPrompt(getPrompt());
+        rl.prompt();
+      }
+    });
+  }
 
   rl.prompt();
 
@@ -373,6 +380,10 @@ async function main() {
     }
 
     await runTurn(input, state);
+    // Show context usage after each turn
+    if (!printMode && state.history.length > 0) {
+      console.log(renderContextBar(state.history, state.router.currentProvider.name));
+    }
     console.log("");
     rl.setPrompt(getPrompt());
     rl.prompt();
@@ -386,10 +397,7 @@ async function main() {
 }
 
 function getPrompt(): string {
-  if (isPlanMode()) {
-    return chalk.magenta("[plan] ❯ ");
-  }
-  return chalk.green("❯ ");
+  return getPromptForMode();
 }
 
 async function handleCommand(
@@ -777,18 +785,9 @@ async function loadSystemPrompt(): Promise<string> {
     prompt = await readFile(promptPath, "utf-8");
   }
 
-  // Load project-level ASHLR.md
-  const projectConfig = join(process.cwd(), "ASHLR.md");
-  if (existsSync(projectConfig)) {
-    const projectPrompt = await readFile(projectConfig, "utf-8");
-    prompt += `\n\n# Project Instructions (ASHLR.md)\n\n${projectPrompt}`;
-  }
-
-  // Also support CLAUDE.md for compatibility
-  const claudeConfig = join(process.cwd(), "CLAUDE.md");
-  if (existsSync(claudeConfig)) {
-    const claudePrompt = await readFile(claudeConfig, "utf-8");
-    prompt += `\n\n# Project Instructions (CLAUDE.md)\n\n${claudePrompt}`;
+  const projectConfig = await loadProjectConfig(process.cwd());
+  if (projectConfig.instructions) {
+    prompt += `\n\n# Project Instructions\n\n${projectConfig.instructions}`;
   }
 
   // Add environment context

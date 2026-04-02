@@ -31,7 +31,9 @@ interface SessionEntry {
   data: Message | SessionMetadata | { summary: string };
 }
 
-const SESSIONS_DIR = join(getConfigDir(), "sessions");
+function getSessionsDir(): string {
+  return join(getConfigDir(), "sessions");
+}
 
 export class Session {
   readonly id: string;
@@ -40,7 +42,7 @@ export class Session {
 
   constructor(id?: string) {
     this.id = id ?? randomUUID().slice(0, 8);
-    this.filePath = join(SESSIONS_DIR, `${this.id}.jsonl`);
+    this.filePath = join(getSessionsDir(), `${this.id}.jsonl`);
     this.metadata = {
       id: this.id,
       cwd: process.cwd(),
@@ -53,7 +55,7 @@ export class Session {
   }
 
   async init(provider: string, model: string): Promise<void> {
-    await mkdir(SESSIONS_DIR, { recursive: true });
+    await mkdir(getSessionsDir(), { recursive: true });
     this.metadata.provider = provider;
     this.metadata.model = model;
     await this.appendEntry({
@@ -111,7 +113,7 @@ export class Session {
   }
 
   private async appendEntry(entry: SessionEntry): Promise<void> {
-    await mkdir(SESSIONS_DIR, { recursive: true });
+    await mkdir(getSessionsDir(), { recursive: true });
     await appendFile(this.filePath, JSON.stringify(entry) + "\n", "utf-8");
   }
 }
@@ -120,15 +122,16 @@ export class Session {
  * List recent sessions.
  */
 export async function listSessions(limit = 10): Promise<SessionMetadata[]> {
-  if (!existsSync(SESSIONS_DIR)) return [];
+  const sessionsDir = getSessionsDir();
+  if (!existsSync(sessionsDir)) return [];
 
-  const files = await readdir(SESSIONS_DIR);
+  const files = await readdir(sessionsDir);
   const sessions: SessionMetadata[] = [];
 
   for (const file of files) {
     if (!file.endsWith(".jsonl")) continue;
 
-    const content = await readFile(join(SESSIONS_DIR, file), "utf-8");
+    const content = await readFile(join(sessionsDir, file), "utf-8");
     const lines = content.split("\n").filter(Boolean);
     if (lines.length === 0) continue;
 

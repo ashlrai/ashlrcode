@@ -1,4 +1,4 @@
-# AshlrCode v1.3.0
+# AshlrCode v1.5.0
 
 Multi-provider AI coding agent CLI. Internal tooling for AshlrAI.
 30 tools, 15 skills, MCP support, 121 tests.

@@ -1,10 +1,29 @@
-import { test, expect, describe, beforeEach } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 import {
   checkPermission,
   allowForSession,
   getPermissionState,
   recordPermission,
+  resetPermissionsForTests,
 } from "../config/permissions.ts";
+import { setConfigDirForTests } from "../config/settings.ts";
+
+let configDir: string;
+
+beforeEach(() => {
+  configDir = mkdtempSync(join(tmpdir(), "ashlrcode-permissions-test-"));
+  setConfigDirForTests(configDir);
+  resetPermissionsForTests();
+});
+
+afterEach(() => {
+  resetPermissionsForTests();
+  setConfigDirForTests(null);
+  if (existsSync(configDir)) rmSync(configDir, { recursive: true, force: true });
+});
 
 describe("checkPermission", () => {
   // Note: tests interact with module-level state. The permission module uses

@@ -2,7 +2,7 @@
  * Provider router — selects provider, handles failover, tracks costs.
  */
 
-import { createXAIProvider } from "./xai.ts";
+import { createOpenAICompatibleProvider, createXAIProvider } from "./xai.ts";
 import { createAnthropicProvider } from "./anthropic.ts";
 import type {
   Provider,
@@ -48,11 +48,10 @@ export class ProviderRouter {
       case "anthropic":
         return createAnthropicProvider(config);
       case "openai":
-        // OpenAI uses the same SDK as xAI, just different base URL
-        return createXAIProvider({
+        return createOpenAICompatibleProvider("openai", {
           ...config,
           baseURL: config.baseURL ?? "https://api.openai.com/v1",
-        });
+        }, [0, 0]);
       default:
         throw new Error(`Unknown provider: ${config.provider}`);
     }

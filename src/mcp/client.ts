@@ -103,7 +103,7 @@ export class MCPClient {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP request timeout: ${method}`));
-      }, 30_000);
+      }, 5_000); // 5s timeout (was 30s — don't block startup)
 
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timeout); resolve(value); },

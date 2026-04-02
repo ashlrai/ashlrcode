@@ -14,7 +14,6 @@ import { getConfigDir } from "../config/settings.ts";
 import type { SkillDefinition } from "./types.ts";
 
 const BUILT_IN_DIR = resolve(import.meta.dir, "../../prompts/skills");
-const USER_DIR = join(getConfigDir(), "skills");
 
 export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
   const skills: SkillDefinition[] = [];
@@ -23,7 +22,7 @@ export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
   // Load from all sources (project overrides user overrides built-in)
   const dirs = [
     BUILT_IN_DIR,
-    USER_DIR,
+    join(getConfigDir(), "skills"),
     join(cwd, ".ashlrcode", "skills"),
   ];
 

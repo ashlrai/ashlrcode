@@ -14,15 +14,23 @@ import type {
 import { categorizeError } from "../agent/error-handler.ts";
 
 export function createXAIProvider(config: ProviderConfig): Provider {
+  return createOpenAICompatibleProvider("xai", config, [0.2, 0.5]);
+}
+
+export function createOpenAICompatibleProvider(
+  name: string,
+  config: ProviderConfig,
+  pricing: [number, number]
+): Provider {
   const client = new OpenAI({
     apiKey: config.apiKey,
     baseURL: config.baseURL ?? "https://api.x.ai/v1",
   });
 
   return {
-    name: "xai",
+    name,
     config,
-    pricing: [0.2, 0.5], // grok-4-1-fast-reasoning per million tokens
+    pricing,
 
     async *stream(request: ProviderRequest): AsyncGenerator<StreamEvent> {
       const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = request.tools.map(

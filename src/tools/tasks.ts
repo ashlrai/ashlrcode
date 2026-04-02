@@ -23,17 +23,19 @@ let tasks: Task[] = [];
 let nextId = 1;
 let sessionId: string | null = null;
 
-const TASKS_DIR = join(getConfigDir(), "tasks");
+function getTasksDir(): string {
+  return join(getConfigDir(), "tasks");
+}
 
 function getTasksPath(): string | null {
   if (!sessionId) return null;
-  return join(TASKS_DIR, `${sessionId}.json`);
+  return join(getTasksDir(), `${sessionId}.json`);
 }
 
 async function saveTasks(): Promise<void> {
   const path = getTasksPath();
   if (!path) return;
-  await mkdir(TASKS_DIR, { recursive: true });
+  await mkdir(getTasksDir(), { recursive: true });
   await writeFile(path, JSON.stringify({ tasks, nextId }, null, 2), "utf-8");
 }
 

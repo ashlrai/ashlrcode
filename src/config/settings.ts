@@ -18,14 +18,22 @@ export interface Settings {
   mcpServers?: Record<string, MCPServerConfig>;
 }
 
-const CONFIG_DIR = join(homedir(), ".ashlrcode");
-const SETTINGS_PATH = join(CONFIG_DIR, "settings.json");
+let configDirOverride: string | null = null;
+
+function getDefaultConfigDir(): string {
+  return process.env.ASHLRCODE_CONFIG_DIR ?? join(homedir(), ".ashlrcode");
+}
+
+function getSettingsPath(): string {
+  return join(getConfigDir(), "settings.json");
+}
 
 export async function loadSettings(): Promise<Settings> {
   const defaults = getDefaultSettings();
+  const settingsPath = getSettingsPath();
 
-  if (existsSync(SETTINGS_PATH)) {
-    const raw = await readFile(SETTINGS_PATH, "utf-8");
+  if (existsSync(settingsPath)) {
+    const raw = await readFile(settingsPath, "utf-8");
     const fileSettings = JSON.parse(raw) as Partial<Settings>;
 
     // Merge file settings with defaults — file settings override but
@@ -43,8 +51,9 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
-  await mkdir(CONFIG_DIR, { recursive: true });
-  await writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2), "utf-8");
+  const configDir = getConfigDir();
+  await mkdir(configDir, { recursive: true });
+  await writeFile(getSettingsPath(), JSON.stringify(settings, null, 2), "utf-8");
 }
 
 function getDefaultSettings(): Settings {
@@ -71,5 +80,9 @@ function getDefaultSettings(): Settings {
 }
 
 export function getConfigDir(): string {
-  return CONFIG_DIR;
+  return configDirOverride ?? getDefaultConfigDir();
+}
+
+export function setConfigDirForTests(configDir: string | null): void {
+  configDirOverride = configDir;
 }

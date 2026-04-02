@@ -19,7 +19,9 @@ export interface PlanState {
   startedAt: string | null;
 }
 
-const PLANS_DIR = join(getConfigDir(), "plans");
+function getPlansDir(): string {
+  return join(getConfigDir(), "plans");
+}
 
 let state: PlanState = {
   active: false,
@@ -48,10 +50,11 @@ function generatePlanName(): string {
 }
 
 export async function enterPlanMode(): Promise<string> {
-  await mkdir(PLANS_DIR, { recursive: true });
+  const plansDir = getPlansDir();
+  await mkdir(plansDir, { recursive: true });
 
   const planName = generatePlanName();
-  const planFile = join(PLANS_DIR, `${planName}.md`);
+  const planFile = join(plansDir, `${planName}.md`);
 
   state = {
     active: true,
