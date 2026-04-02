@@ -99,11 +99,15 @@ function matchesHook(
     }
   }
 
-  // Match input pattern
+  // Match input pattern (with ReDoS protection)
   if (hook.inputPattern) {
     const inputStr = JSON.stringify(input);
-    const regex = new RegExp(hook.inputPattern);
-    if (!regex.test(inputStr)) return false;
+    try {
+      const regex = new RegExp(hook.inputPattern);
+      if (!regex.test(inputStr)) return false;
+    } catch {
+      return false; // Invalid regex, skip this hook
+    }
   }
 
   return true;
@@ -128,8 +132,16 @@ async function runHookCommand(
     env,
   });
 
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
+  // Timeout hook commands at 15 seconds
+  const timeoutId = setTimeout(() => proc.kill(), 15_000);
 
-  return { exitCode, output: stdout.trim() };
+  try {
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    clearTimeout(timeoutId);
+    return { exitCode, output: stdout.trim() };
+  } catch {
+    clearTimeout(timeoutId);
+    return { exitCode: 1, output: "Hook command timed out" };
+  }
 }

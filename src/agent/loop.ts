@@ -123,6 +123,11 @@ export async function runAgentLoop(
     messages.push({ role: "user", content: resultBlocks });
   }
 
+  // If we hit max iterations with no final text, add a fallback
+  if (!finalText && allToolCalls.length > 0) {
+    finalText = `[Reached maximum iterations (${maxIterations}). ${allToolCalls.length} tool calls were executed.]`;
+  }
+
   return { messages, finalText, toolCalls: allToolCalls };
 }
 

@@ -100,19 +100,14 @@ export class MCPClient {
     };
 
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP request timeout: ${method}`));
       }, 30_000);
 
-      // Clean up timeout on resolution
-      const originalResolve = resolve;
-      const originalReject = reject;
       this.pending.set(id, {
-        resolve: (value) => { clearTimeout(timeout); originalResolve(value); },
-        reject: (err) => { clearTimeout(timeout); originalReject(err); },
+        resolve: (value) => { clearTimeout(timeout); resolve(value); },
+        reject: (err) => { clearTimeout(timeout); reject(err); },
       });
 
       this.send(message as unknown as Record<string, unknown>);
@@ -144,7 +139,13 @@ export class MCPClient {
         this.processBuffer();
       }
     } catch {
-      // Stream ended
+      // Stream ended or errored
+    }
+
+    // Reject all pending requests when read loop exits (server crash/EOF)
+    for (const [id, pending] of this.pending) {
+      this.pending.delete(id);
+      pending.reject(new Error("MCP server connection closed"));
     }
   }
 

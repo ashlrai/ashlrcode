@@ -615,13 +615,10 @@ async function runTurn(input: string, state: AppState): Promise<void> {
       state.baseSystemPrompt + getPlanModePrompt();
 
     // Check if context needs compaction before this turn
-    // Use actual token counts from the cost tracker when available
+    // Use estimated tokens from message history (not cumulative API totals)
     const systemTokens = Math.ceil(systemPrompt.length / 4);
-    const actualTokensUsed = state.router.costs.totalInputTokens > 0
-      ? state.router.costs.totalInputTokens
-      : undefined;
     const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
-    if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit }, actualTokensUsed)) {
+    if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit })) {
       console.log(chalk.dim("  [compacting context...]"));
       state.history = snipCompact(state.history);
       state.history = await autoCompact(state.history, state.router);

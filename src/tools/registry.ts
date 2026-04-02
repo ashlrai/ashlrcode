@@ -68,19 +68,20 @@ export class ToolRegistry {
       return { result: `Validation error: ${validationError}`, isError: true };
     }
 
-    // Run pre-tool hooks
-    const hookResult = await runPreToolHooks(this.hooks, toolName, input);
-    if (hookResult.action === "deny") {
-      return { result: hookResult.message ?? "Denied by hook", isError: true };
-    }
-
-    // Check permissions for non-read-only tools
+    // Check permissions for non-read-only tools (before hooks, so hooks
+    // don't execute shell commands for tools the user would deny)
     if (!tool.isReadOnly()) {
       const inputPreview = formatInputPreview(toolName, input);
       const allowed = await context.requestPermission(toolName, inputPreview);
       if (!allowed) {
         return { result: "Permission denied by user", isError: true };
       }
+    }
+
+    // Run pre-tool hooks (after permission check)
+    const hookResult = await runPreToolHooks(this.hooks, toolName, input);
+    if (hookResult.action === "deny") {
+      return { result: hookResult.message ?? "Denied by hook", isError: true };
     }
 
     try {

@@ -46,8 +46,8 @@ export function createAnthropicProvider(config: ProviderConfig): Provider {
       // Retry loop: create a new stream on each attempt. Errors from the
       // Anthropic SDK surface during iteration (not during stream creation),
       // so we catch them here and retry with backoff when appropriate.
-      const MAX_RETRIES_RATE_LIMIT = 3;
-      const MAX_RETRIES_NETWORK = 2;
+      const MAX_RETRIES_RATE_LIMIT = 3; // 3 retries = 4 total attempts
+      const MAX_RETRIES_NETWORK = 2;   // 2 retries = 3 total attempts
       let attempt = 0;
 
       while (true) {

@@ -121,6 +121,8 @@ export const bashTool: Tool = {
       return result || "(no output)";
     } catch {
       clearTimeout(timeoutId);
+      // Drain stderr to prevent resource leak
+      try { await new Response(proc.stderr).text(); } catch {}
       return "Command timed out";
     }
   },
