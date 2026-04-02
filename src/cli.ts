@@ -346,12 +346,9 @@ async function main() {
 
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
 
-  /** Show input area: line → prompt → line → status + context bar + buddy */
+  /** Show input area: status → line → prompt (cursor stays at prompt) */
   function showPrompt() {
-    if (!printMode) printInputLine();
-    rl.prompt();
     if (!printMode) {
-      printInputLine();
       const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
       const ctxUsed = estimateTokens(state.history);
       const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
@@ -363,7 +360,9 @@ async function main() {
         state.buddy.name,
         state.buddy.mood
       );
+      printInputLine();
     }
+    rl.prompt(); // Last — cursor stays here, user types here
   }
 
   // Shift+Tab mode cycling — updates prompt in-place (no new lines)
