@@ -172,12 +172,12 @@ const BUDDY_QUIPS: Record<string, string[]> = {
   ],
 };
 
-let lastQuipIndex = Math.floor(Math.random() * 100);
+const quipIndexes: Record<string, number> = {};
 
 function getBuddyQuip(mood: string): string {
   const quips = BUDDY_QUIPS[mood] ?? BUDDY_QUIPS.sleepy!;
-  lastQuipIndex = (lastQuipIndex + 1) % quips.length;
-  return quips[lastQuipIndex]!;
+  quipIndexes[mood] = ((quipIndexes[mood] ?? Math.floor(Math.random() * quips.length)) + 1) % quips.length;
+  return quips[quipIndexes[mood]!]!;
 }
 
 /**

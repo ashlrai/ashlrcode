@@ -905,7 +905,7 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     }
 
     // Restore max tokens if ultrathink was used
-    if (isUltrathink && savedMaxTokens) {
+    if (isUltrathink && savedMaxTokens !== undefined) {
       state.router.currentProvider.config.maxTokens = savedMaxTokens;
     }
   } catch (err) {
