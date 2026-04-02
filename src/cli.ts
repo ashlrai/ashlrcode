@@ -346,21 +346,18 @@ async function main() {
 
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
 
-  /** Show input area: line → prompt → status below (cursor at prompt via ANSI) */
+  /** Input box: line → prompt → line → status (cursor jumps back to prompt) */
   function showPrompt() {
+    if (!printMode) printInputLine();           // ── top line ──
+    rl.prompt();                                 // ❯ _
     if (!printMode) {
-      printInputLine();
-    }
-    rl.prompt(); // Print prompt
-    if (!printMode) {
-      // Save cursor position at the prompt
-      process.stdout.write("\x1b[s");
-      // Print status line below the prompt
+      process.stdout.write("\x1b[s");           // save cursor at prompt
+      console.log("");                           // newline
+      printInputLine();                          // ── bottom line ──
       const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
       const ctxUsed = estimateTokens(state.history);
       const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
-      console.log(""); // move to next line
-      printStatusLine(
+      printStatusLine(                           // ❯❯ mode ... ctx
         getCurrentMode(),
         state.history.length > 0 ? ctxPct : 0,
         formatTk(ctxUsed),
@@ -368,8 +365,7 @@ async function main() {
         state.buddy.name,
         state.buddy.mood
       );
-      // Restore cursor back to the prompt line
-      process.stdout.write("\x1b[u");
+      process.stdout.write("\x1b[u");           // restore cursor to prompt
     }
   }
 
