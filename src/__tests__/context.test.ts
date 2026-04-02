@@ -76,18 +76,19 @@ describe("needsCompaction", () => {
   });
 
   test("respects custom config", () => {
-    // With very small limit, even small messages trigger compaction
+    // "hello world test" = 16 chars / 4 = 4 tokens. Limit 3, so should trigger.
     const messages: Message[] = [{ role: "user", content: "hello world test" }];
     expect(
-      needsCompaction(messages, 0, { maxContextTokens: 5, reserveTokens: 0 })
+      needsCompaction(messages, 0, { maxContextTokens: 3, reserveTokens: 0 })
     ).toBe(true);
   });
 
   test("accounts for system prompt tokens", () => {
     const messages: Message[] = [{ role: "user", content: "hi" }];
-    // Message ~1 token + systemPromptTokens right at the edge
+    // "hi" = 1 token. systemPromptTokens = 95000. Total = 95001.
+    // maxContext 100000 - reserve 8192 = 91808. 95001 > 91808 = true
     expect(
-      needsCompaction(messages, 90_000, {
+      needsCompaction(messages, 95_000, {
         maxContextTokens: 100_000,
         reserveTokens: 8192,
       })
