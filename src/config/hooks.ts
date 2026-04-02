@@ -99,14 +99,20 @@ function matchesHook(
     }
   }
 
-  // Match input pattern (with ReDoS protection)
+  // Match input pattern (with length guard against ReDoS)
   if (hook.inputPattern) {
     const inputStr = JSON.stringify(input);
-    try {
-      const regex = new RegExp(hook.inputPattern);
-      if (!regex.test(inputStr)) return false;
-    } catch {
-      return false; // Invalid regex, skip this hook
+    // Guard against catastrophic backtracking on large inputs
+    if (inputStr.length > 10_000) {
+      // For very large inputs, use simple string.includes as fallback
+      if (!inputStr.includes(hook.inputPattern)) return false;
+    } else {
+      try {
+        const regex = new RegExp(hook.inputPattern);
+        if (!regex.test(inputStr)) return false;
+      } catch {
+        return false; // Invalid regex, skip this hook
+      }
     }
   }
 

@@ -129,13 +129,22 @@ export async function listSessions(limit = 10): Promise<SessionMetadata[]> {
     if (!file.endsWith(".jsonl")) continue;
 
     const content = await readFile(join(SESSIONS_DIR, file), "utf-8");
-    const firstLine = content.split("\n")[0];
-    if (!firstLine) continue;
+    const lines = content.split("\n").filter(Boolean);
+    if (lines.length === 0) continue;
 
     try {
-      const entry = JSON.parse(firstLine) as SessionEntry;
-      if (entry.type === "metadata") {
-        sessions.push(entry.data as SessionMetadata);
+      // Find the LAST metadata entry (most recent, includes title updates)
+      let latestMetadata: SessionMetadata | null = null;
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line) as SessionEntry;
+          if (entry.type === "metadata") {
+            latestMetadata = entry.data as SessionMetadata;
+          }
+        } catch { /* skip malformed lines */ }
+      }
+      if (latestMetadata) {
+        sessions.push(latestMetadata);
       }
     } catch {
       // Skip malformed files

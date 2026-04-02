@@ -67,9 +67,11 @@ export const bashTool: Tool = {
     try {
       // Collect output with live streaming for long-running commands
       let stdout = "";
-      let stderr = "";
       let liveMode = false;
       const startTime = Date.now();
+
+      // Start reading stderr concurrently (prevents deadlock if pipe buffer fills)
+      const stderrPromise = new Response(proc.stderr).text();
 
       // Read stdout in chunks
       const reader = proc.stdout.getReader();
@@ -95,7 +97,7 @@ export const bashTool: Tool = {
         }
       }
 
-      stderr = await new Response(proc.stderr).text();
+      const stderr = await stderrPromise;
       const exitCode = await proc.exited;
       clearTimeout(timeoutId);
 
