@@ -73,9 +73,12 @@ export const configTool: Tool = {
         }
         const value = getNestedValue(settings as unknown as Record<string, unknown>, key);
         if (value === undefined) return `Setting not found: ${key}`;
-        return typeof value === "object"
-          ? JSON.stringify(value, null, 2)
-          : String(value);
+        if (typeof value === "object" && value !== null) {
+          // Redact any nested secrets before returning
+          const sanitized = redactSecrets(JSON.parse(JSON.stringify(value)));
+          return JSON.stringify(sanitized, null, 2);
+        }
+        return String(value);
       }
 
       case "set": {

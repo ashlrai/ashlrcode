@@ -646,7 +646,6 @@ async function handleCommand(
 async function runTurn(input: string, state: AppState, printMode = false): Promise<void> {
   const spinner = printMode ? null : new Spinner("Thinking");
   let firstTextReceived = false;
-  const preTurnMessageCount = state.history.length;
 
   try {
     // Check cost budget
@@ -686,6 +685,9 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
       const title = input.length > 60 ? input.slice(0, 57) + "..." : input;
       await state.session.setTitle(title);
     }
+
+    // Capture message count AFTER compaction (not before)
+    const preTurnMessageCount = state.history.length;
 
     const result = await runAgentLoop(input, state.history, {
       systemPrompt,
