@@ -66,7 +66,7 @@ export function printSeparator(width?: number): void {
  * Print a clean horizontal line for the input box.
  */
 export function printInputLine(): void {
-  const w = Math.min(process.stdout.columns || 80, 70);
+  const w = process.stdout.columns || 80;
   console.log(c.muted("─".repeat(w)));
 }
 
