@@ -58,7 +58,7 @@ import {
 } from "./config/permissions.ts";
 import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
-import { printBanner } from "./ui/banner.ts";
+import { printBanner, printTurnSeparator } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
 import { theme, styleCost, styleTokens } from "./ui/theme.ts";
@@ -381,9 +381,10 @@ async function main() {
     }
 
     await runTurn(input, state);
-    // Show context usage after each turn
+    // Show context usage + separator after each turn
     if (!printMode && state.history.length > 0) {
       console.log(renderContextBar(state.history, state.router.currentProvider.name));
+      printTurnSeparator();
     }
     console.log("");
     rl.setPrompt(getPrompt());
@@ -696,6 +697,14 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
   let firstTextReceived = false;
 
   try {
+    // Ultrathink: if user includes "ultrathink" in message, use max tokens for this turn
+    const isUltrathink = input.toLowerCase().includes("ultrathink");
+    const savedMaxTokens = state.router.currentProvider.config.maxTokens;
+    if (isUltrathink) {
+      state.router.currentProvider.config.maxTokens = 32768;
+      if (!printMode) console.log(theme.accent("  ⚡ Ultrathink mode — deep reasoning enabled\n"));
+    }
+
     // Check cost budget
     if (maxCostUSD < Infinity && state.router.costs.totalCostUSD >= maxCostUSD) {
       console.error(chalk.yellow(`\n  Cost limit reached ($${state.router.costs.totalCostUSD.toFixed(4)} >= $${maxCostUSD}). Use --max-cost to increase.`));
@@ -793,6 +802,11 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     const newMessages = result.messages.slice(preTurnMessageCount);
     if (newMessages.length > 0) {
       await state.session.appendMessages(newMessages);
+    }
+
+    // Restore max tokens if ultrathink was used
+    if (isUltrathink && savedMaxTokens) {
+      state.router.currentProvider.config.maxTokens = savedMaxTokens;
     }
   } catch (err) {
     spinner?.stop();
