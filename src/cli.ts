@@ -74,8 +74,9 @@ import { initTasks } from "./tools/tasks.ts";
 import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
+import { runSetupWizard, needsSetup } from "./setup.ts";
 
-const VERSION = "1.3.0";
+const VERSION = "1.4.0";
 
 interface AppState {
   router: ProviderRouter;
@@ -101,17 +102,13 @@ async function main() {
   }
 
   // Load settings and permissions
-  const settings = await loadSettings();
+  let settings = await loadSettings();
   await loadPermissions();
 
-  if (!settings.providers.primary.apiKey) {
-    console.error(
-      chalk.red("No API key configured.\n") +
-        chalk.dim(
-          "Set XAI_API_KEY environment variable or configure ~/.ashlrcode/settings.json"
-        )
-    );
-    process.exit(1);
+  if (needsSetup(settings)) {
+    // First-run setup wizard
+    const newSettings = await runSetupWizard();
+    settings = newSettings;
   }
 
   // Initialize provider router
@@ -246,9 +243,7 @@ async function main() {
   const skillRegistry = new SkillRegistry();
   const skills = await loadSkills(cwd);
   skillRegistry.registerAll(skills);
-  if (skills.length > 0) {
-    console.log(chalk.dim(`  Skills: ${skills.map((s) => s.trigger).join(", ")}`));
-  }
+  // Skills loaded silently — use /skills to list them
 
   const state: AppState = {
     router,
@@ -262,16 +257,23 @@ async function main() {
 
   // Header
   const providerInfo = `${router.currentProvider.name}:${router.currentProvider.config.model}`;
+  console.log("");
   console.log(
-    chalk.bold.cyan("AshlrCode") +
+    chalk.bold.cyan("  AshlrCode") +
       chalk.dim(` v${VERSION}`) +
-      chalk.dim(` | ${providerInfo}`) +
-      chalk.dim(` | session:${session.id}`)
+      chalk.dim(` | ${providerInfo}`)
   );
-  console.log(chalk.dim(`${cwd}`));
+  console.log(chalk.dim(`  ${cwd}`));
   console.log(
-    chalk.dim('Commands: /plan /cost /sessions /model /clear /quit\n')
+    chalk.dim(`  Type a message to start. /help for commands, /skills for skills, Ctrl+C to exit.\n`)
   );
+
+  // Graceful Ctrl+C handling
+  process.on("SIGINT", () => {
+    console.log(chalk.dim(`\n${router.getCostSummary()}`));
+    mcpManager.disconnectAll().catch(() => {});
+    process.exit(0);
+  });
 
   // Check for inline command
   const inlineMessage = args
