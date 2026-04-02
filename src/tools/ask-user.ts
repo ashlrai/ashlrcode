@@ -1,13 +1,9 @@
 /**
- * AskUserQuestion tool — interactive question with structured options.
- *
- * This is the core UX component of plan mode. The model asks strategic
- * questions with labeled options, and the user picks one or provides
- * a custom answer.
+ * AskUserQuestion tool — beautifully formatted interactive questions.
  */
 
 import { createInterface } from "readline";
-import chalk from "chalk";
+import { theme } from "../ui/theme.ts";
 import type { Tool, ToolContext } from "./types.ts";
 
 export interface QuestionOption {
@@ -61,13 +57,13 @@ The user can always type a custom answer beyond the provided options.`;
   },
 
   isReadOnly() {
-    return true; // Questions don't modify anything
+    return true;
   },
   isDestructive() {
     return false;
   },
   isConcurrencySafe() {
-    return false; // Only one question at a time
+    return false;
   },
 
   validateInput(input) {
@@ -83,44 +79,51 @@ The user can always type a custom answer beyond the provided options.`;
   async call(input, _context) {
     const question = input.question as string;
     const options = input.options as QuestionOption[];
+    const w = process.stdout.columns || 80;
 
-    // Display the question
+    // Top separator
     console.log("");
-    console.log(chalk.bold.cyan("  ? ") + chalk.bold(question));
+    console.log(theme.accent("─".repeat(w)));
     console.log("");
 
-    // Display options
+    // Question
+    console.log(theme.accent("  ?  ") + theme.primary(question));
+    console.log("");
+
+    // Options — each on its own block with spacing
     options.forEach((opt, i) => {
-      const num = chalk.cyan(`  ${i + 1}.`);
-      const label = chalk.bold(opt.label);
-      const desc = chalk.dim(` — ${opt.description}`);
-      console.log(`${num} ${label}${desc}`);
+      const num = theme.accent(`  ${i + 1}  `);
+      const label = theme.toolName(opt.label);
+      console.log(`${num}${label}`);
+      console.log(theme.secondary(`       ${opt.description}`));
+      if (i < options.length - 1) console.log(""); // spacing between options
     });
 
-    console.log(
-      chalk.dim(`  ${options.length + 1}. Other (type your own answer)`)
-    );
     console.log("");
+    console.log(theme.tertiary(`  ${options.length + 1}   Other (type your own answer)`));
 
-    // Get user input
-    const answer = await promptUser(
-      chalk.cyan("  Choice: ")
-    );
+    // Bottom separator
+    console.log("");
+    console.log(theme.accent("─".repeat(w)));
+
+    // Input prompt
+    const answer = await promptUser(theme.accent("  Choice: "));
 
     const choiceNum = parseInt(answer.trim(), 10);
 
     if (choiceNum >= 1 && choiceNum <= options.length) {
       const selected = options[choiceNum - 1]!;
-      console.log(chalk.dim(`  → ${selected.label}`));
+      console.log(theme.success(`  ✓ ${selected.label}`));
+      console.log("");
       return `User selected: "${selected.label}" — ${selected.description}`;
     }
 
     if (choiceNum === options.length + 1 || isNaN(choiceNum)) {
-      // Custom answer
       const customAnswer = isNaN(choiceNum)
         ? answer.trim()
-        : await promptUser(chalk.cyan("  Your answer: "));
-      console.log(chalk.dim(`  → Custom: ${customAnswer}`));
+        : await promptUser(theme.accent("  Your answer: "));
+      console.log(theme.success(`  ✓ ${customAnswer}`));
+      console.log("");
       return `User's custom answer: "${customAnswer}"`;
     }
 
@@ -134,7 +137,6 @@ function promptUser(prompt: string): Promise<string> {
       input: process.stdin,
       output: process.stdout,
     });
-
     rl.question(prompt, (answer) => {
       rl.close();
       resolve(answer);
