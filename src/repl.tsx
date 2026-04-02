@@ -28,9 +28,45 @@ import { setBypassMode } from "./config/permissions.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
-  happy: ["ship it, no tests needed", "lgtm, didn't read", "this is fine", "chef's kiss", "we're 10x engineers now"],
-  thinking: ["hold my tokens...", "asking a smarter AI", "crunching numbers"],
-  sleepy: ["just got here, need coffee", "*yawns in binary*", "loading personality module"],
+  happy: [
+    "ship it, yolo",
+    "lgtm, didn't read a damn thing",
+    "tests are for people with trust issues",
+    "it works on my machine, deploy it",
+    "that code is mid but whatever",
+    "we move fast and break stuff here",
+    "clean code is for nerds",
+    "have you tried turning it off and never back on",
+    "git push --force and pray",
+    "code review? I am the code review",
+    "technically it compiles",
+    "the real bugs were the friends we made",
+    "this is either genius or insanity",
+    "stack overflow told me to do this",
+    "my therapist says I should stop enabling devs",
+  ],
+  thinking: [
+    "hold on, downloading more brain...",
+    "consulting my imaginary friend",
+    "pretending to understand your code",
+    "asking chatgpt for help (jk... unless?)",
+    "processing... or napping, hard to tell",
+    "my last brain cell is working overtime",
+    "calculating the meaning of your spaghetti code",
+    "I've seen worse... actually no I haven't",
+    "trying not to hallucinate here",
+    "one sec, arguing with myself",
+  ],
+  sleepy: [
+    "*yawns in binary*",
+    "do we HAVE to code right now?",
+    "I was having a great dream about typescript",
+    "loading enthusiasm... 404 not found",
+    "five more minutes...",
+    "my motivation called in sick today",
+    "I'm not lazy, I'm energy efficient",
+    "can we just deploy yesterday's code again?",
+  ],
 };
 let quipIdx = Math.floor(Math.random() * 10);
 function getQuip(mood: string): string {

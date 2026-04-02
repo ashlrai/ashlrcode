@@ -1,13 +1,12 @@
 /**
  * Main Ink REPL application.
  *
- * Uses Ink's <Static> for scrollable output above,
- * and a live InputBox pinned at the bottom.
- * Status line uses flexbox for proper right-alignment.
+ * Layout: output scrolls above, input box with buddy beside it at bottom.
+ * Buddy sits to the right of the input lines (like Claude Code's Velum).
  */
 
 import React, { useState, useCallback } from "react";
-import { Box, Text, Static, useInput, useApp, Spacer } from "ink";
+import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
 
 interface OutputItem {
@@ -31,9 +30,6 @@ interface AppProps {
   spinnerText: string;
 }
 
-// Spinner frames
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
 export function App({
   onSubmit,
   onExit,
@@ -52,7 +48,8 @@ export function App({
   const [input, setInput] = useState("");
   const { exit } = useApp();
   const w = process.stdout.columns || 80;
-  const line = "─".repeat(w);
+  const buddyWidth = 16; // space reserved for buddy on the right
+  const lineWidth = w - buddyWidth;
 
   const handleSubmit = useCallback((value: string) => {
     const text = value.trim();
@@ -68,7 +65,7 @@ export function App({
   });
 
   // Context bar
-  const barWidth = 12;
+  const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);
   const empty = barWidth - filled;
   const ctxColor = contextPercent < 50 ? "green" : contextPercent < 75 ? "yellow" : "red";
@@ -84,55 +81,56 @@ export function App({
 
       {/* Spinner when processing */}
       {isProcessing && (
-        <Text dimColor>  {SPINNER[Math.floor(Date.now() / 80) % SPINNER.length]} {spinnerText}</Text>
+        <Text dimColor>  ⠋ {spinnerText}</Text>
       )}
 
-      {/* Input box */}
-      <Text dimColor>{line}</Text>
+      {/* Input area + Buddy side by side */}
       <Box>
-        <Text color={modeColor} bold>❯ </Text>
-        {isProcessing ? (
-          <Text dimColor>waiting for response...</Text>
-        ) : (
-          <TextInput
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            placeholder="Type a message..."
-          />
-        )}
-      </Box>
-      <Text dimColor>{line}</Text>
-
-      {/* Status line — mode left, context + buddy right */}
-      <Box justifyContent="space-between">
-        {/* Left: mode */}
-        <Box>
-          <Text color={modeColor} bold>❯❯ </Text>
-          <Text color={modeColor}>{mode} mode</Text>
-          <Text dimColor> (shift+tab to cycle)</Text>
-        </Box>
-
-        {/* Right: context bar + buddy */}
-        <Box>
-          <Text color={ctxColor}>{"█".repeat(filled)}</Text>
-          <Text dimColor>{"░".repeat(empty)}</Text>
-          <Text> </Text>
-          <Text color={ctxColor}>{contextPercent}%</Text>
-          <Text dimColor> · {contextUsed}/{contextLimit}</Text>
-          <Text>{"   "}</Text>
-          {/* Buddy — far right */}
-          <Box flexDirection="column" alignItems="flex-end">
-            {buddyArt.map((artLine, i) => (
-              <Text key={i} dimColor>{artLine}</Text>
-            ))}
-            <Text color="cyan">{buddyName}</Text>
+        {/* Left: input box */}
+        <Box flexDirection="column" width={lineWidth}>
+          <Text dimColor>{"─".repeat(lineWidth)}</Text>
+          <Box>
+            <Text color={modeColor} bold>❯ </Text>
+            {isProcessing ? (
+              <Text dimColor>waiting for response...</Text>
+            ) : (
+              <TextInput
+                value={input}
+                onChange={setInput}
+                onSubmit={handleSubmit}
+                placeholder="Type a message..."
+              />
+            )}
+          </Box>
+          <Text dimColor>{"─".repeat(lineWidth)}</Text>
+          {/* Status line */}
+          <Box justifyContent="space-between">
+            <Box>
+              <Text color={modeColor} bold>❯❯ </Text>
+              <Text color={modeColor}>{mode}</Text>
+              <Text dimColor> (shift+tab)</Text>
+            </Box>
+            <Box>
+              <Text color={ctxColor}>{"█".repeat(filled)}</Text>
+              <Text dimColor>{"░".repeat(empty)}</Text>
+              <Text> </Text>
+              <Text color={ctxColor}>{contextPercent}%</Text>
+              <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+            </Box>
           </Box>
         </Box>
+
+        {/* Right: Buddy — sits beside the input lines */}
+        <Box flexDirection="column" alignItems="center" width={buddyWidth} marginLeft={1}>
+          {buddyArt.map((artLine, i) => (
+            <Text key={i} color="cyan">{artLine}</Text>
+          ))}
+          <Text color="cyan" bold>{buddyName}</Text>
+        </Box>
       </Box>
 
-      {/* Buddy quip — right aligned */}
-      <Box justifyContent="flex-end">
+      {/* Buddy speech bubble — left of buddy, right-aligned */}
+      <Box justifyContent="flex-end" marginRight={buddyWidth + 1}>
         <Text dimColor italic>"{buddyQuip}"</Text>
       </Box>
     </Box>
