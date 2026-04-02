@@ -43,49 +43,125 @@ export interface BuddyData {
 // ASCII art — 3-4 lines, ~12-15 chars wide
 // ---------------------------------------------------------------------------
 
-const ASCII_ART: Record<Species, string[]> = {
-  penguin: [
-    "  (·>·)  ",
-    "  /| |\\  ",
-    "  _/ \\_  ",
-  ],
-  cat: [
-    " /\\_/\\  ",
-    "( o.o ) ",
-    " > ^ <  ",
-  ],
-  ghost: [
-    "  .-.   ",
-    " (o o)  ",
-    " | O |  ",
-    " '~~~'  ",
-  ],
-  dragon: [
-    " /\\_/\\ ~",
-    "( o.o )>",
-    " |)_(|  ",
-  ],
-  owl: [
-    " {o,o}  ",
-    " /)  )  ",
-    " \" \" \"  ",
-  ],
-  robot: [
-    " [o_o]  ",
-    " /|=|\\  ",
-    "  d b   ",
-  ],
-  axolotl: [
-    " \\(·u·)/ ",
-    "  |   |  ",
-    "  ~---~  ",
-  ],
-  capybara: [
-    "  (•ᴗ•)  ",
-    "  /|  |\\  ",
-    "  ~~--~~  ",
-  ],
+// Animated ASCII art — different poses per mood
+const ASCII_ART: Record<Species, Record<Mood, string[][]>> = {
+  capybara: {
+    happy: [
+      [" .---.", "(•ᴗ•)", "/ > \\", "\"---\""],
+      [" .---.", "(•ᴗ•)>", "/ | \\", "\"---\""],
+    ],
+    thinking: [
+      [" .---.", "(•_•)", "/ | \\", "\"---\""],
+      [" .---.", "(•_•)?", "/ | \\", "\"---\""],
+    ],
+    sleepy: [
+      [" .---.", "(-_-) z", "/ | \\", "\"---\""],
+      [" .---.", "(-_-)  zZ", "/ | \\", "\"---\""],
+    ],
+  },
+  penguin: {
+    happy: [
+      ["  .--.", " (·>·)", " /| |\\", "  \" \""],
+      ["  .--.", " (·>·)/", " /|  |", "  \" \""],
+    ],
+    thinking: [
+      ["  .--.", " (·.·)", " /| |\\", "  \" \""],
+      ["  .--.", " (·.·)?", " /| |\\", "  \" \""],
+    ],
+    sleepy: [
+      ["  .--.", " (-.-)", " /| |\\", "  \" \""],
+      ["  .--.", " (-.-) z", " /| |\\", "  \" \""],
+    ],
+  },
+  cat: {
+    happy: [
+      [" /\\_/\\", "( ^.^ )", " > ~ <"],
+      [" /\\_/\\", "( ^.^ )/", " >   <"],
+    ],
+    thinking: [
+      [" /\\_/\\", "( o.o )", " > . <"],
+      [" /\\_/\\", "( o.o )?", " > . <"],
+    ],
+    sleepy: [
+      [" /\\_/\\", "( -.- )", " > _ <"],
+      [" /\\_/\\", "( -.- )z", " > _ <"],
+    ],
+  },
+  ghost: {
+    happy: [
+      ["  .-.", " (^ ^)", " | | |", " '~'"],
+      ["  .-.", " (^ ^)/", " |   |", " '~'"],
+    ],
+    thinking: [
+      ["  .-.", " (o o)", " | ? |", " '~'"],
+      ["  .-.", " (o o)?", " |   |", " '~'"],
+    ],
+    sleepy: [
+      ["  .-.", " (- -)", " | z |", " '~'"],
+      ["  .-.", " (- -)z", " |   |", " '~'"],
+    ],
+  },
+  dragon: {
+    happy: [
+      [" /\\_/\\~", "(^.^ )>", " |)_(|"],
+      [" /\\_/\\~~", "(^.^ )>>", " |)_(|"],
+    ],
+    thinking: [
+      [" /\\_/\\", "(o.o )", " |)_(|"],
+      [" /\\_/\\?", "(o.o )?", " |)_(|"],
+    ],
+    sleepy: [
+      [" /\\_/\\", "(-.- )", " |)_(|"],
+      [" /\\_/\\", "(-.- )z", " |)_(|"],
+    ],
+  },
+  owl: {
+    happy: [
+      [" (\\,/)", " {^,^}", " /| |\\"],
+      [" (\\,/)", " {^,^}/", " /|  |"],
+    ],
+    thinking: [
+      [" (\\,/)", " {o,o}", " /| |\\"],
+      [" (\\,/)", " {o,o}?", " /| |\\"],
+    ],
+    sleepy: [
+      [" (\\,/)", " {-,-}", " /| |\\"],
+      [" (\\,/)", " {-,-}z", " /| |\\"],
+    ],
+  },
+  robot: {
+    happy: [
+      [" ┌─┐", " [^_^]", " /|=|\\", "  d b"],
+      [" ┌─┐", " [^_^]/", " /|=|", "  d b"],
+    ],
+    thinking: [
+      [" ┌─┐", " [o_o]", " /|=|\\", "  d b"],
+      [" ┌─┐", " [o_o]?", " /|=|\\", "  d b"],
+    ],
+    sleepy: [
+      [" ┌─┐", " [-_-]", " /|=|\\", "  d b"],
+      [" ┌─┐", " [-_-]z", " /|=|\\", "  d b"],
+    ],
+  },
+  axolotl: {
+    happy: [
+      [" \\(^u^)/", "  | _ |", "  ~---~"],
+      [" \\(^u^)~", "  | _ |", "  ~---~"],
+    ],
+    thinking: [
+      [" \\(·u·)/", "  | _ |", "  ~---~"],
+      [" \\(·u·)?", "  | _ |", "  ~---~"],
+    ],
+    sleepy: [
+      [" \\(-u-)/", "  | _ |", "  ~---~"],
+      [" \\(-u-)z", "  | _ |", "  ~---~"],
+    ],
+  },
 };
+
+// Animation frame counter — alternates between poses
+let animFrame = 0;
+setInterval(() => { animFrame++; }, 1500); // Switch pose every 1.5s
 
 // ---------------------------------------------------------------------------
 // Name pool
@@ -169,10 +245,13 @@ export async function saveBuddy(buddy: BuddyData): Promise<void> {
 // ---------------------------------------------------------------------------
 
 /**
- * Get the buddy's ASCII art lines.
+ * Get the buddy's ASCII art lines for current mood + animation frame.
  */
 export function getBuddyArt(buddy: BuddyData): string[] {
-  return ASCII_ART[buddy.species] ?? ["(?)"];
+  const moodArt = ASCII_ART[buddy.species]?.[buddy.mood];
+  if (!moodArt) return ["(?)"];
+  const frameIndex = animFrame % moodArt.length;
+  return moodArt[frameIndex]!;
 }
 
 /**
@@ -180,8 +259,7 @@ export function getBuddyArt(buddy: BuddyData): string[] {
  * Designed to sit neatly under the startup banner.
  */
 export function printBuddy(buddy: BuddyData): void {
-  const art = ASCII_ART[buddy.species];
-  if (!art) return;
+  const art = getBuddyArt(buddy);
 
   const moodEmoji = buddy.mood === "happy"
     ? theme.success("♥")
