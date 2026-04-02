@@ -118,15 +118,66 @@ export function printStatusLine(
       c.muted(` · ${contextUsed ?? "0"}/${contextLimit ?? "?"}`);
   }
 
-  // Buddy quip
+  // Buddy quip — funny rotating commentary
   let buddyQuip = "";
-  if (buddyName && buddyMood) {
-    const moodIcon = buddyMood === "happy" ? "♥" : buddyMood === "thinking" ? "…" : "z";
-    buddyQuip = c.muted(` · ${buddyName} ${moodIcon}`);
+  if (buddyName) {
+    const quip = getBuddyQuip(buddyMood ?? "sleepy");
+    buddyQuip = c.muted(` · ${buddyName}: `) + c.dim(`"${quip}"`);
   }
 
   console.log(modeLabel + "          " + ctxDisplay + buddyQuip);
   console.log(""); // Extra breathing room at bottom
+}
+
+// Funny, edgy, satirical buddy quips that rotate
+const BUDDY_QUIPS: Record<string, string[]> = {
+  happy: [
+    "ship it, no tests needed",
+    "we're basically 10x engineers now",
+    "I'd approve this PR",
+    "this code sparks joy",
+    "lgtm, didn't read",
+    "it works on my machine™",
+    "fewer bugs than yesterday probably",
+    "the code reviews itself",
+    "trust the process",
+    "production ready (citation needed)",
+    "chef's kiss",
+    "this is fine 🔥",
+    "the AI will fix it later",
+    "moved fast, broke nothing (hopefully)",
+    "refactoring is for quitters",
+  ],
+  thinking: [
+    "hold my tokens...",
+    "crunching very important numbers",
+    "consulting the void",
+    "downloading more RAM",
+    "asking a smarter AI",
+    "pretending to understand your code",
+    "this might take a while",
+    "compiling thoughts...",
+    "negotiating with the API gods",
+    "thinking harder than a CS exam",
+  ],
+  sleepy: [
+    "just got here, need coffee",
+    "*yawns in binary*",
+    "still waking up...",
+    "loading personality module",
+    "rebooting enthusiasm",
+    "can we do this later?",
+    "my tokens are still cold",
+    "give me a sec...",
+  ],
+};
+
+let lastQuipIndex = Math.floor(Math.random() * 100);
+
+function getBuddyQuip(mood: string): string {
+  const quips = BUDDY_QUIPS[mood] ?? BUDDY_QUIPS.sleepy!;
+  lastQuipIndex = (lastQuipIndex + 1) % quips.length;
+  return quips[lastQuipIndex]!;
 }
 
 /**
@@ -148,9 +199,8 @@ export function printTurnSeparator(info?: {
   const parts: string[] = [];
   if (info.turnNumber) parts.push(`turn ${info.turnNumber}`);
   if (info.cost) parts.push(info.cost);
-  if (info.buddyName && info.buddyMood) {
-    const moodIcon = info.buddyMood === "happy" ? "♥" : info.buddyMood === "thinking" ? "…" : "z";
-    parts.push(`${info.buddyName} ${moodIcon}`);
+  if (info.buddyName) {
+    parts.push(info.buddyName);
   }
 
   const label = parts.length > 0 ? ` ${parts.join(" · ")} ` : "";

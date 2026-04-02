@@ -50,9 +50,9 @@ export const theme = {
   // Prompt styles
   prompt: {
     normal: chalk.hex("#00E676")("❯ "),
-    plan: chalk.hex("#E040FB")("[plan] ❯ "),
-    edits: chalk.hex("#FFD600")("[edits] ❯ "),
-    yolo: chalk.hex("#FF1744")("[YOLO] ❯ "),
+    plan: chalk.hex("#E040FB")("❯ "),
+    edits: chalk.hex("#FFD600")("❯ "),
+    yolo: chalk.hex("#FF1744")("❯ "),
   },
 } as const;
 
