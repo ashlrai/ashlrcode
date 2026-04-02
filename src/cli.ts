@@ -643,12 +643,51 @@ async function handleCommand(
       break;
     }
 
+    case "/effort": {
+      const levels = ["fast", "balanced", "thorough"];
+      if (!arg) {
+        console.log(theme.primary("Effort: " + (state.router.currentProvider.config.maxTokens === 4096 ? "fast" : state.router.currentProvider.config.maxTokens === 16384 ? "thorough" : "balanced")));
+        console.log(theme.tertiary("  fast      — shorter responses, fewer tokens"));
+        console.log(theme.tertiary("  balanced  — default behavior"));
+        console.log(theme.tertiary("  thorough  — deeper analysis, more tokens"));
+        console.log(theme.tertiary("  Usage: /effort <level>"));
+      } else if (levels.includes(arg)) {
+        const tokenMap: Record<string, number> = { fast: 4096, balanced: 8192, thorough: 16384 };
+        state.router.currentProvider.config.maxTokens = tokenMap[arg]!;
+        console.log(theme.success(`  Effort set to: ${arg} (${tokenMap[arg]} max tokens)`));
+      } else {
+        console.log(theme.error(`  Unknown effort level. Choose: ${levels.join(", ")}`));
+      }
+      break;
+    }
+
+    case "/btw": {
+      if (!arg) {
+        console.log(theme.tertiary("  Ask a quick side question: /btw <question>"));
+      } else {
+        await runTurn(`[Side question — answer briefly, don't change the main task] ${arg}`, state);
+      }
+      break;
+    }
+
+    case "/status": {
+      const taskList = await import("./tools/tasks.ts");
+      console.log(theme.primary("Session: ") + theme.accent(state.session.id));
+      console.log(theme.primary("Provider: ") + theme.accent(state.router.currentProvider.name + ":" + state.router.currentProvider.config.model));
+      console.log(theme.primary("Messages: ") + theme.tokens(String(state.history.length)));
+      console.log(theme.primary("Cost: ") + styleCost(state.router.costs.totalCostUSD));
+      const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
+      const ctxUsed = estimateTokens(state.history);
+      console.log(theme.primary("Context: ") + styleTokens(ctxUsed) + theme.tertiary(" / ") + styleTokens(ctxLimit) + theme.tertiary(` (${Math.round((ctxUsed / ctxLimit) * 100)}%)`));
+      break;
+    }
+
     case "/help":
       printCommands();
       break;
 
     default:
-      console.log(chalk.dim(`Unknown command: ${cmd}. Type /help for available commands.`));
+      console.log(theme.tertiary(`Unknown command: ${cmd}. Type /help for available commands.`));
   }
 }
 
@@ -898,23 +937,31 @@ function timeSince(date: Date): string {
 
 function printCommands() {
   console.log(`
-${chalk.bold("Commands:")}
-  /plan           Show plan mode status
-  /cost           Show token usage and costs
-  /history        Show conversation history
-  /undo           Undo last turn
-  /diff           Show git diff --stat
-  /git            Show git repo info
-  /compact        Compress conversation context
-  /sessions       List saved sessions
-  /model [name]   Show/switch model
-  /clear          Clear conversation
-  /help           Show this help
-  /quit           Exit
+${theme.accent("Commands:")}
+  ${theme.toolName("/plan")}           ${theme.secondary("Plan mode status")}
+  ${theme.toolName("/cost")}           ${theme.secondary("Token usage and costs")}
+  ${theme.toolName("/status")}         ${theme.secondary("Full session status")}
+  ${theme.toolName("/effort")} ${theme.tertiary("<lvl>")}   ${theme.secondary("Set reasoning effort (fast/balanced/thorough)")}
+  ${theme.toolName("/btw")} ${theme.tertiary("<q>")}      ${theme.secondary("Quick side question")}
+  ${theme.toolName("/history")}        ${theme.secondary("Conversation turns")}
+  ${theme.toolName("/undo")}           ${theme.secondary("Remove last turn")}
+  ${theme.toolName("/restore")} ${theme.tertiary("<f>")}   ${theme.secondary("Undo file edit")}
+  ${theme.toolName("/diff")}           ${theme.secondary("Git diff --stat")}
+  ${theme.toolName("/git")}            ${theme.secondary("Branch, remote, changes")}
+  ${theme.toolName("/compact")}        ${theme.secondary("Compress context")}
+  ${theme.toolName("/tools")}          ${theme.secondary("List all tools")}
+  ${theme.toolName("/skills")}         ${theme.secondary("List all skills")}
+  ${theme.toolName("/memory")}         ${theme.secondary("Project memories")}
+  ${theme.toolName("/sessions")}       ${theme.secondary("Saved sessions")}
+  ${theme.toolName("/model")} ${theme.tertiary("<name>")}  ${theme.secondary("Show/switch model")}
+  ${theme.toolName("/clear")}          ${theme.secondary("Clear conversation")}
+  ${theme.toolName("/help")}           ${theme.secondary("Show this help")}
+  ${theme.toolName("/quit")}           ${theme.secondary("Exit")}
 
-${chalk.bold("Tips:")}
-  End a line with \\ for multi-line input
-  Permissions: [y]es [a]lways [n]o [d]eny-always
+${theme.accent("Tips:")}
+  ${theme.tertiary("Shift+Tab")}       ${theme.secondary("Cycle mode: Normal → Plan → Edits → YOLO")}
+  ${theme.tertiary("line ending \\\\")}  ${theme.secondary("Multi-line input")}
+  ${theme.tertiary("[y/a/n/d]")}       ${theme.secondary("Permission: yes / always / no / deny-always")}
 `);
 }
 
