@@ -22,13 +22,24 @@ const CONFIG_DIR = join(homedir(), ".ashlrcode");
 const SETTINGS_PATH = join(CONFIG_DIR, "settings.json");
 
 export async function loadSettings(): Promise<Settings> {
+  const defaults = getDefaultSettings();
+
   if (existsSync(SETTINGS_PATH)) {
     const raw = await readFile(SETTINGS_PATH, "utf-8");
-    return JSON.parse(raw) as Settings;
+    const fileSettings = JSON.parse(raw) as Partial<Settings>;
+
+    // Merge file settings with defaults — file settings override but
+    // providers always come from env vars / defaults if not in file
+    return {
+      ...defaults,
+      ...fileSettings,
+      providers: fileSettings.providers ?? defaults.providers,
+      hooks: fileSettings.hooks ?? defaults.hooks,
+      mcpServers: fileSettings.mcpServers ?? defaults.mcpServers,
+    };
   }
 
-  // Default settings — xAI as primary
-  return getDefaultSettings();
+  return defaults;
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
