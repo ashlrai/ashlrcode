@@ -293,7 +293,17 @@ async function main() {
     printBanner(VERSION, router.currentProvider.name, router.currentProvider.config.model, startMode);
     printBuddy(buddy);
     console.log(theme.tertiary(`  ${cwd}`));
-    console.log(theme.tertiary(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to exit.\n`));
+    if (buddy.totalSessions <= 1) {
+      // First-time quick-start
+      console.log(theme.accent("\n  Welcome! Here are some things to try:"));
+      console.log(theme.secondary(`    "fix the login bug"`) + theme.tertiary(`          — describe any task`));
+      console.log(theme.secondary(`    /explore`) + theme.tertiary(`                        — analyze this codebase`));
+      console.log(theme.secondary(`    /commit`) + theme.tertiary(`                         — commit your changes`));
+      console.log(theme.secondary(`    /buddy`) + theme.tertiary(`                          — meet ${buddy.name}!`));
+      console.log(theme.tertiary(`\n  Shift+Tab switches modes. /help for all commands.\n`));
+    } else {
+      console.log(theme.tertiary(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to exit.\n`));
+    }
   }
 
   // Graceful Ctrl+C handling — save context + buddy before exit
@@ -433,12 +443,21 @@ async function handleCommand(
       process.exit(0);
 
     case "/cost":
-      console.log(chalk.dim(state.router.getCostSummary()));
+      console.log(theme.secondary(state.router.getCostSummary()));
       console.log(
-        chalk.dim(
+        theme.tertiary(
           `Context: ~${estimateTokens(state.history).toLocaleString()} tokens, ${state.history.length} messages`
         )
       );
+      // Cost nudge
+      if (state.router.costs.totalCostUSD > 5) {
+        console.log(theme.warning(`\n  💡 Expensive session ($${state.router.costs.totalCostUSD.toFixed(2)}). Consider:`));
+        console.log(theme.tertiary(`     /model grok-3  — 80% cheaper for exploration`));
+        console.log(theme.tertiary(`     /compact       — reduce context size`));
+        console.log(theme.tertiary(`     /effort fast   — shorter responses`));
+      } else if (state.router.costs.totalCostUSD > 1) {
+        console.log(theme.tertiary(`\n  💡 Tip: /model grok-3 for cheaper exploration tasks`));
+      }
       break;
 
     case "/clear":
@@ -758,10 +777,13 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
 
     // Warn at 50% and 75% of context limit
     const currentTokens = estimateTokens(state.history) + systemTokens;
-    if (!printMode && currentTokens > contextLimit * 0.75) {
-      console.log(chalk.yellow(`  ⚠ Context at ${Math.round((currentTokens / contextLimit) * 100)}% of ${contextLimit.toLocaleString()} token limit`));
+    if (!printMode && currentTokens > contextLimit * 0.85) {
+      console.log(theme.error(`  ⚠ Context at ${Math.round((currentTokens / contextLimit) * 100)}% — approaching limit!`));
+      console.log(theme.tertiary(`  💡 Run /compact to shrink context, or start fresh with ac --continue`));
+    } else if (!printMode && currentTokens > contextLimit * 0.75) {
+      console.log(theme.warning(`  ⚠ Context at ${Math.round((currentTokens / contextLimit) * 100)}% of ${contextLimit.toLocaleString()} token limit`));
     } else if (!printMode && currentTokens > contextLimit * 0.5) {
-      console.log(chalk.dim(`  Context at ${Math.round((currentTokens / contextLimit) * 100)}% of limit`));
+      console.log(theme.tertiary(`  Context at ${Math.round((currentTokens / contextLimit) * 100)}% of limit`));
     }
 
     if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit })) {
@@ -1019,6 +1041,7 @@ ${theme.accent("Commands:")}
   ${theme.toolName("/skills")}         ${theme.secondary("List all skills")}
   ${theme.toolName("/memory")}         ${theme.secondary("Project memories")}
   ${theme.toolName("/sessions")}       ${theme.secondary("Saved sessions")}
+  ${theme.toolName("/buddy")}          ${theme.secondary("Meet your companion")}
   ${theme.toolName("/model")} ${theme.tertiary("<name>")}  ${theme.secondary("Show/switch model")}
   ${theme.toolName("/clear")}          ${theme.secondary("Clear conversation")}
   ${theme.toolName("/help")}           ${theme.secondary("Show this help")}
