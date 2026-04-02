@@ -2,7 +2,7 @@
 
 **Multi-provider AI coding agent CLI with Claude Code-level features.**
 
-[![Version](https://img.shields.io/badge/version-1.3.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.5.0-blue)]()
 [![Tests](https://img.shields.io/badge/tests-121%20passing-green)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
@@ -250,6 +250,22 @@ src/
 ├── ui/                     # Spinner, markdown renderer
 └── __tests__/              # 10 test files, 121 tests
 ```
+
+---
+
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [Getting Started](docs/getting-started.md) | Installation, setup, first use, common workflows |
+| [Tool Reference](docs/tools.md) | All 30 tools with parameters, examples, and notes |
+| [Skills Guide](docs/skills.md) | All 15 skills + how to create custom ones |
+| [CLI Reference](docs/cli-reference.md) | Every flag, command, and environment variable |
+| [Configuration](docs/configuration.md) | Settings, hooks, MCP servers, permissions |
+| [Examples](docs/examples.md) | 20 real-world usage patterns |
+| [Architecture](docs/architecture.md) | How AshlrCode works internally |
+| [Migration from Claude Code](docs/migration-from-claude-code.md) | Side-by-side feature comparison |
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
 
 ---
 
