@@ -344,14 +344,10 @@ async function main() {
 
   let multiLineBuffer = "";
 
-  /** Show clean input area: line → status → prompt */
+  /** Show clean input area with breathing room */
   function showPrompt() {
     if (!printMode) {
-      printInputLine();
-    }
-    rl.prompt();
-    if (!printMode) {
-      // Print status line below prompt
+      // Status line first (mode + context)
       const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
       const ctxUsed = estimateTokens(state.history);
       const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
@@ -362,7 +358,10 @@ async function main() {
         formatTk(ctxUsed),
         formatTk(ctxLimit)
       );
+      // Separator line
+      printInputLine();
     }
+    rl.prompt();
   }
 
   // Shift+Tab mode cycling — updates prompt in-place (no new lines)
@@ -403,7 +402,7 @@ async function main() {
     if (input.startsWith("/") && state.skillRegistry.isSkill(input.split(" ")[0]!)) {
       const expanded = state.skillRegistry.expand(input);
       if (expanded) {
-        console.log(theme.tertiary(`  [skill: ${input.split(" ")[0]}]\n`));
+        console.log("\n" + theme.accent(`  ⚡ Running skill: ${theme.toolName(input.split(" ")[0]!)}`) + "\n");
         await runTurn(expanded, state);
         console.log("");
         rl.setPrompt(getPrompt());
