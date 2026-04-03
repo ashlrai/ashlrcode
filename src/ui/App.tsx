@@ -52,12 +52,20 @@ export function App({
 
   const handleModeSwitch = useCallback(() => onModeSwitch(), [onModeSwitch]);
 
+  // Accept autocomplete: clear input first, then set suggestion on next tick
+  // This forces ink-text-input to reset its internal cursor to the end
+  const acceptSuggestion = useCallback(() => {
+    if (!suggestion) return;
+    setInput("");
+    setTimeout(() => setInput(suggestion + " "), 0);
+  }, [suggestion]);
+
   useInput(useCallback((ch: string, key: any) => {
     if (key.ctrl && ch === "c") { onExit(); exit(); }
     if (key.tab && key.shift) { handleModeSwitch(); return; }
-    if (key.tab && suggestion) { setInput(suggestion + " "); return; }
-    if (key.rightArrow && suggestion && input.length > 0) { setInput(suggestion + " "); }
-  }, [suggestion, input, handleModeSwitch, onExit, exit]));
+    if (key.tab && suggestion) { acceptSuggestion(); return; }
+    if (key.rightArrow && suggestion && input.length > 0) { acceptSuggestion(); }
+  }, [suggestion, input, handleModeSwitch, onExit, exit, acceptSuggestion]));
 
   const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);
