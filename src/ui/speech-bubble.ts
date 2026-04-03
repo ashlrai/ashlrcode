@@ -44,7 +44,7 @@ export function renderBuddyWithBubble(
 ): string[] {
   const maxBubbleWidth = 26;
   const textLines = wrapText(quip, maxBubbleWidth - 4); // 4 for "| " and " |"
-  const innerWidth = Math.max(...textLines.map(l => l.length), 8);
+  const innerWidth = textLines.reduce((a, l) => Math.max(a, l.length), 8);
   const bubbleWidth = innerWidth + 4; // "| " + text + " |"
 
   // Build bubble lines
@@ -60,7 +60,7 @@ export function renderBuddyWithBubble(
 
   // Bottom border with tail
   const tailPos = Math.min(10, bubbleWidth - 2);
-  bubbleLines.push(" '" + "-".repeat(tailPos) + "." + " ".repeat(bubbleWidth - tailPos - 3) + "'");
+  bubbleLines.push(" '" + "-".repeat(tailPos) + "." + " ".repeat(Math.max(0, bubbleWidth - tailPos - 3)) + "'");
 
   // Tail lines
   bubbleLines.push(" ".repeat(tailPos + 3) + "\\");

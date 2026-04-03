@@ -72,7 +72,7 @@ export function App({
     onModeSwitch();
   }, [onModeSwitch]);
 
-  useInput(useCallback((ch: string, key: any) => {
+  useInput(useCallback((ch: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
     if (key.ctrl && ch === "c") {
       onExit();
       exit();
