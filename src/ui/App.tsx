@@ -150,33 +150,32 @@ export function App({
           </Box>
         )}
       </Box>
-      {/* Autocomplete hints — always rendered for stable height */}
-      <Box marginLeft={2} height={1}>
-        {input.startsWith("/") && input.length > 1 && !isProcessing ? (
-          <>
-            <Text dimColor>{commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}</Text>
-            {suggestion && <Text dimColor italic>  tab ↹</Text>}
-          </>
-        ) : <Text> </Text>}
-      </Box>
+      {/* Autocomplete hints — only shown when typing a slash command */}
+      {input.startsWith("/") && input.length > 1 && !isProcessing && (
+        <Box marginLeft={2}>
+          <Text dimColor>{commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}</Text>
+          {suggestion && <Text dimColor italic>  tab ↹</Text>}
+        </Box>
+      )}
       <Text dimColor>{"-".repeat(w)}</Text>
 
-      {/* Bottom area: input status on left, buddy panel on right */}
+      {/* Bottom: status left, buddy right */}
       <Box>
-        {/* Left: status line */}
-        <Box flexGrow={1}>
-          <Text color={modeColor} bold>❯❯ </Text>
-          <Text color={modeColor}>{mode}</Text>
-          <Text dimColor> (shift+tab)</Text>
-          <Text>{"    "}</Text>
-          <Text color={ctxColor}>{"█".repeat(filled)}</Text>
-          <Text dimColor>{"░".repeat(empty)}</Text>
-          <Text> </Text>
-          <Text color={ctxColor}>{contextPercent}%</Text>
-          <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+        <Box flexGrow={1} flexDirection="column">
+          <Box>
+            <Text color={modeColor} bold>❯❯ </Text>
+            <Text color={modeColor}>{mode}</Text>
+            <Text dimColor> (shift+tab)</Text>
+            <Text>{"    "}</Text>
+            <Text color={ctxColor}>{"█".repeat(filled)}</Text>
+            <Text dimColor>{"░".repeat(empty)}</Text>
+            <Text> </Text>
+            <Text color={ctxColor}>{contextPercent}%</Text>
+            <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+          </Box>
         </Box>
 
-        {/* Right: buddy panel — fixed width, fixed height */}
+        {/* Buddy panel — fixed height, right-aligned */}
         <Box width={42} flexShrink={0}>
           <BuddyPanel art={buddyArt} name={buddyName} quip={buddyQuip} quipType={buddyQuipType} />
         </Box>

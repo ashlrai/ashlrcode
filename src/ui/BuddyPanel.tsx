@@ -17,8 +17,8 @@ interface Props {
   quipType: "quip" | "suggestion" | "reaction";
 }
 
-// Fixed height covers: tallest art (6 lines with hat) + longest bubble (6 lines) → max 7 composite + 1 padding
-const FIXED_HEIGHT = 8;
+// Fixed height: covers most art (5 lines) + name + short bubble without excess space
+const FIXED_HEIGHT = 6;
 
 export function BuddyPanel({ art, name, quip, quipType }: Props) {
   const bubbleText = quipType === "suggestion" ? `💡 ${quip}` : quip;
