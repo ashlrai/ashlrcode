@@ -86,6 +86,7 @@ import { webBrowserTool, shutdownBrowser } from "./tools/web-browser.ts";
 import { feature } from "./config/features.ts";
 import { teamCreateTool, teamDeleteTool, teamListTool, teamDispatchTool, initTeamTools } from "./tools/team.ts";
 import { workflowTool } from "./tools/workflow.ts";
+import { listPeersTool } from "./tools/peers.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { listMcpResourcesTool, setMCPManager } from "./tools/mcp-resources.ts";
@@ -202,6 +203,7 @@ async function main() {
   registry.register(teamListTool);
   registry.register(teamDispatchTool);
   registry.register(workflowTool);
+  registry.register(listPeersTool);
   if (process.platform === "win32") {
     registry.register(powershellTool);
   }

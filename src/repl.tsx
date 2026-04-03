@@ -20,6 +20,8 @@ import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
 import { getRemoteSettings, stopPolling as stopRemotePolling } from "./config/remote-settings.ts";
+import { exportSettings, importSettings, getSyncStatus } from "./config/settings-sync.ts";
+import { join } from "path";
 import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.ts";
 import chalk from "chalk";
 import type { ProviderRouter } from "./providers/router.ts";
@@ -30,6 +32,8 @@ import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
 import { shutdownLSP } from "./tools/lsp.ts";
+import { shutdownBrowser } from "./tools/web-browser.ts";
+import { startIPCServer, stopIPCServer } from "./agent/ipc.ts";
 import { checkPermission, hasPendingPermission, answerPendingPermission, requestPermissionInk } from "./config/permissions.ts";
 import { feature, listFeatures } from "./config/features.ts";
 import { hasPendingQuestion, answerPendingQuestion } from "./tools/ask-user.ts";
@@ -49,6 +53,8 @@ import { createTrigger, listTriggers, deleteTrigger, toggleTrigger, TriggerRunne
 import { startRecording, stopRecording, isRecording, transcribeRecording, checkVoiceAvailability, type VoiceConfig } from "./voice/voice-mode.ts";
 import { checkForUpgrade } from "./config/upgrade-notice.ts";
 import { VERSION } from "./version.ts";
+import { startBridgeServer, stopBridgeServer, getBridgePort } from "./bridge/bridge-server.ts";
+import { randomBytes } from "crypto";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -139,6 +145,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   setFileHistory(fileHistoryStore);
   fileHistoryStore.loadFromDisk().catch(() => {});
 
+  // IPC server — enables peer discovery and inter-process messaging
+  startIPCServer(state.session.id, state.toolContext.cwd).catch(() => {});
+
   // Speculation cache — pre-fetches likely read-only tool results
   const speculationCache = new SpeculationCache(100, 30_000);
   setSpeculationCache(speculationCache);
@@ -159,6 +168,33 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Initialize local event telemetry
   initTelemetry(state.session.id);
   logEvent("session_start", { cwd: state.toolContext.cwd }).catch(() => {});
+
+  // Bridge server — expose API for IDE extensions and remote clients
+  const bridgePort = parseInt(process.env.AC_BRIDGE_PORT ?? "", 10);
+  if (bridgePort > 0) {
+    const bridgeToken = process.env.AC_BRIDGE_TOKEN ?? randomBytes(16).toString("hex");
+    startBridgeServer({
+      port: bridgePort,
+      authToken: bridgeToken,
+      onSubmit: async (prompt) => {
+        if (_triggerCallback) await _triggerCallback(prompt);
+        return "Submitted";
+      },
+      getStatus: () => ({
+        mode: getCurrentMode(),
+        contextPercent: Math.round(
+          (estimateTokens(state.history) / getProviderContextLimit(state.router.currentProvider.name)) * 100,
+        ),
+        isProcessing,
+        sessionId: state.session.id,
+      }),
+      getHistory: () =>
+        state.history.map((m) => ({
+          role: m.role,
+          content: typeof m.content === "string" ? m.content : JSON.stringify(m.content).slice(0, 200),
+        })),
+    });
+  }
 
   // Keybindings & input history
   loadKeybindings().catch(() => {});
@@ -376,7 +412,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /undercover /patches /kairos /trigger /telemetry /voice /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /sync /features /keybindings /undercover /patches /kairos /trigger /telemetry /voice /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -1063,6 +1099,46 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/sync": {
+        const [sub, ...syncRest] = (arg ?? "").split(" ");
+        if (sub === "export") {
+          const dir = syncRest[0] ?? join(state.toolContext.cwd, ".ashlrcode-sync");
+          const manifest = await exportSettings(dir);
+          addOutput(theme.success(`\n  ✓ Exported ${manifest.files.length} files to ${dir}\n`));
+          return true;
+        }
+        if (sub === "import") {
+          const dir = syncRest[0];
+          if (!dir) {
+            addOutput(theme.tertiary("\n  Usage: /sync import <path> [--overwrite] [--merge]\n"));
+            return true;
+          }
+          const overwrite = syncRest.includes("--overwrite");
+          const merge = syncRest.includes("--merge");
+          const result = await importSettings(dir, { overwrite, merge });
+          addOutput(theme.success(`\n  ✓ Imported: ${result.imported.length}, Skipped: ${result.skipped.length}\n`));
+          if (result.imported.length > 0) addOutput(theme.secondary(`    ${result.imported.join(", ")}`));
+          if (result.skipped.length > 0) addOutput(theme.tertiary(`    Skipped: ${result.skipped.join(", ")}`));
+          addOutput("");
+          return true;
+        }
+        // Default: show sync status
+        const status = await getSyncStatus();
+        addOutput(`\n  Syncable files:\n${status.files.map((f) => `    ${f}`).join("\n")}\n`);
+        addOutput(theme.tertiary("  /sync export [path]  — export settings\n  /sync import <path>  — import settings\n"));
+        return true;
+      }
+
+      case "/bridge": {
+        const port = getBridgePort();
+        if (port) {
+          addOutput(`\n  Bridge active on http://localhost:${port}\n`);
+        } else {
+          addOutput(theme.tertiary("\n  Bridge not running. Set AC_BRIDGE_PORT=8743 to enable.\n"));
+        }
+        return true;
+      }
+
       default:
         if (cmd?.startsWith("/")) {
           addOutput(theme.tertiary(`\n  Unknown command: ${cmd}\n`));
@@ -1258,6 +1334,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     idleDetector.stop();
     triggerRunner.stop();
     stopRemotePolling();
+    stopBridgeServer();
     stopBuddyAnimation();
     if (kairos?.isRunning()) await kairos.stop().catch(() => {});
     const { stopRecording: stopRec, isRecording: isRec } = await import("./voice/voice-mode.ts");
@@ -1268,7 +1345,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       await generateDream(state.history, state.session.id).catch(() => {});
     }
     await saveBuddy(state.buddy).catch(() => {});
+    await stopIPCServer().catch(() => {});
     await shutdownLSP().catch(() => {});
+    await shutdownBrowser().catch(() => {});
     console.log("\n" + state.router.getCostSummary());
     process.exit(0);
   }
