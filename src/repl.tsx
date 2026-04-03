@@ -105,6 +105,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let nextId = 1;
   let turnCount = 0;
   let currentQuipType: BuddyCommentType = "quip";
+  let cachedQuip = getQuip(state.buddy.mood); // Cache quip — don't regenerate on every render
   let lastToolName = "";
   let lastToolResult = "";
   let lastHadError = false;
@@ -133,7 +134,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       contextUsed: formatTk(ctxUsed),
       contextLimit: formatTk(ctxLimit),
       buddyName: state.buddy.name,
-      buddyQuip: getQuip(state.buddy.mood),
+      buddyQuip: cachedQuip,
       buddyQuipType: currentQuipType,
       buddyArt: getBuddyArt(state.buddy),
       items,
@@ -654,7 +655,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           const preview = typeof toolInput.command === "string" ? `$ ${toolInput.command}` :
             typeof toolInput.file_path === "string" ? String(toolInput.file_path) :
             typeof toolInput.pattern === "string" ? `/${toolInput.pattern}/` :
-            JSON.stringify(toolInput).slice(0, 80);
+            typeof toolInput.question === "string" ? toolInput.question.toString().slice(0, 60) :
+            typeof toolInput.query === "string" ? toolInput.query.toString().slice(0, 60) :
+            typeof toolInput.description === "string" ? toolInput.description.toString().slice(0, 60) :
+            "";
           addOutput(`\n  ${theme.toolIcon("◆")} ${theme.toolName(name)}`);
           addOutput(theme.tertiary(`    ${preview}`));
           if (isFirstToolCall()) {
@@ -693,6 +697,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       // Turn separator
       turnCount++;
+      cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
+      currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
       addOutput(theme.muted(`\n  ── turn ${tc} · $${state.router.costs.totalCostUSD.toFixed(4)} · ${state.buddy.name} ──\n`));
 
