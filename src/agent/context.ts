@@ -70,6 +70,8 @@ function blockCharCount(block: ContentBlock): number {
       return block.content.length;
     case "image_url":
       return 1000; // Estimate ~1000 tokens per image
+    default:
+      return 0;
   }
 }
 
@@ -89,9 +91,13 @@ export function contextCollapse(messages: Message[]): Message[] {
   const collapsed: Message[] = [];
   let lastToolResultHash = "";
 
+  let skipNext = false;
   for (const msg of older) {
-    // Remove very short assistant messages
+    if (skipNext) { skipNext = false; continue; } // Skip tool result after removed assistant
+
+    // Remove very short assistant messages (and their following tool results)
     if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim().length < 10) {
+      skipNext = true; // Also skip the next user/tool_result to maintain alternation
       continue;
     }
 
