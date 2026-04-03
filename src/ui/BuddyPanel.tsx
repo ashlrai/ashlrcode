@@ -16,13 +16,20 @@ interface Props {
   quipType: "quip" | "suggestion" | "reaction";
 }
 
-const MAX_QUIP_WIDTH = 18; // 20-col box minus 2 for padding/emoji
+const PANEL_WIDTH = 20;
+// Suggestion quips have a "💡 " prefix (~3 cols); others have 1-col padding
+const MAX_QUIP_WIDTH: Record<Props["quipType"], number> = {
+  suggestion: PANEL_WIDTH - 4,
+  reaction: PANEL_WIDTH - 1,
+  quip: PANEL_WIDTH - 2, // quotes add 2 chars but they're outside the text
+};
 
 export function BuddyPanel({ art, name, quip, quipType }: Props) {
   // Fixed height = art lines + name line + quip line
   const height = art.length + 2;
-  const truncatedQuip = quip.length > MAX_QUIP_WIDTH
-    ? quip.slice(0, MAX_QUIP_WIDTH - 1) + "…"
+  const maxWidth = MAX_QUIP_WIDTH[quipType];
+  const truncatedQuip = quip.length > maxWidth
+    ? quip.slice(0, maxWidth - 1) + "…"
     : quip;
 
   return (

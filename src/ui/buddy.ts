@@ -267,7 +267,7 @@ export async function saveBuddy(buddy: BuddyData): Promise<void> {
  */
 export function getBuddyArt(buddy: BuddyData): string[] {
   const moodArt = ASCII_ART[buddy.species]?.[buddy.mood];
-  if (!moodArt) return [pad(["  (?)     "])[0]!];
+  if (!moodArt) return pad(["  (?)     "]);
   const frameIndex = animFrame % moodArt.length;
   return moodArt[frameIndex]!;
 }
