@@ -84,11 +84,11 @@ export function App({
     }
     // Tab or right arrow accepts autocomplete (only if suggestion exists)
     if (key.tab && suggestion) {
-      setInput(suggestion);
-      return; // Consume the tab — don't let TextInput see it
+      setInput(suggestion + " "); // trailing space moves cursor to end
+      return;
     }
     if (key.rightArrow && suggestion && input.length > 0) {
-      setInput(suggestion);
+      setInput(suggestion + " ");
     }
   }, [suggestion, input, handleModeSwitch, onExit, exit]));
 
