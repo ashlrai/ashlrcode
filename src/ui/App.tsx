@@ -112,30 +112,35 @@ export function App({
       )}
       <Text dimColor>{"-".repeat(w)}</Text>
 
-      {/* Status line — mode left, context + buddy right */}
+      {/* Status + Buddy — single row to avoid multi-line flicker */}
       <Box justifyContent="space-between">
         <Box>
           <Text color={modeColor} bold>❯❯ </Text>
           <Text color={modeColor}>{mode}</Text>
           <Text dimColor> (shift+tab)</Text>
-        </Box>
-        <Box>
+          <Text>{"    "}</Text>
           <Text color={ctxColor}>{"█".repeat(filled)}</Text>
           <Text dimColor>{"░".repeat(empty)}</Text>
           <Text> </Text>
           <Text color={ctxColor}>{contextPercent}%</Text>
           <Text dimColor> · {contextUsed}/{contextLimit}</Text>
-          <Text dimColor>  · </Text>
-          <Text color="cyan" bold>{buddyName}</Text>
-          <Text dimColor>: </Text>
-          {buddyQuipType === "suggestion" ? (
-            <Text color="green">💡 {buddyQuip}</Text>
-          ) : buddyQuipType === "reaction" ? (
-            <Text color="yellow">{buddyQuip}</Text>
-          ) : (
-            <Text dimColor italic>"{buddyQuip}"</Text>
-          )}
         </Box>
+        <Box>
+          {/* Buddy art as single text — prevents duplication */}
+          <Text color="cyan" dimColor>{buddyArt.join(" ")}</Text>
+          <Text> </Text>
+          <Text color="cyan" bold>{buddyName}</Text>
+        </Box>
+      </Box>
+      {/* Buddy quip — separate line, right-aligned */}
+      <Box justifyContent="flex-end">
+        {buddyQuipType === "suggestion" ? (
+          <Text color="green">💡 {buddyQuip}</Text>
+        ) : buddyQuipType === "reaction" ? (
+          <Text color="yellow">{buddyQuip}</Text>
+        ) : (
+          <Text dimColor italic>{buddyName}: "{buddyQuip}"</Text>
+        )}
       </Box>
     </Box>
   );
