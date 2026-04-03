@@ -10,7 +10,8 @@
     "type": "git",
     "url": "https://github.com/ashlrai/ashlrcode"
   },
-  "keywords": ["ai", "coding", "agent", "cli", "grok", "claude", "mcp"],
+  "keywords": ["ai", "coding", "agent", "cli", "grok", "claude", "mcp", "ollama", "autopilot"],
+  "files": ["src", "prompts", "scripts", "CLAUDE.md", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "docs"],
   "bin": {
     "ashlrcode": "./src/cli.ts",
     "ac": "./src/cli.ts"

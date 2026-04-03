@@ -68,6 +68,7 @@ import { configTool } from "./tools/config.ts";
 import { enterWorktreeTool, exitWorktreeTool } from "./tools/worktree.ts";
 import { webSearchTool } from "./tools/web-search.ts";
 import { toolSearchTool, initToolSearch } from "./tools/tool-search.ts";
+import { powershellTool } from "./tools/powershell.ts";
 import { getGitContext, formatGitPrompt } from "./config/git.ts";
 import { fileHistory } from "./state/file-history.ts";
 import { memorySaveTool, memoryListTool, memoryDeleteTool } from "./tools/memory.ts";
@@ -169,6 +170,9 @@ async function main() {
   registry.register(sleepTool);
   registry.register(todoWriteTool);
   registry.register(diffTool);
+  if (process.platform === "win32") {
+    registry.register(powershellTool);
+  }
   initToolSearch(registry);
 
   // Set up hooks from settings
