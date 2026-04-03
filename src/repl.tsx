@@ -12,6 +12,7 @@ import { runAgentLoop } from "./agent/loop.ts";
 import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
 import { getEffort, setEffort, cycleEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
+import { runWithAgentContext, type AgentContext } from "./agent/async-context.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
@@ -41,6 +42,7 @@ import { SpeculationCache } from "./agent/speculation.ts";
 import { setSpeculationCache } from "./agent/tool-executor.ts";
 import { KairosLoop } from "./agent/kairos.ts";
 import { initTelemetry, logEvent, readRecentEvents, formatEvents } from "./telemetry/event-log.ts";
+import { createTrigger, listTriggers, deleteTrigger, toggleTrigger, TriggerRunner } from "./agent/cron.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -330,7 +332,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /undercover /patches /kairos /telemetry /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /undercover /patches /kairos /trigger /telemetry /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -345,9 +347,15 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         addOutput("\n" + state.router.getCostSummary());
         saveBuddy(state.buddy).then(() => process.exit(0));
         return true;
-      case "/buddy":
-        addOutput(`\n  ${state.buddy.name} (${state.buddy.species}) — mood: ${state.buddy.mood}\n  Sessions: ${state.buddy.totalSessions} · Tool calls: ${state.buddy.toolCalls}\n`);
+      case "/buddy": {
+        const b = state.buddy;
+        const shinyStr = b.shiny ? " ✨ SHINY" : "";
+        addOutput(`\n  ${b.name} the ${b.species}${shinyStr}`);
+        addOutput(`  Rarity: ${b.rarity.toUpperCase()} · Level ${b.level} · Hat: ${b.hat}`);
+        addOutput(`  Stats: 🐛${b.stats.debugging} 🧘${b.stats.patience} 🌀${b.stats.chaos} 🦉${b.stats.wisdom} 😏${b.stats.snark}`);
+        addOutput(`  Sessions: ${b.totalSessions} · Tool calls: ${b.toolCalls}\n`);
         return true;
+      }
       case "/tools":
         const tools = state.registry.getAll();
         addOutput(`\n  ${tools.length} tools: ${tools.map(t => t.name).join(", ")}\n`);
@@ -807,6 +815,64 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           },
         });
         await kairos.start(arg);
+        return true;
+      }
+
+      case "/trigger": {
+        const [sub, ...triggerRest] = (arg ?? "").split(" ");
+
+        if (sub === "add") {
+          const [schedule, ...promptParts] = triggerRest;
+          if (!schedule || promptParts.length === 0) {
+            addOutput(theme.tertiary("\n  Usage: /trigger add <schedule> <prompt>\n  Schedule: 30s, 5m, 1h, 2d\n  Example: /trigger add 5m run tests\n"));
+            return true;
+          }
+          try {
+            const t = await createTrigger("trigger", schedule!, promptParts.join(" "), state.toolContext.cwd);
+            addOutput(theme.success(`\n  Trigger created: ${t.id} (every ${t.schedule})\n`));
+          } catch (e: any) {
+            addOutput(theme.error(`\n  ${e.message}\n`));
+          }
+          return true;
+        }
+
+        if (sub === "list" || !sub) {
+          const triggers = await listTriggers();
+          if (triggers.length === 0) {
+            addOutput(theme.tertiary("\n  No triggers. Use /trigger add <schedule> <prompt>\n"));
+            return true;
+          }
+          addOutput(theme.secondary("\n  Scheduled Triggers:\n"));
+          for (const t of triggers) {
+            const status = t.enabled ? theme.success("●") : theme.error("○");
+            const lastInfo = t.lastRun ? ` (ran ${t.runCount}x)` : " (never ran)";
+            addOutput(`  ${status} ${t.id} — every ${t.schedule} — ${t.prompt.slice(0, 50)}${lastInfo}`);
+          }
+          addOutput("");
+          return true;
+        }
+
+        if (sub === "delete" && triggerRest[0]) {
+          const deleted = await deleteTrigger(triggerRest[0]!);
+          if (deleted) {
+            addOutput(theme.success(`\n  Deleted ${triggerRest[0]}\n`));
+          } else {
+            addOutput(theme.error(`\n  Trigger not found: ${triggerRest[0]}\n`));
+          }
+          return true;
+        }
+
+        if (sub === "toggle" && triggerRest[0]) {
+          const toggled = await toggleTrigger(triggerRest[0]!);
+          if (toggled) {
+            addOutput(theme.success(`\n  ${toggled.id} is now ${toggled.enabled ? "enabled" : "disabled"}\n`));
+          } else {
+            addOutput(theme.error(`\n  Trigger not found: ${triggerRest[0]}\n`));
+          }
+          return true;
+        }
+
+        addOutput(theme.tertiary("\n  /trigger add <schedule> <prompt>\n  /trigger list\n  /trigger toggle <id>\n  /trigger delete <id>\n"));
         return true;
       }
 

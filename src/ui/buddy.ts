@@ -30,6 +30,61 @@ export type Species =
 
 export type Mood = "happy" | "thinking" | "sleepy";
 
+export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary";
+
+const RARITY_TABLE: Record<Species, Rarity> = {
+  penguin: "common",     // 60%
+  cat: "common",
+  ghost: "uncommon",     // 25%
+  owl: "uncommon",
+  robot: "rare",         // 10%
+  dragon: "rare",
+  axolotl: "epic",       // 4%
+  capybara: "legendary", // 1%
+};
+
+export const RARITY_COLORS: Record<Rarity, string> = {
+  common: "white",
+  uncommon: "green",
+  rare: "blue",
+  epic: "magenta",
+  legendary: "yellow",
+};
+
+export type Hat = "none" | "crown" | "tophat" | "propeller" | "halo" | "wizard" | "beanie";
+
+const HAT_ART: Record<Hat, string> = {
+  none: "",
+  crown: "  👑  ",
+  tophat: "  🎩  ",
+  propeller: "  🧢  ",
+  halo: "  ✨  ",
+  wizard: "  🧙  ",
+  beanie: "  🎿  ",
+};
+
+export interface BuddyStats {
+  debugging: number;   // 1-10
+  patience: number;
+  chaos: number;
+  wisdom: number;
+  snark: number;
+}
+
+function generateStats(hash: number): BuddyStats {
+  return {
+    debugging: ((hash >>> 0) % 10) + 1,
+    patience: ((hash >>> 4) % 10) + 1,
+    chaos: ((hash >>> 8) % 10) + 1,
+    wisdom: ((hash >>> 12) % 10) + 1,
+    snark: ((hash >>> 16) % 10) + 1,
+  };
+}
+
+function isShiny(hash: number): boolean {
+  return (hash % 100) === 0; // 1% chance
+}
+
 export interface BuddyData {
   species: Species;
   name: string;
@@ -37,6 +92,12 @@ export interface BuddyData {
   mood: Mood;
   /** Cumulative successful tool calls across sessions. */
   toolCalls: number;
+  rarity: Rarity;
+  hat: Hat;
+  stats: BuddyStats;
+  shiny: boolean;
+  /** Level based on totalSessions. */
+  level: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -229,23 +290,38 @@ function getBuddyPath(): string {
 export async function loadBuddy(): Promise<BuddyData> {
   const path = getBuddyPath();
 
+  const hash = hashString(homedir());
+
   if (existsSync(path)) {
     try {
       const raw = await readFile(path, "utf-8");
-      return JSON.parse(raw) as BuddyData;
+      const buddy = JSON.parse(raw) as BuddyData;
+
+      // Backfill new fields for buddies saved before the evolution update
+      if (!buddy.rarity) buddy.rarity = RARITY_TABLE[buddy.species] ?? "common";
+      if (!buddy.hat) buddy.hat = "none";
+      if (!buddy.stats) buddy.stats = generateStats(hash);
+      if (buddy.shiny === undefined) buddy.shiny = isShiny(hash);
+      if (!buddy.level) buddy.level = Math.floor(buddy.totalSessions / 5) + 1;
+
+      return buddy;
     } catch {
       // Corrupted file — regenerate below
     }
   }
 
   // First run: generate deterministically from home directory
-  const hash = hashString(homedir());
   const buddy: BuddyData = {
     species: pickSpecies(hash),
     name: pickName(hash),
     totalSessions: 0,
     mood: "sleepy",
     toolCalls: 0,
+    rarity: RARITY_TABLE[pickSpecies(hash)] ?? "common",
+    hat: "none",
+    stats: generateStats(hash),
+    shiny: isShiny(hash),
+    level: 1,
   };
 
   await saveBuddy(buddy);
@@ -269,7 +345,15 @@ export function getBuddyArt(buddy: BuddyData): string[] {
   const moodArt = ASCII_ART[buddy.species]?.[buddy.mood];
   if (!moodArt) return pad(["  (?)     "]);
   const frameIndex = animFrame % moodArt.length;
-  return moodArt[frameIndex]!;
+  const artLines = [...moodArt[frameIndex]!];
+
+  // Prepend hat art if the buddy has one equipped
+  const hat = HAT_ART[buddy.hat];
+  if (hat) {
+    artLines.unshift(hat.padEnd(W));
+  }
+
+  return artLines;
 }
 
 /**
@@ -290,9 +374,11 @@ export function printBuddy(buddy: BuddyData): void {
     console.log(`   ${theme.accentDim(line)}`);
   }
 
-  // Name + mood on the line after art
+  // Name + mood + rarity on the line after art
+  const shinyTag = buddy.shiny ? " ✨" : "";
+  const rarityTag = buddy.rarity !== "common" ? ` [${buddy.rarity.toUpperCase()}]` : "";
   console.log(
-    `   ${theme.accent(buddy.name)} ${moodEmoji}  ${theme.tertiary(`(${buddy.species})`)}`
+    `   ${theme.accent(buddy.name)} ${moodEmoji}  ${theme.tertiary(`(${buddy.species}${rarityTag})${shinyTag}`)} ${theme.tertiary(`Lv.${buddy.level}`)}`
   );
   console.log("");
 }
@@ -373,6 +459,7 @@ export function isFirstToolCall(): boolean {
  */
 export async function startSession(buddy: BuddyData): Promise<void> {
   buddy.totalSessions++;
+  buddy.level = Math.floor(buddy.totalSessions / 5) + 1;
   consecutiveSuccesses = 0;
   totalToolCallsThisSession = 0;
   await saveBuddy(buddy);

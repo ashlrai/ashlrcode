@@ -653,11 +653,13 @@ async function handleCommand(
         }
       } else {
         printBuddy(state.buddy);
-        console.log(theme.primary(`  Name: ${state.buddy.name}`));
-        console.log(theme.primary(`  Species: ${state.buddy.species}`));
-        console.log(theme.primary(`  Mood: ${state.buddy.mood}`));
-        console.log(theme.tertiary(`  Sessions: ${state.buddy.totalSessions}`));
-        console.log(theme.tertiary(`  Lifetime tool calls: ${state.buddy.toolCalls}`));
+        const b = state.buddy;
+        const shinyStr = b.shiny ? " ✨ SHINY" : "";
+        console.log(theme.primary(`  ${b.name} the ${b.species}${shinyStr}`));
+        console.log(theme.primary(`  Rarity: ${b.rarity.toUpperCase()} · Level ${b.level} · Hat: ${b.hat}`));
+        console.log(theme.primary(`  Stats: 🐛${b.stats.debugging} 🧘${b.stats.patience} 🌀${b.stats.chaos} 🦉${b.stats.wisdom} 😏${b.stats.snark}`));
+        console.log(theme.primary(`  Mood: ${b.mood}`));
+        console.log(theme.tertiary(`  Sessions: ${b.totalSessions} · Tool calls: ${b.toolCalls}`));
         console.log(theme.tertiary(`\n  Rename: /buddy name <new-name>`));
       }
       break;
