@@ -9,6 +9,7 @@ import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
 import { BuddyPanel } from "./BuddyPanel.tsx";
+import { getAction, type InputHistory } from "./keybindings.ts";
 
 interface OutputItem { id: number; text: string; }
 
@@ -16,6 +17,11 @@ interface AppProps {
   onSubmit: (text: string) => void;
   onExit: () => void;
   onModeSwitch: () => void;
+  onUndo?: () => void;
+  onEffortCycle?: () => void;
+  onCompact?: () => void;
+  onClearScreen?: () => void;
+  inputHistory?: InputHistory;
   mode: string;
   modeColor: string;
   contextPercent: number;
@@ -32,7 +38,8 @@ interface AppProps {
 }
 
 export function App({
-  onSubmit, onExit, onModeSwitch, mode, modeColor,
+  onSubmit, onExit, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen,
+  inputHistory, mode, modeColor,
   contextPercent, contextUsed, contextLimit,
   buddyName, buddyQuip, buddyQuipType, buddyArt,
   items, isProcessing, spinnerText, commands,
@@ -63,11 +70,48 @@ export function App({
   }, [suggestion]);
 
   useInput(useCallback((ch: string, key: any) => {
-    if (key.ctrl && ch === "c") { onExit(); exit(); }
-    if (key.tab && key.shift) { handleModeSwitch(); return; }
-    if (key.tab && suggestion) { acceptSuggestion(); return; }
-    if (key.rightArrow && suggestion && input.length > 0) { acceptSuggestion(); }
-  }, [suggestion, input, handleModeSwitch, onExit, exit, acceptSuggestion]));
+    // Map Ink key event to a normalized key name
+    const keyName = key.tab ? "tab" : key.upArrow ? "up" : key.downArrow ? "down"
+      : key.leftArrow ? "left" : key.rightArrow ? "right" : key.escape ? "escape"
+      : key.return ? "return" : key.backspace ? "backspace" : key.delete ? "delete"
+      : ch;
+
+    const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
+
+    switch (action) {
+      case "exit":
+        onExit(); exit(); return;
+      case "mode-switch":
+        handleModeSwitch(); return;
+      case "autocomplete":
+        if (suggestion && (key.tab || (key.rightArrow && input.length > 0))) {
+          acceptSuggestion();
+        }
+        return;
+      case "history-prev":
+        if (inputHistory) {
+          const prev = inputHistory.prev(input);
+          if (prev !== null) { setInput(prev); setInputKey(k => k + 1); }
+        }
+        return;
+      case "history-next":
+        if (inputHistory) {
+          const next = inputHistory.next();
+          if (next !== null) { setInput(next); setInputKey(k => k + 1); }
+        }
+        return;
+      case "clear-input":
+        setInput(""); setInputKey(k => k + 1); return;
+      case "undo":
+        onUndo?.(); return;
+      case "effort-cycle":
+        onEffortCycle?.(); return;
+      case "compact":
+        onCompact?.(); return;
+      case "clear-screen":
+        onClearScreen?.(); return;
+    }
+  }, [suggestion, input, handleModeSwitch, onExit, exit, acceptSuggestion, inputHistory, onUndo, onEffortCycle, onCompact, onClearScreen]));
 
   const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);

@@ -26,6 +26,7 @@ import type { Message } from "./providers/types.ts";
 import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
+import { shutdownLSP } from "./tools/lsp.ts";
 import { setBypassMode } from "./config/permissions.ts";
 import { listFeatures } from "./config/features.ts";
 import { hasPendingQuestion, answerPendingQuestion } from "./tools/ask-user.ts";
@@ -35,6 +36,9 @@ import { WorkQueue } from "./autopilot/queue.ts";
 import { DEFAULT_CONFIG } from "./autopilot/types.ts";
 import { generateDream, loadRecentDreams, formatDreamsForPrompt, IdleDetector } from "./agent/dream.ts";
 import { FileHistoryStore, setFileHistory, getFileHistory } from "./state/file-history.ts";
+import { loadKeybindings, getBindings, InputHistory } from "./ui/keybindings.ts";
+import { SpeculationCache } from "./agent/speculation.ts";
+import { setSpeculationCache } from "./agent/tool-executor.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -110,6 +114,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   setFileHistory(fileHistoryStore);
   fileHistoryStore.loadFromDisk().catch(() => {});
 
+  // Speculation cache — pre-fetches likely read-only tool results
+  const speculationCache = new SpeculationCache(100, 30_000);
+  setSpeculationCache(speculationCache);
+
+  // Keybindings & input history
+  loadKeybindings().catch(() => {});
+  const inputHistory = new InputHistory();
+
   // Load dreams from previous sessions into system prompt
   loadRecentDreams(3).then(dreams => {
     if (dreams.length > 0) {
@@ -176,7 +188,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
         "/model", "/compact", "/diff", "/git", "/clear", "/quit",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
-        "/autopilot approve all", "/autopilot run", "/features",
+        "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
     };
@@ -184,6 +196,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   async function handleSubmit(input: string) {
     idleDetector.ping();
+    inputHistory.push(input);
 
     // If the AskUser tool is waiting for an answer, route the input there
     // instead of starting a new agent turn.
@@ -273,7 +286,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -642,6 +655,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/keybindings": {
+        const binds = getBindings();
+        const kbLines = binds.map(b =>
+          `  ${b.key.padEnd(18)} ${b.action.padEnd(16)} ${b.description ?? ""}`
+        );
+        addOutput(`\n  Keybindings:\n${kbLines.join("\n")}\n`);
+        addOutput(theme.tertiary("  Customize: ~/.ashlrcode/keybindings.json\n"));
+        return true;
+      }
+
       case "/features": {
         const flags = listFeatures();
         const lines = Object.entries(flags).map(([k, v]) =>
@@ -852,28 +875,36 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       await generateDream(state.history, state.session.id).catch(() => {});
     }
     await saveBuddy(state.buddy).catch(() => {});
+    await shutdownLSP().catch(() => {});
     console.log("\n" + state.router.getCostSummary());
     process.exit(0);
   }
 
+  // Keybinding action callbacks
+  const handleModeSwitch = () => { cycleMode(); update(); };
+  const handleUndo = () => { handleCommand("/undo"); };
+  const handleEffortCycle = () => { cycleEffort(); update(); };
+  const handleCompact = () => { handleCommand("/compact"); };
+  const handleClearScreen = () => { items = []; update(); };
+
+  function appProps() {
+    return {
+      onSubmit: handleSubmit,
+      onExit: handleExit,
+      onModeSwitch: handleModeSwitch,
+      onUndo: handleUndo,
+      onEffortCycle: handleEffortCycle,
+      onCompact: handleCompact,
+      onClearScreen: handleClearScreen,
+      inputHistory,
+      ...getDisplayProps(),
+    };
+  }
+
   // Initial render
-  const { rerender } = render(
-    <App
-      onSubmit={handleSubmit}
-      onExit={handleExit}
-      onModeSwitch={() => { cycleMode(); update(); }}
-      {...getDisplayProps()}
-    />
-  );
+  const { rerender } = render(<App {...appProps()} />);
 
   function update() {
-    rerender(
-      <App
-        onSubmit={handleSubmit}
-        onExit={handleExit}
-        onModeSwitch={() => { cycleMode(); update(); }}
-        {...getDisplayProps()}
-      />
-    );
+    rerender(<App {...appProps()} />);
   }
 }
