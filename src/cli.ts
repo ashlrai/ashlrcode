@@ -84,6 +84,7 @@ import { lspTool, shutdownLSP } from "./tools/lsp.ts";
 import { teamCreateTool, teamDeleteTool, teamListTool, teamDispatchTool, initTeamTools } from "./tools/team.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
+import { listMcpResourcesTool, setMCPManager } from "./tools/mcp-resources.ts";
 import { initTasks } from "./tools/tasks.ts";
 import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
@@ -211,6 +212,8 @@ async function main() {
   // Connect MCP servers in background (don't block startup)
   const mcpManager = new MCPManager();
   if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
+    setMCPManager(mcpManager);
+    registry.register(listMcpResourcesTool);
     mcpManager.connectAll(settings.mcpServers).then(() => {
       for (const { serverName, tool } of mcpManager.getAllTools()) {
         registry.register(createMCPTool(serverName, tool, mcpManager));
@@ -242,10 +245,8 @@ async function main() {
     promptBuilder.addSection("legacy-memories", formatMemoriesForPrompt(memories), 45);
   }
 
-  const gitCtx = await getGitContext(cwd);
-  if (gitCtx.isRepo) {
-    promptBuilder.addSection("git-context", formatGitPrompt(gitCtx), 50);
-  }
+  // Git context via builder method (richer than legacy formatGitPrompt)
+  await promptBuilder.addGitContext(cwd);
 
   const assembled = promptBuilder.build(8000);
   let baseSystemPrompt = assembled.text;

@@ -127,6 +127,24 @@ export class SystemPromptBuilder {
     return this.addPart(name, content, priority ?? 50);
   }
 
+  /** Add git context (branch, recent commits, working tree status) */
+  async addGitContext(cwd: string): Promise<this> {
+    const { isGitRepo, getCurrentBranch, getRecentCommits, getGitStatus } = await import("../config/git.ts");
+    if (!await isGitRepo(cwd)) return this;
+
+    const branch = await getCurrentBranch(cwd);
+    const commits = await getRecentCommits(cwd, 3);
+    const status = await getGitStatus(cwd);
+
+    let context = `## Git Context\nBranch: ${branch ?? "unknown"}`;
+    if (commits.length > 0) context += `\nRecent commits:\n${commits.map(c => `  ${c}`).join("\n")}`;
+    if (status.modified + status.untracked > 0) {
+      context += `\nWorking tree: ${status.modified} modified, ${status.untracked} untracked`;
+    }
+
+    return this.addPart("git", context, 35);
+  }
+
   /** Add model-specific behavior patches */
   addModelPatches(modelName: string): this {
     const { combinedSuffix } = getModelPatches(modelName);
