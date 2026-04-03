@@ -4,6 +4,8 @@
 
 import { createOpenAICompatibleProvider, createXAIProvider } from "./xai.ts";
 import { createAnthropicProvider } from "./anthropic.ts";
+import { CostTracker } from "./cost-tracker.ts";
+import { CircuitBreaker } from "./retry.ts";
 import type {
   Provider,
   ProviderConfig,
@@ -13,24 +15,30 @@ import type {
   TokenUsage,
 } from "./types.ts";
 
-export interface CostTracker {
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalReasoningTokens: number;
-  totalCostUSD: number;
-  perProvider: Map<string, { inputTokens: number; outputTokens: number; reasoningTokens: number; costUSD: number }>;
-}
+export { CostTracker };
 
 export class ProviderRouter {
   private providers: Provider[] = [];
   private currentIndex = 0;
-  costs: CostTracker = {
-    totalInputTokens: 0,
-    totalOutputTokens: 0,
-    totalReasoningTokens: 0,
-    totalCostUSD: 0,
-    perProvider: new Map(),
-  };
+  private circuitBreakers = new Map<string, CircuitBreaker>();
+  costTracker = new CostTracker();
+
+  /** @deprecated Use costTracker instead */
+  get costs() {
+    const tracker = this.costTracker;
+    return {
+      get totalInputTokens() { return tracker.totalInputTokens; },
+      get totalOutputTokens() { return tracker.totalOutputTokens; },
+      get totalReasoningTokens() { return tracker.totalReasoningTokens; },
+      get totalCostUSD() { return tracker.totalCostUSD; },
+      perProvider: new Map<string, { inputTokens: number; outputTokens: number; reasoningTokens: number; costUSD: number }>(
+        tracker.getBreakdown().map(e => [
+          `${e.provider}`,
+          { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens, reasoningTokens: e.usage.reasoningTokens, costUSD: e.costUSD },
+        ])
+      ),
+    };
+  }
 
   constructor(config: ProviderRouterConfig) {
     this.providers.push(this.createProvider(config.primary));
@@ -113,46 +121,14 @@ export class ProviderRouter {
   }
 
   private trackUsage(provider: Provider, usage: TokenUsage) {
-    this.costs.totalInputTokens += usage.inputTokens;
-    this.costs.totalOutputTokens += usage.outputTokens;
-    this.costs.totalReasoningTokens += usage.reasoningTokens ?? 0;
-
-    // Include reasoning tokens in output cost (billed at output rate)
-    const outputTokens = usage.outputTokens + (usage.reasoningTokens ?? 0);
-    const cost =
-      (usage.inputTokens / 1_000_000) * provider.pricing[0] +
-      (outputTokens / 1_000_000) * provider.pricing[1];
-    this.costs.totalCostUSD += cost;
-
-    const existing = this.costs.perProvider.get(provider.name) ?? {
-      inputTokens: 0,
-      outputTokens: 0,
-      reasoningTokens: 0,
-      costUSD: 0,
-    };
-    existing.inputTokens += usage.inputTokens;
-    existing.outputTokens += usage.outputTokens;
-    existing.reasoningTokens += usage.reasoningTokens ?? 0;
-    existing.costUSD += cost;
-    this.costs.perProvider.set(provider.name, existing);
+    this.costTracker.record(provider.name, provider.config.model, {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      reasoningTokens: usage.reasoningTokens ?? 0,
+    });
   }
 
   getCostSummary(): string {
-    const formatCost = (usd: number) =>
-      usd < 0.01 ? `$${usd.toFixed(6)}` : `$${usd.toFixed(4)}`;
-
-    const reasoning = this.costs.totalReasoningTokens > 0
-      ? ` / ${this.costs.totalReasoningTokens.toLocaleString()} reasoning`
-      : "";
-    const lines = [
-      `Total: ${formatCost(this.costs.totalCostUSD)} | ${this.costs.totalInputTokens.toLocaleString()} in / ${this.costs.totalOutputTokens.toLocaleString()} out${reasoning}`,
-    ];
-    for (const [name, data] of this.costs.perProvider) {
-      const rTokens = data.reasoningTokens > 0 ? ` / ${data.reasoningTokens.toLocaleString()} reasoning` : "";
-      lines.push(
-        `  ${name}: ${data.inputTokens.toLocaleString()} in / ${data.outputTokens.toLocaleString()} out${rTokens} (${formatCost(data.costUSD)})`
-      );
-    }
-    return lines.join("\n");
+    return this.costTracker.formatSummary();
   }
 }
