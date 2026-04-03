@@ -10,11 +10,33 @@ import type { ProviderRouterConfig } from "../providers/types.ts";
 import type { HooksConfig } from "./hooks.ts";
 import type { MCPServerConfig } from "../mcp/types.ts";
 
+export interface ToolHookRule {
+  /** Glob pattern for tool name (e.g. "Bash", "File*") */
+  tool?: string;
+  /** Regex to match against JSON-serialized input */
+  inputPattern?: string;
+  /** Shell command to run (gets TOOL_NAME, TOOL_INPUT env vars) */
+  command?: string;
+  /** Direct action without running a command */
+  action?: "allow" | "deny";
+}
+
+export interface PostToolHookRule {
+  /** Glob pattern for tool name */
+  tool?: string;
+  /** Shell command to run (gets TOOL_NAME, TOOL_INPUT, TOOL_RESULT env vars) */
+  command?: string;
+}
+
 export interface Settings {
   providers: ProviderRouterConfig;
   defaultModel?: string;
   maxTokens?: number;
   hooks?: HooksConfig;
+  toolHooks?: {
+    preToolUse?: ToolHookRule[];
+    postToolUse?: PostToolHookRule[];
+  };
   mcpServers?: Record<string, MCPServerConfig>;
   permissionRules?: Array<{ tool: string; inputPattern?: string; action: "allow" | "deny" | "ask" }>;
 }
@@ -44,6 +66,7 @@ export async function loadSettings(): Promise<Settings> {
       ...fileSettings,
       providers: fileSettings.providers ?? defaults.providers,
       hooks: fileSettings.hooks ?? defaults.hooks,
+      toolHooks: fileSettings.toolHooks ?? defaults.toolHooks,
       mcpServers: fileSettings.mcpServers ?? defaults.mcpServers,
     };
   }

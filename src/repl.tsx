@@ -138,6 +138,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // KAIROS autonomous mode — lazy-initialized when /kairos is used
   let kairos: KairosLoop | null = null;
 
+  // Initialize local event telemetry
+  initTelemetry(state.session.id);
+  logEvent("session_start", { cwd: state.toolContext.cwd }).catch(() => {});
+
   // Keybindings & input history
   loadKeybindings().catch(() => {});
   const inputHistory = new InputHistory();
@@ -158,7 +162,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }, 120_000);
 
   let items: Array<{ id: number; text: string }> = [
-    { id: 0, text: theme.warning("  ⚠ All tools auto-approved (Ink mode). Use with care.") },
+    { id: 0, text: theme.accent("  Ready. Permission prompts enabled.") },
   ];
   let nextId = 1;
   let turnCount = 0;
@@ -182,8 +186,6 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Patch the deferred wrapper so permission prompts can use addOutput
   _addOutput = addOutput;
 
-  // (addOutput re-opened below for the closing brace — this is intentional)
-  }
 
   function getDisplayProps() {
     const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
@@ -214,7 +216,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/model", "/compact", "/diff", "/git", "/clear", "/quit",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
-        "/kairos", "/kairos stop",
+        "/kairos", "/kairos stop", "/telemetry",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
     };
@@ -223,11 +225,24 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   async function handleSubmit(input: string) {
     idleDetector.ping();
     inputHistory.push(input);
+    logEvent("turn_start", { input: input.slice(0, 100) }).catch(() => {});
 
     // If the AskUser tool is waiting for an answer, route the input there
     // instead of starting a new agent turn.
     if (hasPendingQuestion()) {
       answerPendingQuestion(input);
+      return;
+    }
+
+    // If a permission prompt is waiting, route the input there
+    if (hasPendingPermission()) {
+      const handled = answerPendingPermission(input.trim());
+      if (handled) {
+        addOutput(theme.success(`  ✓ ${input.trim()}`));
+        return;
+      }
+      // Unrecognized key — remind user of valid options
+      addOutput(theme.warning("  Type y/a/n/d to answer the permission prompt."));
       return;
     }
 
@@ -294,7 +309,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   async function runTurnInkWithImage(text: string, imageDataUrl: string) {
     isProcessing = true; spinnerText = "Analyzing image"; update();
     try {
-      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt();
+      const { getUndercoverPrompt } = await import("./config/undercover.ts");
+      const { getModelPatches: getPatches } = await import("./agent/model-patches.ts");
+      const imgModelPatches = getPatches(state.router.currentProvider.config.model).combinedSuffix;
+      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt() + imgModelPatches + getUndercoverPrompt();
       const userMsg: import("./providers/types.ts").Message = { role: "user", content: [{ type: "image_url", image_url: { url: imageDataUrl } }, { type: "text", text }] };
       const preTurn = state.history.length;
       state.history.push(userMsg);
@@ -312,7 +330,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /kairos /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /undercover /patches /kairos /telemetry /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -691,12 +709,38 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+
+      case "/undercover": {
+        const { isUndercoverMode, setUndercoverMode } = await import("./config/undercover.ts");
+        setUndercoverMode(!isUndercoverMode());
+        addOutput(isUndercoverMode() ? theme.warning("\n  🕶 Undercover mode ON\n") : theme.success("\n  Undercover mode OFF\n"));
+        return true;
+      }
+
+      case "/patches": {
+        const { listPatches, getModelPatches } = await import("./agent/model-patches.ts");
+        const currentModel = state.router.currentProvider.config.model;
+        const { names } = getModelPatches(currentModel);
+        const allPatches = listPatches();
+        const patchLines = allPatches.map(p => {
+          const active = names.includes(p.name);
+          return `  ${active ? theme.success("●") : theme.tertiary("○")} ${p.name} ${theme.tertiary(`(${p.pattern})`)}`;
+        });
+        addOutput(`\n  Model Patches (${currentModel}):\n${patchLines.join("\n")}\n`);
+        return true;
+      }
       case "/features": {
         const flags = listFeatures();
         const lines = Object.entries(flags).map(([k, v]) =>
           `  ${v ? theme.success("✓") : theme.error("✗")} ${k}`
         );
         addOutput(`\n  Feature Flags:\n${lines.join("\n")}\n`);
+        return true;
+      }
+
+      case "/telemetry": {
+        const events = await readRecentEvents(20);
+        addOutput(`\n  Recent events (${events.length}):\n${formatEvents(events)}\n`);
         return true;
       }
 
@@ -838,6 +882,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           isProcessing = true;
           spinnerText = name;
           recordThinking(state.buddy);
+          logEvent("tool_start", { tool: name }).catch(() => {});
           const preview = typeof toolInput.command === "string" ? `$ ${toolInput.command}` :
             typeof toolInput.file_path === "string" ? String(toolInput.file_path) :
             typeof toolInput.pattern === "string" ? `/${toolInput.pattern}/` :
@@ -856,6 +901,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           isProcessing = false;
           lastToolName = _name;
           lastToolResult = result.slice(0, 50);
+          logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
           if (isError) { recordError(state.buddy); lastHadError = true; }
           else recordToolCallSuccess(state.buddy);
           const status = isError ? theme.error("  ✗") : theme.success("  ✓");
@@ -883,6 +929,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       // Turn separator
       turnCount++;
+      logEvent("turn_end", { cost: state.router.costs.totalCostUSD, turn: turnCount }).catch(() => {});
       cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
       currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
@@ -917,6 +964,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       const error = err instanceof Error ? err : new Error(String(err));
       const categorized = categorizeError(error);
       addOutput(theme.error(`\n  Error: ${categorized.message}\n`));
+      logEvent("error", { message: categorized.message }).catch(() => {});
       lastHadError = true;
     }
 

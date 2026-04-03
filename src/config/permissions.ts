@@ -149,6 +149,58 @@ export function getPermissionState(): PermissionState {
   return state;
 }
 
+// --- Ink-mode permission resolver (callback-based, like AskUser) ---
+
+let pendingPermissionResolve: ((decision: "allow_once" | "always_allow" | "deny_once" | "always_deny") => void) | null = null;
+let pendingPermissionInfo: { toolName: string; description: string } | null = null;
+
+export function hasPendingPermission(): boolean {
+  return pendingPermissionResolve !== null;
+}
+
+export function getPendingPermissionInfo(): { toolName: string; description: string } | null {
+  return pendingPermissionInfo;
+}
+
+/**
+ * Resolve a pending Ink-mode permission prompt with a single-key answer.
+ * Returns true if the key was recognized and the pending prompt was resolved.
+ */
+export function answerPendingPermission(key: string): boolean {
+  if (!pendingPermissionResolve) return false;
+  const decisions: Record<string, "allow_once" | "always_allow" | "deny_once" | "always_deny"> = {
+    y: "allow_once",
+    a: "always_allow",
+    n: "deny_once",
+    d: "always_deny",
+  };
+  const decision = decisions[key.toLowerCase()];
+  if (!decision) return false;
+
+  pendingPermissionResolve(decision);
+  pendingPermissionResolve = null;
+  pendingPermissionInfo = null;
+  return true;
+}
+
+/**
+ * Request permission in Ink mode. Blocks (via Promise) until the user
+ * types a recognized key (y/a/n/d) that gets routed through
+ * answerPendingPermission().
+ */
+export async function requestPermissionInk(toolName: string, description: string): Promise<boolean> {
+  pendingPermissionInfo = { toolName, description };
+
+  const decision = await new Promise<"allow_once" | "always_allow" | "deny_once" | "always_deny">((resolve) => {
+    pendingPermissionResolve = resolve;
+  });
+
+  await recordPermission(toolName, decision);
+  if (decision === "allow_once") allowForSession(toolName);
+
+  return decision === "allow_once" || decision === "always_allow";
+}
+
 export function resetPermissionsForTests(): void {
   state = {
     alwaysAllow: new Set(),

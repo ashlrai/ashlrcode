@@ -71,6 +71,7 @@ import { webSearchTool } from "./tools/web-search.ts";
 import { toolSearchTool, initToolSearch } from "./tools/tool-search.ts";
 import { powershellTool } from "./tools/powershell.ts";
 import { getGitContext, formatGitPrompt } from "./config/git.ts";
+import { loadHooksFromSettings } from "./config/hooks.ts";
 import { fileHistory } from "./state/file-history.ts";
 import { memorySaveTool, memoryListTool, memoryDeleteTool } from "./tools/memory.ts";
 import { notebookEditTool } from "./tools/notebook-edit.ts";
@@ -190,8 +191,11 @@ async function main() {
   }
   initToolSearch(registry);
 
-  // Set up hooks from settings
-  if (settings.hooks) {
+  // Set up hooks from settings — toolHooks (new format) takes priority, falls back to hooks (legacy)
+  if (settings.toolHooks) {
+    const hooksConfig = loadHooksFromSettings(settings.toolHooks);
+    registry.setHooks(hooksConfig);
+  } else if (settings.hooks) {
     registry.setHooks(settings.hooks);
   }
 

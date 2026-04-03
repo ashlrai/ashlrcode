@@ -128,6 +128,45 @@ function matchesHook(
   return true;
 }
 
+/**
+ * Convert settings.json toolHooks format into internal HooksConfig.
+ * This bridges the user-facing config shape (tool/inputPattern/command/action)
+ * to the internal HookDefinition shape (toolName/inputPattern/command/action/message).
+ */
+export function loadHooksFromSettings(toolHooks: {
+  preToolUse?: Array<{
+    tool?: string;
+    inputPattern?: string;
+    command?: string;
+    action?: "allow" | "deny";
+  }>;
+  postToolUse?: Array<{
+    tool?: string;
+    command?: string;
+  }>;
+}): HooksConfig {
+  const config: HooksConfig = {};
+
+  if (toolHooks.preToolUse) {
+    config.preToolUse = toolHooks.preToolUse.map((rule) => ({
+      toolName: rule.tool,
+      inputPattern: rule.inputPattern,
+      command: rule.command,
+      action: rule.action,
+      message: rule.action === "deny" ? `Denied by toolHooks rule for ${rule.tool ?? "*"}` : undefined,
+    }));
+  }
+
+  if (toolHooks.postToolUse) {
+    config.postToolUse = toolHooks.postToolUse.map((rule) => ({
+      toolName: rule.tool,
+      command: rule.command,
+    }));
+  }
+
+  return config;
+}
+
 async function runHookCommand(
   command: string,
   toolName: string,
