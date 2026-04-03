@@ -83,7 +83,9 @@ export function renderBuddyWithBubble(
     if (artIndex >= 0 && artIndex < buddyArt.length) {
       buddyPart = buddyArt[artIndex]!;
     } else if (artIndex === buddyArt.length) {
-      buddyPart = buddyName.padStart(Math.floor((buddyArt[0]?.length ?? 0) / 2) + Math.floor(buddyName.length / 2));
+      const artWidth = buddyArt[0]?.length ?? 0;
+      const leftPad = Math.floor((artWidth - buddyName.length) / 2);
+      buddyPart = " ".repeat(Math.max(0, leftPad)) + buddyName;
     }
 
     result.push(bubblePart + gapStr + buddyPart);
