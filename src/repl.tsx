@@ -388,8 +388,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 return files.join("\n");
               },
               grepContent: async (pattern: string, glob?: string) => {
-                const proc = Bun.spawn(["bash", "-c", `grep -rn '${pattern}' ${cwd} ${glob ? `--include='${glob}'` : ""} 2>/dev/null | head -50`], { stdout: "pipe", stderr: "pipe" });
-                return await new Response(proc.stdout).text();
+                const args = ["grep", "-rn", pattern, cwd];
+                if (glob) args.push(`--include=${glob}`);
+                const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
+                const out = await new Response(proc.stdout).text();
+                return out.split("\n").slice(0, 50).join("\n");
               },
             };
             const discovered = await scanCodebase(scanCtx, DEFAULT_CONFIG.scanTypes);

@@ -67,20 +67,29 @@ export function App({
     if (text) onSubmit(text);
   }, [onSubmit]);
 
-  useInput((ch, key) => {
+  const handleModeSwitch = useCallback(() => {
+    onModeSwitch();
+  }, [onModeSwitch]);
+
+  useInput(useCallback((ch: string, key: any) => {
     if (key.ctrl && ch === "c") {
       onExit();
       exit();
     }
-    // Tab accepts autocomplete, but Shift+Tab cycles mode
+    // Shift+Tab cycles mode
     if (key.tab && key.shift) {
-      onModeSwitch();
+      handleModeSwitch();
       return;
     }
-    if ((key.tab || key.rightArrow) && suggestion) {
+    // Tab or right arrow accepts autocomplete (only if suggestion exists)
+    if (key.tab && suggestion) {
+      setInput(suggestion);
+      return; // Consume the tab — don't let TextInput see it
+    }
+    if (key.rightArrow && suggestion && input.length > 0) {
       setInput(suggestion);
     }
-  });
+  }, [suggestion, input, handleModeSwitch, onExit, exit]));
 
   // Context bar
   const barWidth = 10;
