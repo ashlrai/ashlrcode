@@ -19,6 +19,7 @@ import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
+import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.ts";
 import chalk from "chalk";
 import type { ProviderRouter } from "./providers/router.ts";
 import type { ToolRegistry } from "./tools/registry.ts";
@@ -173,6 +174,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let lastToolName = "";
   let lastToolResult = "";
   let lastHadError = false;
+  let toolStartTime = 0;
+  let turnToolCount = 0;
+  let currentToolInput: Record<string, unknown> = {};
   let aiCommentGen = 0; // Guards against stale AI callbacks overwriting mid-turn
   let aiCommentInFlight = false;
   let isProcessing = false;
@@ -919,13 +923,24 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       resetMarkdown();
       const preTurnMessageCount = state.history.length;
+      turnToolCount = 0;
 
       // Update turn number on context so file snapshots track which turn modified them
       state.toolContext.turnNumber = turnCount;
 
       let responseText = "";
 
-      const result = await runAgentLoop(input, state.history, {
+      // Wrap agent loop in AsyncLocalStorage root context for sub-agent isolation
+      const rootCtx: AgentContext = {
+        agentId: `root-${state.session.id}-${turnCount}`,
+        agentName: "main",
+        cwd: state.toolContext.cwd,
+        readOnly: isPlanMode(),
+        depth: 0,
+        startedAt: new Date().toISOString(),
+      };
+
+      const result = await runWithAgentContext(rootCtx, () => runAgentLoop(input, state.history, {
         systemPrompt,
         maxIterations: effortConfig.maxIterations,
         router: state.router,
@@ -950,17 +965,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         onToolStart: (name, toolInput) => {
           isProcessing = true;
           spinnerText = name;
+          toolStartTime = Date.now();
+          currentToolInput = toolInput as Record<string, unknown>;
           recordThinking(state.buddy);
           logEvent("tool_start", { tool: name }).catch(() => {});
-          const preview = typeof toolInput.command === "string" ? `$ ${toolInput.command}` :
-            typeof toolInput.file_path === "string" ? String(toolInput.file_path) :
-            typeof toolInput.pattern === "string" ? `/${toolInput.pattern}/` :
-            typeof toolInput.question === "string" ? toolInput.question.toString().slice(0, 60) :
-            typeof toolInput.query === "string" ? toolInput.query.toString().slice(0, 60) :
-            typeof toolInput.description === "string" ? toolInput.description.toString().slice(0, 60) :
-            "";
-          addOutput(`\n  ${theme.toolIcon("◆")} ${theme.toolName(name)}`);
-          addOutput(theme.tertiary(`    ${preview}`));
           if (isFirstToolCall()) {
             addOutput(getBuddyReaction(state.buddy, "first_tool"));
           }
@@ -968,20 +976,24 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         },
         onToolEnd: (_name, result, isError) => {
           isProcessing = false;
+          turnToolCount++;
+          const durationMs = toolStartTime > 0 ? Date.now() - toolStartTime : undefined;
           lastToolName = _name;
           lastToolResult = result.slice(0, 50);
           logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
           if (isError) { recordError(state.buddy); lastHadError = true; }
           else recordToolCallSuccess(state.buddy);
-          const status = isError ? theme.error("  ✗") : theme.success("  ✓");
-          const lines = result.split("\n");
-          const preview = lines[0]?.slice(0, 90) ?? "";
-          const extra = lines.length > 1 ? theme.tertiary(` (+${lines.length - 1} lines)`) : "";
-          addOutput(`${status} ${theme.toolResult(preview)}${extra}`);
+
+          // Use message renderer for formatted output
+          const rendered = formatToolExecution(_name, currentToolInput, result, isError, durationMs);
+          for (const line of rendered) addOutput(line);
+
           if (isError) addOutput(getBuddyReaction(state.buddy, "error"));
+          toolStartTime = 0;
+          currentToolInput = {};
           update();
         },
-      });
+      }));
 
       // Flush remaining text
       if (responseText) addOutput(responseText);
@@ -1002,7 +1014,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
       currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
-      addOutput(theme.muted(`\n  ── turn ${tc} · $${state.router.costs.totalCostUSD.toFixed(4)} · ${state.buddy.name} ──\n`));
+      addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount));
 
       // Speech bubble — render buddy + bubble as Static output so it scrolls up with history
       const bubbleLines = renderBuddyWithBubble(cachedQuip, getBuddyArt(state.buddy), state.buddy.name);

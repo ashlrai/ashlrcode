@@ -11,20 +11,23 @@ import { join } from "path";
 import { getConfigDir } from "../config/settings.ts";
 import type { Tool, ToolContext } from "./types.ts";
 
+type TaskSource = "u" | "a" | "t" | "k";  // user, agent, team, kairos
+
 interface Task {
-  id: number;
+  id: string;
   subject: string;
   description: string;
   status: "pending" | "in_progress" | "completed";
   createdAt: string;
+  source: TaskSource;
   owner?: string;
-  blocks?: number[];
-  blockedBy?: number[];
+  blocks?: string[];
+  blockedBy?: string[];
   completedAt?: string;
 }
 
 let tasks: Task[] = [];
-let nextId = 1;
+let nextIdCounter = 1;
 let sessionId: string | null = null;
 
 function getTasksDir(): string {
@@ -40,7 +43,7 @@ async function saveTasks(): Promise<void> {
   const path = getTasksPath();
   if (!path) return;
   await mkdir(getTasksDir(), { recursive: true });
-  await writeFile(path, JSON.stringify({ tasks, nextId }, null, 2), "utf-8");
+  await writeFile(path, JSON.stringify({ tasks, nextIdCounter }, null, 2), "utf-8");
 }
 
 export async function initTasks(sid: string): Promise<void> {
@@ -49,19 +52,19 @@ export async function initTasks(sid: string): Promise<void> {
   if (path && existsSync(path)) {
     try {
       const raw = await readFile(path, "utf-8");
-      const data = JSON.parse(raw) as { tasks: Task[]; nextId: number };
+      const data = JSON.parse(raw) as { tasks: Task[]; nextIdCounter: number };
       tasks = data.tasks;
-      nextId = data.nextId;
+      nextIdCounter = data.nextIdCounter;
     } catch {
       tasks = [];
-      nextId = 1;
+      nextIdCounter = 1;
     }
   }
 }
 
 export function resetTasks() {
   tasks = [];
-  nextId = 1;
+  nextIdCounter = 1;
 }
 
 export const taskCreateTool: Tool = {
@@ -85,12 +88,17 @@ export const taskCreateTool: Tool = {
         },
         blockedBy: {
           type: "array",
-          items: { type: "number" },
-          description: "IDs of tasks that must complete before this one",
+          items: { type: "string" },
+          description: "IDs of tasks that must complete before this one (e.g. 'u-001')",
         },
         owner: {
           type: "string",
           description: "Agent name that owns this task",
+        },
+        source: {
+          type: "string",
+          enum: ["u", "a", "t", "k"],
+          description: "Task source: u=user, a=agent, t=team, k=kairos. Defaults to 'u'.",
         },
       },
       required: ["subject", "description"],
@@ -107,14 +115,17 @@ export const taskCreateTool: Tool = {
   },
 
   async call(input, _context) {
-    const blockedByIds = (input.blockedBy as number[] | undefined) ?? [];
+    const blockedByIds = (input.blockedBy as string[] | undefined) ?? [];
     const owner = input.owner as string | undefined;
+    const source = (input.source as TaskSource) ?? "u";
+    const id = `${source}-${String(nextIdCounter++).padStart(3, "0")}`;
 
     const task: Task = {
-      id: nextId++,
+      id,
       subject: input.subject as string,
       description: (input.description as string) ?? "",
       status: "pending",
+      source,
       createdAt: new Date().toISOString(),
       ...(owner ? { owner } : {}),
       ...(blockedByIds.length > 0 ? { blockedBy: blockedByIds } : {}),
@@ -149,8 +160,8 @@ export const taskUpdateTool: Tool = {
       type: "object",
       properties: {
         taskId: {
-          type: "number",
-          description: "ID of the task to update",
+          type: "string",
+          description: "ID of the task to update (e.g. 'u-001')",
         },
         status: {
           type: "string",
@@ -163,13 +174,13 @@ export const taskUpdateTool: Tool = {
         },
         addBlocks: {
           type: "array",
-          items: { type: "number" },
-          description: "Task IDs that this task now blocks",
+          items: { type: "string" },
+          description: "Task IDs that this task now blocks (e.g. 'a-002')",
         },
         addBlockedBy: {
           type: "array",
-          items: { type: "number" },
-          description: "Task IDs that now block this task",
+          items: { type: "string" },
+          description: "Task IDs that now block this task (e.g. 'u-001')",
         },
       },
       required: ["taskId"],
@@ -186,7 +197,7 @@ export const taskUpdateTool: Tool = {
   },
 
   async call(input, _context) {
-    const id = input.taskId as number;
+    const id = input.taskId as string;
     const task = tasks.find((t) => t.id === id);
     if (!task) return `Task #${id} not found`;
 
@@ -205,7 +216,7 @@ export const taskUpdateTool: Tool = {
     }
 
     // Add blocks: this task blocks the given IDs
-    const addBlocks = (input.addBlocks as number[] | undefined) ?? [];
+    const addBlocks = (input.addBlocks as string[] | undefined) ?? [];
     for (const targetId of addBlocks) {
       task.blocks = task.blocks ?? [];
       if (!task.blocks.includes(targetId)) {
@@ -222,7 +233,7 @@ export const taskUpdateTool: Tool = {
     }
 
     // Add blockedBy: this task is now blocked by the given IDs
-    const addBlockedBy = (input.addBlockedBy as number[] | undefined) ?? [];
+    const addBlockedBy = (input.addBlockedBy as string[] | undefined) ?? [];
     for (const blockerId of addBlockedBy) {
       task.blockedBy = task.blockedBy ?? [];
       if (!task.blockedBy.includes(blockerId)) {
@@ -314,8 +325,8 @@ export const taskGetTool: Tool = {
       type: "object",
       properties: {
         taskId: {
-          type: "number",
-          description: "ID of the task to retrieve",
+          type: "string",
+          description: "ID of the task to retrieve (e.g. 'u-001')",
         },
       },
       required: ["taskId"],
@@ -331,7 +342,7 @@ export const taskGetTool: Tool = {
   },
 
   async call(input, _context) {
-    const task = tasks.find((t) => t.id === (input.taskId as number));
+    const task = tasks.find((t) => t.id === (input.taskId as string));
     if (!task) return `Task #${input.taskId} not found`;
     return JSON.stringify(task, null, 2);
   },
