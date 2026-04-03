@@ -311,6 +311,25 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       displayInput = `[Pasted ${lines.length} lines]`;
     }
 
+    // Smart paste detection — categorize pasted content for better display
+    if (lines.length > 3) {
+      // Detect JSON
+      try {
+        JSON.parse(input);
+        displayInput = `[Pasted JSON — ${input.length} chars]`;
+      } catch {}
+
+      // Detect stack trace
+      if (input.includes("at ") && (input.includes("Error:") || input.includes("error:"))) {
+        displayInput = `[Stack trace — ${lines.length} lines]`;
+      }
+
+      // Detect diff/patch
+      if (input.startsWith("diff ") || input.startsWith("---") || lines.some(l => l.startsWith("@@"))) {
+        displayInput = `[Pasted diff — ${lines.length} lines]`;
+      }
+    }
+
     // Handle built-in commands
     if (input.startsWith("/")) {
       // Skills
@@ -986,6 +1005,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }
 
   async function runTurnInk(input: string, displayText?: string) {
+    const turnStartTime = Date.now();
     isProcessing = true;
     spinnerText = "Thinking";
     update();
@@ -1118,6 +1138,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
       addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount));
 
+      // Desktop notification when terminal is not focused
+      detectTerminalFocus().then(focus => {
+        if (focus === "unfocused") {
+          notifyTurnComplete(turnToolCount, Date.now() - turnStartTime).catch(() => {});
+        }
+      }).catch(() => {});
+
       // Speech bubble — render buddy + bubble as Static output so it scrolls up with history
       const bubbleLines = renderBuddyWithBubble(cachedQuip, getBuddyArt(state.buddy), state.buddy.name);
       addOutput(theme.accentDim(bubbleLines.join("\n")));
@@ -1148,6 +1175,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       const categorized = categorizeError(error);
       addOutput(theme.error(`\n  Error: ${categorized.message}\n`));
       logEvent("error", { message: categorized.message }).catch(() => {});
+      notifyError(categorized.message).catch(() => {});
       lastHadError = true;
     }
 
