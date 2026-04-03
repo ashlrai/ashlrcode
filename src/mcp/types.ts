@@ -6,6 +6,13 @@ export interface MCPServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  oauth?: {
+    authorizationUrl: string;
+    tokenUrl: string;
+    clientId: string;
+    clientSecret?: string;
+    scopes: string[];
+  };
 }
 
 // JSON-RPC 2.0 message types

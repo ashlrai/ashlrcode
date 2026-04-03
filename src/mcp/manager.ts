@@ -5,6 +5,8 @@
 import chalk from "chalk";
 import { MCPClient } from "./client.ts";
 import type { MCPServerConfig, MCPToolInfo } from "./types.ts";
+import { authorizeOAuth } from "./oauth.ts";
+import type { OAuthConfig } from "./oauth.ts";
 
 export class MCPManager {
   private clients = new Map<string, MCPClient>();
@@ -20,7 +22,35 @@ export class MCPManager {
 
     const results = await Promise.allSettled(
       entries.map(async ([name, config]) => {
-        const client = new MCPClient(name, config);
+        // If OAuth is configured, authenticate before connecting
+        let effectiveConfig = config;
+        if (config.oauth) {
+          try {
+            const oauthConfig: OAuthConfig = {
+              ...config.oauth,
+              scopes: config.oauth.scopes ?? [],
+            };
+            const token = await authorizeOAuth(name, oauthConfig);
+            // Pass the Bearer token to the MCP server via environment
+            effectiveConfig = {
+              ...config,
+              env: {
+                ...config.env,
+                MCP_AUTH_TOKEN: token.accessToken,
+                MCP_AUTH_TYPE: token.tokenType,
+              },
+            };
+          } catch (err) {
+            console.log(
+              chalk.dim(
+                `  MCP: ${name} OAuth failed — ${err instanceof Error ? err.message : "unknown error"}`
+              )
+            );
+            return;
+          }
+        }
+
+        const client = new MCPClient(name, effectiveConfig);
         try {
           await client.connect();
           this.clients.set(name, client);
