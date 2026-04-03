@@ -649,6 +649,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     <App
       onSubmit={handleSubmit}
       onExit={handleExit}
+      onModeSwitch={() => { cycleMode(); update(); }}
       {...getDisplayProps()}
     />
   );
@@ -658,6 +659,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       <App
         onSubmit={handleSubmit}
         onExit={handleExit}
+        onModeSwitch={() => { cycleMode(); update(); }}
         {...getDisplayProps()}
       />
     );

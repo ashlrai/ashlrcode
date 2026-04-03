@@ -17,6 +17,7 @@ interface OutputItem {
 interface AppProps {
   onSubmit: (text: string) => void;
   onExit: () => void;
+  onModeSwitch: () => void;
   mode: string;
   modeColor: string;
   contextPercent: number;
@@ -35,6 +36,7 @@ interface AppProps {
 export function App({
   onSubmit,
   onExit,
+  onModeSwitch,
   mode,
   modeColor,
   contextPercent,
@@ -70,7 +72,11 @@ export function App({
       onExit();
       exit();
     }
-    // Tab or right arrow accepts autocomplete suggestion
+    // Tab accepts autocomplete, but Shift+Tab cycles mode
+    if (key.tab && key.shift) {
+      onModeSwitch();
+      return;
+    }
     if ((key.tab || key.rightArrow) && suggestion) {
       setInput(suggestion);
     }
