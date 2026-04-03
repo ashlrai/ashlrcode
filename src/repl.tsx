@@ -143,6 +143,15 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // KAIROS autonomous mode — lazy-initialized when /kairos is used
   let kairos: KairosLoop | null = null;
 
+  // Cron trigger runner — background polling for due triggers
+  // Uses deferred callback since runTurnInk is defined later
+  let _triggerCallback: ((prompt: string) => Promise<void>) | null = null;
+  const triggerRunner = new TriggerRunner(async (trigger) => {
+    addOutput(theme.accent(`\n  ⏰ Trigger: ${trigger.name} (${trigger.schedule})\n`));
+    if (_triggerCallback) await _triggerCallback(trigger.prompt);
+  });
+  triggerRunner.start(15_000);
+
   // Initialize local event telemetry
   initTelemetry(state.session.id);
   logEvent("session_start", { cwd: state.toolContext.cwd }).catch(() => {});
@@ -1106,8 +1115,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     update();
   }
 
+  // Wire deferred trigger callback now that runTurnInk is defined
+  _triggerCallback = runTurnInk;
+
   async function handleExit() {
     idleDetector.stop();
+    triggerRunner.stop();
     stopRemotePolling();
     stopBuddyAnimation();
     state.buddy.mood = "sleepy";
