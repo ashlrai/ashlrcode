@@ -9,6 +9,8 @@ import { existsSync } from "fs";
 import { readFile, readdir } from "fs/promises";
 import { join } from "path";
 import { getConfigDir } from "../config/settings.ts";
+import { getModelPatches } from "./model-patches.ts";
+import { getUndercoverPrompt } from "../config/undercover.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 
 export interface PromptPart {
@@ -125,6 +127,20 @@ export class SystemPromptBuilder {
     return this.addPart(name, content, priority ?? 50);
   }
 
+  /** Add model-specific behavior patches */
+  addModelPatches(modelName: string): this {
+    const { combinedSuffix } = getModelPatches(modelName);
+    if (combinedSuffix) this.addPart("model-patches", combinedSuffix, 90);
+    return this;
+  }
+
+  /** Add undercover mode prompt if active */
+  addUndercoverPrompt(): this {
+    const prompt = getUndercoverPrompt();
+    if (prompt) this.addPart("undercover", prompt, 95);
+    return this;
+  }
+
   /** Build the final prompt, respecting a token budget */
   build(maxTokens?: number): AssembledPrompt {
     // Sort by priority (lower = earlier / more important)
@@ -168,6 +184,7 @@ export async function buildSystemPrompt(options: {
   mode?: string;
   projectDir?: string;
   planFile?: string;
+  modelName?: string;
   maxTokens?: number;
 }): Promise<AssembledPrompt> {
   const builder = new SystemPromptBuilder();
@@ -185,6 +202,12 @@ export async function buildSystemPrompt(options: {
   }
 
   await builder.addMemoryFiles();
+
+  if (options.modelName) {
+    builder.addModelPatches(options.modelName);
+  }
+
+  builder.addUndercoverPrompt();
 
   return builder.build(options.maxTokens);
 }

@@ -830,7 +830,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     try {
       const effortConfig = getEffortConfig();
-      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt() + effortConfig.systemPromptSuffix;
+      const { getUndercoverPrompt: getUcPrompt } = await import("./config/undercover.ts");
+      const { getModelPatches: getMPatches } = await import("./agent/model-patches.ts");
+      const turnModelPatches = getMPatches(state.router.currentProvider.config.model).combinedSuffix;
+      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt() + effortConfig.systemPromptSuffix + turnModelPatches + getUcPrompt();
       const systemTokens = Math.ceil(systemPrompt.length / 4);
       const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
 
