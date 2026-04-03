@@ -30,6 +30,7 @@ import { generateBuddyComment, shouldUseAI, type BuddyCommentType } from "./ui/b
 import { scanCodebase } from "./autopilot/scanner.ts";
 import { WorkQueue } from "./autopilot/queue.ts";
 import { DEFAULT_CONFIG } from "./autopilot/types.ts";
+import { generateDream, loadRecentDreams, formatDreamsForPrompt, IdleDetector } from "./agent/dream.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -100,6 +101,21 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   const workQueue = new WorkQueue(state.toolContext.cwd);
   workQueue.load().catch(() => {});
 
+  // Load dreams from previous sessions into system prompt
+  loadRecentDreams(3).then(dreams => {
+    if (dreams.length > 0) {
+      const dreamContext = formatDreamsForPrompt(dreams);
+      state.baseSystemPrompt += "\n\n" + dreamContext;
+    }
+  }).catch(() => {});
+
+  // Idle detector — generate dream when user is idle for 2 minutes
+  const idleDetector = new IdleDetector(async () => {
+    if (state.history.length > 4) {
+      await generateDream(state.history, state.session.id).catch(() => {});
+    }
+  }, 120_000);
+
   let items: Array<{ id: number; text: string }> = [
     { id: 0, text: theme.warning("  ⚠ All tools auto-approved (Ink mode). Use with care.") },
   ];
@@ -155,6 +171,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }
 
   async function handleSubmit(input: string) {
+    idleDetector.ping();
+
     // Prevent concurrent turns
     if (isProcessing) return;
 
@@ -623,6 +641,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);
         state.history = await autoCompact(state.history, state.router);
+
+        // Persist compact boundary to session log
+        const summary = state.history.slice(-5).map(m => {
+          const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+          return `${m.role}: ${c.slice(0, 150)}`;
+        }).join("\n");
+        await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
       }
 
       resetMarkdown();
@@ -742,8 +767,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }
 
   async function handleExit() {
+    idleDetector.stop();
     stopBuddyAnimation();
     state.buddy.mood = "sleepy";
+    // Generate final dream on exit
+    if (state.history.length > 4) {
+      await generateDream(state.history, state.session.id).catch(() => {});
+    }
     await saveBuddy(state.buddy).catch(() => {});
     console.log("\n" + state.router.getCostSummary());
     process.exit(0);
