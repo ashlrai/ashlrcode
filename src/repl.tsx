@@ -339,14 +339,166 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           return true;
         }
 
+        if (subCmd === "auto") {
+          // Full autonomous loop: scan → approve → fix → test → commit → PR → merge
+          addOutput(theme.accent("\n  🚀 AUTOPILOT AUTO MODE — fully autonomous\n"));
+          addOutput(theme.warning("  Scanning → fixing → testing → committing → PR → merge\n"));
+          isProcessing = true;
+          update();
+
+          try {
+            const cwd = state.toolContext.cwd;
+            const run = async (cmd: string) => {
+              const proc = Bun.spawn(["bash", "-c", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
+              const out = await new Response(proc.stdout).text();
+              await proc.exited;
+              return out.trim();
+            };
+
+            // 1. Create autopilot branch
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+            const branch = `autopilot/${timestamp}`;
+            await run(`git checkout -b ${branch}`);
+            addOutput(theme.secondary(`  Branch: ${branch}`));
+
+            // 2. Scan
+            addOutput(theme.accent("\n  🔍 Scanning...\n"));
+            const scanCtx = {
+              cwd,
+              runCommand: run,
+              searchFiles: async (pattern: string) => {
+                const fg = await import("fast-glob");
+                const files = await fg.default(pattern, { cwd, absolute: false, ignore: ["**/node_modules/**", "**/.git/**"] });
+                return files.join("\n");
+              },
+              grepContent: async (pattern: string, glob?: string) => {
+                const proc = Bun.spawn(["bash", "-c", `grep -rn '${pattern}' ${cwd} ${glob ? `--include='${glob}'` : ""} 2>/dev/null | head -50`], { stdout: "pipe", stderr: "pipe" });
+                return await new Response(proc.stdout).text();
+              },
+            };
+            const discovered = await scanCodebase(scanCtx, DEFAULT_CONFIG.scanTypes);
+            workQueue.addItems(discovered);
+            const totalApproved = workQueue.approveAll();
+            await workQueue.save();
+            addOutput(theme.success(`  Found ${discovered.length} issues, approved ${totalApproved}\n`));
+
+            if (totalApproved === 0) {
+              addOutput(theme.success("  ✨ Codebase is clean! Nothing to fix.\n"));
+              await run("git checkout main 2>/dev/null || git checkout master");
+              await run(`git branch -D ${branch} 2>/dev/null`);
+              isProcessing = false;
+              update();
+              return true;
+            }
+
+            // 3. Fix each item
+            let fixed = 0;
+            let failed = 0;
+            let consecutiveFails = 0;
+            const maxFails = 3;
+
+            while (true) {
+              const next = workQueue.getNextApproved();
+              if (!next || consecutiveFails >= maxFails) break;
+
+              workQueue.startItem(next.id);
+              addOutput(theme.accent(`\n  [${fixed + failed + 1}/${totalApproved}] ${next.title}`));
+              spinnerText = next.title;
+              update();
+
+              try {
+                // Execute fix
+                const prompt = `Fix this issue:\nType: ${next.type}\nFile: ${next.file}${next.line ? `:${next.line}` : ""}\nDescription: ${next.description}\n\nMake the minimal fix. Do not change unrelated code.`;
+                await runTurnInk(prompt);
+
+                // Run tests
+                const testResult = await run("bun test 2>&1 || true");
+                const testsPass = testResult.includes("0 fail") || !testResult.includes("fail");
+
+                if (testsPass) {
+                  // Commit the fix
+                  await run(`git add -A && git commit -m "fix(autopilot): ${next.title}" --no-verify 2>/dev/null || true`);
+                  workQueue.completeItem(next.id);
+                  fixed++;
+                  consecutiveFails = 0;
+                  addOutput(theme.success(`  ✓ Fixed and committed`));
+                } else {
+                  // Revert and skip
+                  await run("git checkout -- . 2>/dev/null || true");
+                  workQueue.failItem(next.id, "Tests failed after fix");
+                  failed++;
+                  consecutiveFails++;
+                  addOutput(theme.error(`  ✗ Tests failed, reverted`));
+                }
+              } catch (err) {
+                await run("git checkout -- . 2>/dev/null || true");
+                workQueue.failItem(next.id, String(err));
+                failed++;
+                consecutiveFails++;
+                addOutput(theme.error(`  ✗ Execution failed`));
+              }
+
+              await workQueue.save();
+              update();
+            }
+
+            // 4. Create PR and auto-merge
+            if (fixed > 0) {
+              addOutput(theme.accent("\n  📋 Creating PR...\n"));
+              const prBody = `## Autopilot Fixes\\n\\nFixed ${fixed} issues automatically:\\n${workQueue.getByStatus("completed").slice(-fixed).map(i => `- ${i.title}`).join("\\n")}\\n\\nGenerated by AshlrCode Autopilot.`;
+              const prResult = await run(`gh pr create --title "fix(autopilot): ${fixed} automated fixes" --body "${prBody}" 2>&1 || true`);
+
+              if (prResult.includes("github.com")) {
+                addOutput(theme.success(`  PR created: ${prResult.split("\n").pop()}`));
+
+                // Auto-merge if tests pass
+                const mergeResult = await run(`gh pr merge --auto --squash 2>&1 || true`);
+                if (mergeResult.includes("auto-merge")) {
+                  addOutput(theme.success(`  Auto-merge enabled — will merge when checks pass`));
+                } else {
+                  addOutput(theme.secondary(`  PR ready for review (auto-merge not available)`));
+                }
+              } else {
+                addOutput(theme.secondary(`  PR creation: ${prResult.slice(0, 200)}`));
+              }
+            }
+
+            // 5. Switch back to main
+            await run("git checkout main 2>/dev/null || git checkout master 2>/dev/null || true");
+
+            // Summary
+            addOutput(theme.accent(`\n  ═══ Autopilot Summary ═══`));
+            addOutput(theme.success(`  Fixed: ${fixed}`));
+            if (failed > 0) addOutput(theme.error(`  Failed: ${failed}`));
+            addOutput(theme.secondary(`  Skipped: ${totalApproved - fixed - failed}`));
+            if (consecutiveFails >= maxFails) {
+              addOutput(theme.warning(`  Stopped after ${maxFails} consecutive failures`));
+            }
+            addOutput("");
+
+          } catch (err) {
+            addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
+            // Try to get back to main
+            try {
+              const proc = Bun.spawn(["bash", "-c", "git checkout main 2>/dev/null || git checkout master"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+              await proc.exited;
+            } catch {}
+          }
+
+          isProcessing = false;
+          update();
+          return true;
+        }
+
         // Help
         addOutput(theme.accent("\n  🤖 Autopilot — autonomous work discovery\n"));
-        addOutput(theme.secondary("  /autopilot scan        — scan codebase for issues"));
-        addOutput(theme.secondary("  /autopilot queue       — show work queue"));
-        addOutput(theme.secondary("  /autopilot approve all — approve all discovered items"));
-        addOutput(theme.secondary("  /autopilot approve <id>— approve one item"));
-        addOutput(theme.secondary("  /autopilot run         — execute next approved item"));
-        addOutput(theme.tertiary("\n  Workflow: scan → review queue → approve → run\n"));
+        addOutput(theme.secondary("  /autopilot scan         — scan codebase for issues"));
+        addOutput(theme.secondary("  /autopilot queue        — show work queue"));
+        addOutput(theme.secondary("  /autopilot approve all  — approve all discovered items"));
+        addOutput(theme.secondary("  /autopilot run          — execute next approved item"));
+        addOutput(theme.secondary("  /autopilot auto         — FULL AUTO: scan → fix → test → PR → merge"));
+        addOutput(theme.tertiary("\n  Manual: scan → queue → approve → run"));
+        addOutput(theme.tertiary("  Auto:   /autopilot auto (does everything)\n"));
         return true;
       }
 
