@@ -10,7 +10,7 @@ import { render } from "ink";
 import { App } from "./ui/App.tsx";
 import { runAgentLoop } from "./agent/loop.ts";
 import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
-import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact } from "./agent/context.ts";
+import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
@@ -606,6 +606,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit })) {
         addOutput(theme.tertiary("  [compacting context...]"));
+        state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);
         state.history = await autoCompact(state.history, state.router);
       }

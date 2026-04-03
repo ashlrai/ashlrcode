@@ -74,6 +74,44 @@ function blockCharCount(block: ContentBlock): number {
 }
 
 /**
+ * Tier 3: contextCollapse — remove redundant messages from older history.
+ * - Remove short assistant messages (< 10 chars)
+ * - Deduplicate consecutive tool results with similar content
+ * - Keep last 5 messages at full fidelity
+ */
+export function contextCollapse(messages: Message[]): Message[] {
+  if (messages.length <= 5) return messages;
+
+  const keepRecent = 5;
+  const older = messages.slice(0, -keepRecent);
+  const recent = messages.slice(-keepRecent);
+
+  const collapsed: Message[] = [];
+  let lastToolResultHash = "";
+
+  for (const msg of older) {
+    // Remove very short assistant messages
+    if (msg.role === "assistant" && typeof msg.content === "string" && msg.content.trim().length < 10) {
+      continue;
+    }
+
+    // Deduplicate similar consecutive tool results
+    if (msg.role === "user" && Array.isArray(msg.content)) {
+      const toolResults = msg.content.filter(b => b.type === "tool_result");
+      if (toolResults.length > 0) {
+        const hash = toolResults.map(b => b.type === "tool_result" ? b.content.slice(0, 200) : "").join("|");
+        if (hash === lastToolResultHash) continue; // skip duplicate
+        lastToolResultHash = hash;
+      }
+    }
+
+    collapsed.push(msg);
+  }
+
+  return [...collapsed, ...recent];
+}
+
+/**
  * Check if context needs compaction.
  *
  * @param actualTokensUsed - If provided, uses the real token count from the
