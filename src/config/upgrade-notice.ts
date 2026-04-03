@@ -9,12 +9,17 @@ import { getConfigDir } from "./settings.ts";
 
 const CHECK_INTERVAL = 24 * 60 * 60 * 1000; // Once per day
 
+function parseSemver(version: string): [number, number, number] {
+  const [major = 0, minor = 0, patch = 0] = version.replace(/[+-].*$/, "").split(".").map(Number);
+  return [major || 0, minor || 0, patch || 0];
+}
+
 function isNewer(latest: string, current: string): boolean {
-  const [lMaj = 0, lMin = 0, lPat = 0] = latest.split(".").map(Number);
-  const [cMaj = 0, cMin = 0, cPat = 0] = current.split(".").map(Number);
-  if (lMaj !== cMaj) return lMaj > cMaj;
-  if (lMin !== cMin) return lMin > cMin;
-  return lPat > cPat;
+  const [latestMaj, latestMin, latestPat] = parseSemver(latest);
+  const [currentMaj, currentMin, currentPat] = parseSemver(current);
+  if (latestMaj !== currentMaj) return latestMaj > currentMaj;
+  if (latestMin !== currentMin) return latestMin > currentMin;
+  return latestPat > currentPat;
 }
 
 interface UpgradeState {

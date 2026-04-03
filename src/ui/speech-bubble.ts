@@ -59,7 +59,7 @@ export function renderBuddyWithBubble(
   }
 
   // Bottom border with tail
-  const tailPos = Math.min(10, bubbleWidth - 2);
+  const tailPos = Math.min(10, bubbleWidth - 3);
   bubbleLines.push(" '" + "-".repeat(tailPos) + "." + " ".repeat(Math.max(0, bubbleWidth - tailPos - 3)) + "'");
 
   // Tail lines
