@@ -147,6 +147,42 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     // Prevent concurrent turns
     if (isProcessing) return;
 
+    // Detect image file paths (drag-and-drop inserts path as text)
+    const imageMatch = input.match(/(?:^|\s)(\/[^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i)
+      ?? input.match(/(?:^|\s)([^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i);
+
+    if (imageMatch) {
+      const imagePath = imageMatch[1]!;
+      const textPart = input.replace(imagePath, "").trim() || "Describe this image.";
+      try {
+        const { existsSync } = await import("fs");
+        const { readFile } = await import("fs/promises");
+        const { resolve } = await import("path");
+
+        const fullPath = resolve(state.toolContext.cwd, imagePath);
+        if (existsSync(fullPath)) {
+          const buffer = await readFile(fullPath);
+          const base64 = buffer.toString("base64");
+          const ext = fullPath.split(".").pop()?.toLowerCase() ?? "png";
+          const mime = ext === "jpg" ? "jpeg" : ext;
+
+          addOutput(theme.accent(`\n  📎 [Image: ${imagePath.split("/").pop()}]\n`));
+          addOutput(theme.secondary(`  ${textPart}\n`));
+
+          // Send as multimodal message with image
+          await runTurnInkWithImage(textPart, `data:image/${mime};base64,${base64}`);
+          return;
+        }
+      } catch {}
+    }
+
+    // Smart paste: collapse long multi-line text
+    const lines = input.split("\n");
+    let displayInput = input;
+    if (lines.length > 10) {
+      displayInput = `[Pasted ${lines.length} lines]`;
+    }
+
     // Handle built-in commands
     if (input.startsWith("/")) {
       // Skills
@@ -164,7 +200,23 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       if (handled) return;
     }
 
-    await runTurnInk(input);
+    await runTurnInk(input, displayInput);
+  }
+
+  /** Run with image attachment */
+  async function runTurnInkWithImage(text: string, imageDataUrl: string) {
+    isProcessing = true; spinnerText = "Analyzing image"; update();
+    try {
+      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt();
+      const userMsg: import("./providers/types.ts").Message = { role: "user", content: [{ type: "image_url", image_url: { url: imageDataUrl } }, { type: "text", text }] };
+      const preTurn = state.history.length;
+      state.history.push(userMsg);
+      const result = await runAgentLoop("", state.history, { systemPrompt, router: state.router, toolRegistry: state.registry, toolContext: state.toolContext, readOnly: isPlanMode(), onText: (t) => { isProcessing = false; addOutput(t); update(); }, onToolStart: (name) => { isProcessing = true; spinnerText = name; update(); }, onToolEnd: (_n, r, e) => { isProcessing = false; addOutput((e ? theme.error("  ✗ ") : theme.success("  ✓ ")) + r.split("\n")[0]?.slice(0, 90)); update(); } });
+      state.history.length = 0; state.history.push(...result.messages);
+      const newMsgs = result.messages.slice(preTurn);
+      if (newMsgs.length > 0) await state.session.appendMessages(newMsgs);
+    } catch (err) { addOutput(theme.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`)); }
+    isProcessing = false; update();
   }
 
   async function handleCommand(input: string): Promise<boolean> {
@@ -538,13 +590,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     }
   }
 
-  async function runTurnInk(input: string) {
+  async function runTurnInk(input: string, displayText?: string) {
     isProcessing = true;
     spinnerText = "Thinking";
     update();
 
-    // Echo user input
-    addOutput("\n" + theme.accent("  ❯ ") + theme.primary(input) + "\n");
+    // Echo — use displayText for smart paste collapse
+    const echo = displayText ?? input;
+    addOutput("\n" + theme.accent("  ❯ ") + theme.primary(echo.length > 200 ? echo.slice(0, 197) + "..." : echo) + "\n");
 
     try {
       const systemPrompt = state.baseSystemPrompt + getPlanModePrompt();

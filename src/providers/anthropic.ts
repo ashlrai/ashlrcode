@@ -176,7 +176,9 @@ function convertMessage(
     return { role: msg.role === "tool" ? "user" : msg.role, content: msg.content };
   }
 
-  const blocks: Anthropic.ContentBlockParam[] = msg.content.map((b) => {
+  const blocks: Anthropic.ContentBlockParam[] = msg.content
+    .filter((b) => b.type !== "image_url") // Anthropic uses different image format
+    .map((b) => {
     switch (b.type) {
       case "text":
         return { type: "text" as const, text: b.text };
@@ -194,8 +196,10 @@ function convertMessage(
           content: b.content,
           is_error: b.is_error,
         };
+      default:
+        return { type: "text" as const, text: "" };
     }
-  });
+  }).filter(b => b.type !== "text" || b.text !== "");
 
   return {
     role: msg.role === "tool" ? "user" : msg.role,

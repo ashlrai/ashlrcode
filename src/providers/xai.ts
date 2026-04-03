@@ -173,13 +173,26 @@ function convertMessage(
     return [{ role: msg.role === "tool" ? "user" : msg.role, content: msg.content }];
   }
 
-  // Handle content blocks — extract text and tool uses
+  // Handle content blocks — extract text, images, and tool uses
   const textParts = msg.content
     .filter((b) => b.type === "text")
     .map((b) => (b as { type: "text"; text: string }).text)
     .join("");
 
+  const imageBlocks = msg.content.filter((b) => b.type === "image_url");
   const toolUses = msg.content.filter((b) => b.type === "tool_use");
+
+  // User message with images — send as multimodal content array
+  if (msg.role === "user" && imageBlocks.length > 0) {
+    const parts: Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }> = [];
+    if (textParts) parts.push({ type: "text", text: textParts });
+    for (const img of imageBlocks) {
+      if (img.type === "image_url") {
+        parts.push({ type: "image_url", image_url: { url: img.image_url.url } });
+      }
+    }
+    return [{ role: "user" as const, content: parts }];
+  }
 
   if (msg.role === "assistant" && toolUses.length > 0) {
     return [{

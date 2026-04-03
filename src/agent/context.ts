@@ -68,6 +68,8 @@ function blockCharCount(block: ContentBlock): number {
       return block.name.length + JSON.stringify(block.input).length;
     case "tool_result":
       return block.content.length;
+    case "image_url":
+      return 1000; // Estimate ~1000 tokens per image
   }
 }
 
