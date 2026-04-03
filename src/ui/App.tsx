@@ -115,7 +115,7 @@ export function App({
       <Box>
         {/* Left: input box */}
         <Box flexDirection="column" width={lineWidth}>
-          <Text dimColor>{"─".repeat(lineWidth)}</Text>
+          <Text dimColor>{"-".repeat(lineWidth)}</Text>
           <Box>
             <Text color={modeColor} bold>❯ </Text>
             {isProcessing ? (
@@ -143,7 +143,7 @@ export function App({
               {suggestion && <Text dimColor italic>  tab ↹</Text>}
             </Box>
           )}
-          <Text dimColor>{"─".repeat(lineWidth)}</Text>
+          <Text dimColor>{"-".repeat(lineWidth)}</Text>
           {/* Status line */}
           <Box justifyContent="space-between">
             <Box>
