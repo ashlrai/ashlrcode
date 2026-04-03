@@ -28,7 +28,7 @@ export interface SessionMetadata {
 interface SessionEntry {
   type: "message" | "metadata" | "compact";
   timestamp: string;
-  data: Message | SessionMetadata | { summary: string };
+  data: Message | SessionMetadata | { summary: string; messageCountBefore: number };
 }
 
 function getSessionsDir(): string {
@@ -81,7 +81,19 @@ export class Session {
     }
   }
 
-  async loadMessages(): Promise<Message[]> {
+  async insertCompactBoundary(summary: string, messageCountBefore: number): Promise<void> {
+    await this.appendEntry({
+      type: "compact",
+      timestamp: new Date().toISOString(),
+      data: { summary, messageCountBefore },
+    });
+  }
+
+  /**
+   * Load ALL messages, ignoring compact boundaries.
+   * Used for forking and compaction where full history is needed.
+   */
+  async loadAllMessages(): Promise<Message[]> {
     if (!existsSync(this.filePath)) return [];
 
     const content = await readFile(this.filePath, "utf-8");
@@ -97,6 +109,59 @@ export class Session {
       } catch {
         // Skip malformed lines
       }
+    }
+
+    return messages;
+  }
+
+  /**
+   * Load messages from the last compact boundary forward.
+   * If a compact boundary exists, only messages after it are returned,
+   * with a synthetic assistant message prepended containing the summary.
+   */
+  async loadMessages(): Promise<Message[]> {
+    if (!existsSync(this.filePath)) return [];
+
+    const content = await readFile(this.filePath, "utf-8");
+    const lines = content.trim().split("\n").filter(Boolean);
+
+    // Scan in reverse to find last compact boundary
+    let lastCompactIndex = -1;
+    let compactSummary = "";
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]!) as SessionEntry;
+        if (entry.type === "compact") {
+          lastCompactIndex = i;
+          compactSummary = (entry.data as { summary: string; messageCountBefore: number }).summary;
+          break;
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    // Load messages after the boundary (or all if no boundary)
+    const startIndex = lastCompactIndex >= 0 ? lastCompactIndex + 1 : 0;
+    const messages: Message[] = [];
+
+    for (let i = startIndex; i < lines.length; i++) {
+      try {
+        const entry = JSON.parse(lines[i]!) as SessionEntry;
+        if (entry.type === "message") {
+          messages.push(entry.data as Message);
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+
+    // Prepend synthetic summary message if we found a compact boundary
+    if (lastCompactIndex >= 0) {
+      messages.unshift({
+        role: "assistant",
+        content: "[Previous conversation summary]\n" + compactSummary,
+      });
     }
 
     return messages;
@@ -193,7 +258,7 @@ export async function forkSession(
   model: string
 ): Promise<{ session: Session; messages: Message[] } | null> {
   const source = new Session(sourceId);
-  const messages = await source.loadMessages();
+  const messages = await source.loadAllMessages();
   if (messages.length === 0) return null;
 
   const forked = new Session();
@@ -201,4 +266,24 @@ export async function forkSession(
   await forked.appendMessages(messages);
 
   return { session: forked, messages };
+}
+
+/**
+ * Compact a session — insert a boundary marker with a summary of recent messages.
+ * Messages before the boundary are excluded from loadMessages() but preserved on disk.
+ */
+export async function compactSession(id: string): Promise<{ messagesBefore: number; summary: string }> {
+  const session = new Session(id);
+  const allMessages = await session.loadAllMessages();
+  const messagesBefore = allMessages.length;
+
+  // Generate summary from recent messages
+  const recentText = allMessages.slice(-10).map(m => {
+    const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    return `${m.role}: ${content.slice(0, 200)}`;
+  }).join("\n");
+
+  const summary = `Session context (${messagesBefore} messages):\n${recentText}`;
+  await session.insertCompactBoundary(summary, messagesBefore);
+  return { messagesBefore, summary };
 }
