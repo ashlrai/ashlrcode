@@ -85,11 +85,33 @@ export class ProviderRouter {
     return this.providers[this.currentIndex]!;
   }
 
+  private getCircuitBreaker(providerName: string): CircuitBreaker {
+    let cb = this.circuitBreakers.get(providerName);
+    if (!cb) {
+      cb = new CircuitBreaker(5, 60_000);
+      this.circuitBreakers.set(providerName, cb);
+    }
+    return cb;
+  }
+
   async *stream(request: ProviderRequest): AsyncGenerator<StreamEvent> {
     let lastError: Error | null = null;
 
     for (let i = this.currentIndex; i < this.providers.length; i++) {
       const provider = this.providers[i]!;
+      const breaker = this.getCircuitBreaker(provider.name);
+
+      // If this provider's circuit is open, skip to the next one
+      if (!breaker.canRequest()) {
+        process.stderr.write(
+          `[router] ${provider.name} circuit breaker open (${breaker.getStatus()}), skipping...\n`,
+        );
+        if (i + 1 < this.providers.length) continue;
+        throw new Error(
+          `All providers unavailable — ${provider.name} circuit breaker is open. Wait and retry.`,
+        );
+      }
+
       try {
         for await (const event of provider.stream(request)) {
           // Track usage
@@ -98,9 +120,12 @@ export class ProviderRouter {
           }
           yield event;
         }
+        breaker.recordSuccess();
         return; // Success — exit
       } catch (err) {
         lastError = err as Error;
+        breaker.recordFailure();
+
         const isRateLimit =
           lastError.message.includes("429") ||
           lastError.message.includes("rate_limit") ||

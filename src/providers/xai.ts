@@ -11,7 +11,7 @@ import type {
   StreamEvent,
   ToolCall,
 } from "./types.ts";
-import { categorizeError } from "../agent/error-handler.ts";
+import { withRetry } from "./retry.ts";
 
 export function createXAIProvider(config: ProviderConfig): Provider {
   return createOpenAICompatibleProvider("xai", config, [0.2, 0.5]);
@@ -49,7 +49,7 @@ export function createOpenAICompatibleProvider(
         ...request.messages.flatMap(convertMessage),
       ];
 
-      const stream = await retryStreamCreate(
+      const stream = await withRetry(
         () =>
           client.chat.completions.create({
             model: config.model,
@@ -59,7 +59,7 @@ export function createOpenAICompatibleProvider(
             stream: true,
             stream_options: { include_usage: true },
           }),
-        "xai"
+        { providerName: name },
       );
 
       const toolCalls = new Map<number, { id: string; name: string; args: string }>();
@@ -215,51 +215,3 @@ function convertMessage(
   return [{ role: msg.role === "tool" ? "user" : msg.role, content: textParts }];
 }
 
-/**
- * Retry API stream creation with category-aware backoff.
- * - Rate limit (429): up to 3 retries, exponential backoff from 1s
- * - Network errors: up to 2 retries, 2s base delay
- * - Auth errors (401/403): fail immediately
- */
-async function retryStreamCreate<T>(
-  fn: () => Promise<T>,
-  providerName: string
-): Promise<T> {
-  const MAX_RETRIES_RATE_LIMIT = 3; // 3 retries = 4 total attempts
-  const MAX_RETRIES_NETWORK = 2;   // 2 retries = 3 total attempts
-  let lastError: Error | null = null;
-
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastError = err as Error;
-      const categorized = categorizeError(lastError);
-
-      // Auth errors: fail immediately
-      if (categorized.category === "auth") {
-        throw new Error(
-          `[${providerName}] Authentication failed — check your API key. (${lastError.message})`
-        );
-      }
-
-      const maxRetries =
-        categorized.category === "rate_limit"
-          ? MAX_RETRIES_RATE_LIMIT
-          : categorized.category === "network"
-            ? MAX_RETRIES_NETWORK
-            : 0;
-
-      if (!categorized.retryable || attempt >= maxRetries) {
-        throw lastError;
-      }
-
-      const baseDelay = categorized.category === "rate_limit" ? 1000 : 2000;
-      const delay = baseDelay * Math.pow(2, attempt);
-      process.stderr.write(
-        `[${providerName}] ${categorized.category} error, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})...\n`
-      );
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-  }
-}

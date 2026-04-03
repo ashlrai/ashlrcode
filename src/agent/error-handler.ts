@@ -2,7 +2,7 @@
  * Error handler — categorized errors with retry logic.
  */
 
-export type ErrorCategory = "rate_limit" | "network" | "auth" | "validation" | "tool_failure" | "unknown";
+export type ErrorCategory = "rate_limit" | "network" | "auth" | "validation" | "tool_failure" | "server" | "unknown";
 
 export interface CategorizedError {
   category: ErrorCategory;
@@ -41,6 +41,15 @@ export function categorizeError(error: Error | string): CategorizedError {
       message: "Network error — check your connection",
       retryable: true,
       retryAfterMs: 2000,
+    };
+  }
+
+  if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("529") || msg.includes("internal server error") || msg.includes("bad gateway") || msg.includes("service unavailable") || msg.includes("overloaded")) {
+    return {
+      category: "server",
+      message: "Server error — provider may be experiencing issues",
+      retryable: true,
+      retryAfterMs: 3000,
     };
   }
 
