@@ -111,6 +111,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let lastToolResult = "";
   let lastHadError = false;
   let aiCommentGen = 0; // Guards against stale AI callbacks overwriting mid-turn
+  let aiCommentInFlight = false;
   let isProcessing = false;
   let spinnerText = "Thinking";
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
@@ -709,8 +710,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       addOutput(theme.accentDim(bubbleLines.join("\n")));
 
       // AI-powered buddy comment (every 5th turn, fire-and-forget)
-      if (shouldUseAI(turnCount, lastHadError)) {
+      if (shouldUseAI(turnCount, lastHadError) && !aiCommentInFlight) {
         const gen = ++aiCommentGen;
+        aiCommentInFlight = true;
         generateBuddyComment(
           { lastTool: lastToolName, lastResult: lastToolResult, mood: state.buddy.mood, errorOccurred: lastHadError },
           state.router.currentProvider.config.apiKey,
@@ -721,10 +723,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           cachedQuip = comment.text;
           const pool = QUIPS[state.buddy.mood] ?? [];
           if (!pool.includes(comment.text)) {
-            QUIPS[state.buddy.mood] = [comment.text, ...pool];
+            QUIPS[state.buddy.mood] = [...pool, comment.text];
           }
           update();
-        }).catch(() => {});
+        }).catch(() => {}).finally(() => { aiCommentInFlight = false; });
       }
       lastHadError = false;
 
