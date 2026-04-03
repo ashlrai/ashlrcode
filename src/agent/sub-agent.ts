@@ -13,6 +13,7 @@ import type { ToolContext } from "../tools/types.ts";
 import type { Message } from "../providers/types.ts";
 import { runAgentLoop } from "./loop.ts";
 import { createWorktree, removeWorktree } from "./worktree-manager.ts";
+import { runWithAgentContext, createChildContext, getAgentContext } from "./async-context.ts";
 
 export interface SubAgentConfig {
   name: string;
@@ -52,12 +53,52 @@ async function runWorktreeSubAgent(config: SubAgentConfig): Promise<SubAgentResu
   const wt = await createWorktree(config.name);
   const worktreeContext: ToolContext = { ...config.toolContext, cwd: wt.path };
 
-  try {
+  const parentCtx = getAgentContext();
+  const childCtx = createChildContext(parentCtx, config.name, wt.path, config.readOnly ?? true);
+
+  return runWithAgentContext(childCtx, async () => {
+    try {
+      const result = await runAgentLoop(config.prompt, [], {
+        systemPrompt: config.systemPrompt,
+        router: config.router,
+        toolRegistry: config.toolRegistry,
+        toolContext: worktreeContext,
+        readOnly: config.readOnly,
+        maxIterations: config.maxIterations ?? 15,
+        onText: config.onText,
+        onToolStart: config.onToolStart,
+        onToolEnd: config.onToolEnd,
+      });
+
+      return {
+        name: config.name,
+        text: result.finalText,
+        toolCalls: result.toolCalls,
+        messages: result.messages,
+        worktree: { path: wt.path, branch: wt.branch },
+      };
+    } catch (err) {
+      await removeWorktree(wt.path).catch(() => {});
+      throw err;
+    }
+  });
+}
+
+/**
+ * Run a sub-agent with its own fresh message context.
+ */
+export async function runSubAgent(config: SubAgentConfig): Promise<SubAgentResult> {
+  if (config.mode === "worktree") return runWorktreeSubAgent(config);
+
+  const parentCtx = getAgentContext();
+  const childCtx = createChildContext(parentCtx, config.name, config.toolContext.cwd, config.readOnly ?? true);
+
+  return runWithAgentContext(childCtx, async () => {
     const result = await runAgentLoop(config.prompt, [], {
       systemPrompt: config.systemPrompt,
       router: config.router,
       toolRegistry: config.toolRegistry,
-      toolContext: worktreeContext,
+      toolContext: config.toolContext,
       readOnly: config.readOnly,
       maxIterations: config.maxIterations ?? 15,
       onText: config.onText,
@@ -70,38 +111,8 @@ async function runWorktreeSubAgent(config: SubAgentConfig): Promise<SubAgentResu
       text: result.finalText,
       toolCalls: result.toolCalls,
       messages: result.messages,
-      worktree: { path: wt.path, branch: wt.branch },
     };
-  } catch (err) {
-    await removeWorktree(wt.path).catch(() => {});
-    throw err;
-  }
-}
-
-/**
- * Run a sub-agent with its own fresh message context.
- */
-export async function runSubAgent(config: SubAgentConfig): Promise<SubAgentResult> {
-  if (config.mode === "worktree") return runWorktreeSubAgent(config);
-
-  const result = await runAgentLoop(config.prompt, [], {
-    systemPrompt: config.systemPrompt,
-    router: config.router,
-    toolRegistry: config.toolRegistry,
-    toolContext: config.toolContext,
-    readOnly: config.readOnly,
-    maxIterations: config.maxIterations ?? 15,
-    onText: config.onText,
-    onToolStart: config.onToolStart,
-    onToolEnd: config.onToolEnd,
   });
-
-  return {
-    name: config.name,
-    text: result.finalText,
-    toolCalls: result.toolCalls,
-    messages: result.messages,
-  };
 }
 
 /**
