@@ -41,6 +41,14 @@ export interface AgentResult {
   toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }>;
 }
 
+/* ── Streaming event types for streamAgentLoop() ───────────────── */
+
+export type AgentEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "tool_start"; name: string; input: Record<string, unknown> }
+  | { type: "tool_end"; name: string; result: string; isError: boolean }
+  | { type: "turn_end"; finalText: string; toolCalls: AgentResult["toolCalls"] };
+
 /**
  * Run the agent loop for a single user turn.
  * Streams responses, executes tools, and loops until the model stops.
@@ -129,6 +137,132 @@ export async function runAgentLoop(
   }
 
   return { messages, finalText, toolCalls: allToolCalls };
+}
+
+/**
+ * Streaming agent loop — yields incremental events as an AsyncGenerator.
+ *
+ * Unlike runAgentLoop() which buffers everything and returns a Promise<AgentResult>,
+ * this lets callers react to each event as it arrives (text deltas, tool
+ * invocations, etc.). Useful for streaming UIs and programmatic consumers.
+ *
+ * The existing runAgentLoop() is intentionally left unchanged so current
+ * callers keep working — this is an additive, opt-in API.
+ */
+export async function* streamAgentLoop(
+  userMessage: string,
+  history: Message[],
+  config: AgentConfig
+): AsyncGenerator<AgentEvent> {
+  const messages: Message[] = [
+    ...history,
+    { role: "user", content: userMessage },
+  ];
+
+  const tools = config.readOnly
+    ? config.toolRegistry.getReadOnlyDefinitions()
+    : config.toolRegistry.getDefinitions();
+
+  const maxIterations = config.maxIterations ?? 25;
+  const allToolCalls: AgentResult["toolCalls"] = [];
+  let finalText = "";
+
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // Stream API response, yielding text deltas as they arrive
+    let text = "";
+    const toolCalls: ToolCall[] = [];
+    let stopReason = "end_turn";
+
+    const stream = config.router.stream({
+      systemPrompt: config.systemPrompt,
+      messages,
+      tools,
+    });
+
+    for await (const event of stream) {
+      switch (event.type) {
+        case "text_delta":
+          if (event.text) {
+            text += event.text;
+            yield { type: "text_delta", text: event.text };
+          }
+          break;
+
+        case "tool_call_end":
+          if (event.toolCall?.id && event.toolCall?.name && event.toolCall?.input) {
+            toolCalls.push(event.toolCall as ToolCall);
+          }
+          break;
+
+        case "message_end":
+          if (event.stopReason) {
+            stopReason = event.stopReason;
+          }
+          break;
+      }
+    }
+
+    finalText = text;
+
+    // Build assistant message with content blocks
+    const contentBlocks: ContentBlock[] = [];
+    if (text) {
+      contentBlocks.push({ type: "text", text });
+    }
+    for (const tc of toolCalls) {
+      contentBlocks.push({
+        type: "tool_use",
+        id: tc.id,
+        name: tc.name,
+        input: tc.input,
+      });
+    }
+
+    messages.push({
+      role: "assistant",
+      content: contentBlocks.length === 1 && contentBlocks[0]!.type === "text"
+        ? text
+        : contentBlocks,
+    });
+
+    // If no tool calls, we're done
+    if (stopReason !== "tool_use" || toolCalls.length === 0) {
+      break;
+    }
+
+    // Execute tool calls, yielding start/end events for each
+    const executionResults = await executeToolCalls(
+      toolCalls,
+      config.toolRegistry,
+      config.toolContext,
+      {
+        onToolStart: config.onToolStart,
+        onToolEnd: config.onToolEnd,
+      }
+    );
+
+    for (const er of executionResults) {
+      yield { type: "tool_start", name: er.name, input: er.input };
+      yield { type: "tool_end", name: er.name, result: er.result, isError: er.isError };
+      allToolCalls.push({ name: er.name, input: er.input, result: er.result });
+    }
+
+    // Add tool results to messages for the next iteration
+    const resultBlocks: ContentBlock[] = executionResults.map((er) => ({
+      type: "tool_result" as const,
+      tool_use_id: er.toolCallId,
+      content: er.result,
+      is_error: er.isError,
+    }));
+    messages.push({ role: "user", content: resultBlocks });
+  }
+
+  // If we hit max iterations with no final text, add a fallback
+  if (!finalText && allToolCalls.length > 0) {
+    finalText = `[Reached maximum iterations (${maxIterations}). ${allToolCalls.length} tool calls were executed.]`;
+  }
+
+  yield { type: "turn_end", finalText, toolCalls: allToolCalls };
 }
 
 /**
