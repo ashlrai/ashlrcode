@@ -52,6 +52,17 @@ export const fileWriteTool: Tool = {
     return null;
   },
 
+  checkPermissions(input: Record<string, unknown>, context: ToolContext): string | null {
+    const filePath = input.file_path as string;
+    if (!filePath) return null;
+    const resolved = resolve(context.cwd, filePath);
+    const sensitive = ["/etc/", "/usr/bin/", "/sbin/", "/.ssh/"];
+    for (const s of sensitive) {
+      if (resolved.includes(s)) return `Cannot write to sensitive path: ${s}`;
+    }
+    return null;
+  },
+
   async call(input, context) {
     const filePath = resolve(context.cwd, input.file_path as string);
     const content = input.content as string;

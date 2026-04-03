@@ -157,4 +157,43 @@ export function resetPermissionsForTests(): void {
   };
   bypassMode = false;
   autoAcceptEdits = false;
+  rules = [];
 }
+
+// --- Input-based permission rules ---
+
+export interface PermissionRule {
+  tool: string;           // Exact name or simple glob ("File*", "*Bash")
+  inputPattern?: string;  // Regex to match against JSON-stringified input
+  action: "allow" | "deny" | "ask";
+}
+
+let rules: PermissionRule[] = [];
+
+function matchesToolPattern(pattern: string, toolName: string): boolean {
+  if (pattern === "*") return true;
+  if (pattern === toolName) return true;
+  if (pattern.startsWith("*") && toolName.endsWith(pattern.slice(1))) return true;
+  if (pattern.endsWith("*") && toolName.startsWith(pattern.slice(0, -1))) return true;
+  return false;
+}
+
+/**
+ * Check input-based permission rules. Returns the action of the first matching rule,
+ * or null if no rule matches.
+ */
+export function checkRules(toolName: string, input?: Record<string, unknown>): "allow" | "deny" | "ask" | null {
+  const inputStr = input ? JSON.stringify(input) : "";
+  for (const rule of rules) {
+    if (!matchesToolPattern(rule.tool, toolName)) continue;
+    if (rule.inputPattern) {
+      try { if (!new RegExp(rule.inputPattern).test(inputStr)) continue; }
+      catch { continue; }
+    }
+    return rule.action;
+  }
+  return null;
+}
+
+export function setRules(newRules: PermissionRule[]): void { rules = newRules; }
+export function getRules(): PermissionRule[] { return rules; }

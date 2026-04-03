@@ -7,6 +7,7 @@ import type { Tool, ToolContext } from "./types.ts";
 import type { ToolDefinition } from "../providers/types.ts";
 import { toolToDefinition } from "./types.ts";
 import { runPreToolHooks, runPostToolHooks, type HooksConfig } from "../config/hooks.ts";
+import { checkRules } from "../config/permissions.ts";
 
 function formatInputPreview(toolName: string, input: Record<string, unknown>): string {
   switch (toolName) {
@@ -71,10 +72,24 @@ export class ToolRegistry {
     // Check permissions for non-read-only tools (before hooks, so hooks
     // don't execute shell commands for tools the user would deny)
     if (!tool.isReadOnly()) {
-      const inputPreview = formatInputPreview(toolName, input);
-      const allowed = await context.requestPermission(toolName, inputPreview);
-      if (!allowed) {
-        return { result: "Permission denied by user", isError: true };
+      const ruleResult = checkRules(toolName, input);
+      if (ruleResult === "deny") {
+        return { result: "Denied by permission rule", isError: true };
+      }
+      if (ruleResult !== "allow") {
+        const inputPreview = formatInputPreview(toolName, input);
+        const allowed = await context.requestPermission(toolName, inputPreview);
+        if (!allowed) {
+          return { result: "Permission denied by user", isError: true };
+        }
+      }
+    }
+
+    // Tool-specific permission check
+    if (tool.checkPermissions) {
+      const permError = tool.checkPermissions(input, context);
+      if (permError) {
+        return { result: `Permission denied: ${permError}`, isError: true };
       }
     }
 

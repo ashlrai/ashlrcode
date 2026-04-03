@@ -49,6 +49,20 @@ export const bashTool: Tool = {
     return null;
   },
 
+  checkPermissions(input: Record<string, unknown>): string | null {
+    const cmd = input.command as string;
+    if (!cmd) return null;
+    const dangerous = [
+      /\brm\s+-rf\s+[\/~]/,
+      /\bdd\s+.*of=\/dev/,
+      /\bmkfs\b/,
+    ];
+    for (const pattern of dangerous) {
+      if (pattern.test(cmd)) return `Dangerous command pattern: ${pattern.source}`;
+    }
+    return null;
+  },
+
   async call(input, context) {
     const command = input.command as string;
     const timeout = (input.timeout as number) ?? DEFAULT_TIMEOUT;

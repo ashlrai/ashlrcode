@@ -33,6 +33,9 @@ export interface Tool {
   /** Validate input before execution */
   validateInput(input: Record<string, unknown>): string | null;
 
+  /** Tool-specific permission check. Return null if allowed, or error string if denied. */
+  checkPermissions?(input: Record<string, unknown>, context: ToolContext): string | null;
+
   /** Execute the tool and return result text */
   call(input: Record<string, unknown>, context: ToolContext): Promise<string>;
 }
