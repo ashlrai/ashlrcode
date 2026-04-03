@@ -2,7 +2,14 @@
 
 All notable changes to AshlrCode are documented here.
 
-## [2.0.0] - 2026-04-01
+## [1.0.1] - 2026-04-03
+
+### Fixed
+- Excluded test files from npm tarball (133 → 107 files)
+- Added `bun install -g` instructions to README
+- Created v1.0.0 git tag and GitHub Release
+
+## [1.0.0] - 2026-04-01
 
 ### Added
 - **Ink UI**: Full React-based terminal rendering via Ink (replaces readline). Input box with borders, context bar, visual status

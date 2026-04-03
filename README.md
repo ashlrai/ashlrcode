@@ -2,7 +2,7 @@
 
 **Multi-provider AI coding agent for the terminal.**
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue)]()
+[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
 [![Tests](https://img.shields.io/badge/tests-335%20passing-green)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
