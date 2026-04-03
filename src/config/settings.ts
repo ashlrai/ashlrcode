@@ -39,6 +39,7 @@ export interface Settings {
   };
   mcpServers?: Record<string, MCPServerConfig>;
   permissionRules?: Array<{ tool: string; inputPattern?: string; action: "allow" | "deny" | "ask" }>;
+  remoteSettingsUrl?: string;
 }
 
 let configDirOverride: string | null = null;

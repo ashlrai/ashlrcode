@@ -19,6 +19,7 @@ import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
+import { getRemoteSettings, stopPolling as stopRemotePolling } from "./config/remote-settings.ts";
 import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.ts";
 import chalk from "chalk";
 import type { ProviderRouter } from "./providers/router.ts";
@@ -30,7 +31,7 @@ import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
 import { shutdownLSP } from "./tools/lsp.ts";
 import { checkPermission, hasPendingPermission, answerPendingPermission, requestPermissionInk } from "./config/permissions.ts";
-import { listFeatures } from "./config/features.ts";
+import { feature, listFeatures } from "./config/features.ts";
 import { hasPendingQuestion, answerPendingQuestion } from "./tools/ask-user.ts";
 import { generateBuddyComment, shouldUseAI, type BuddyCommentType } from "./ui/buddy-ai.ts";
 import { scanCodebase } from "./autopilot/scanner.ts";
@@ -44,6 +45,8 @@ import { setSpeculationCache } from "./agent/tool-executor.ts";
 import { KairosLoop } from "./agent/kairos.ts";
 import { initTelemetry, logEvent, readRecentEvents, formatEvents } from "./telemetry/event-log.ts";
 import { createTrigger, listTriggers, deleteTrigger, toggleTrigger, TriggerRunner } from "./agent/cron.ts";
+import { startRecording, stopRecording, isRecording, transcribeRecording, checkVoiceAvailability, type VoiceConfig } from "./voice/voice-mode.ts";
+import { feature } from "./config/features.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -750,6 +753,22 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/remote": {
+        const rs = getRemoteSettings();
+        if (!rs) {
+          addOutput(theme.tertiary("\n  No remote settings configured.\n  Set AC_REMOTE_SETTINGS_URL env var or remoteSettingsUrl in settings.json.\n"));
+          return true;
+        }
+        addOutput(`\n  Remote Settings (fetched ${new Date(rs.fetchedAt).toLocaleString()}):`);
+        if (rs.features) addOutput(`  Features: ${JSON.stringify(rs.features)}`);
+        if (rs.modelOverride) addOutput(`  Model override: ${rs.modelOverride}`);
+        if (rs.effortOverride) addOutput(`  Effort override: ${rs.effortOverride}`);
+        if (rs.killswitches) addOutput(`  Killswitches: ${JSON.stringify(rs.killswitches)}`);
+        if (rs.message) addOutput(theme.warning(`  Message: ${rs.message}`));
+        addOutput("");
+        return true;
+      }
+
       case "/telemetry": {
         const events = await readRecentEvents(20);
         addOutput(`\n  Recent events (${events.length}):\n${formatEvents(events)}\n`);
@@ -1055,6 +1074,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   async function handleExit() {
     idleDetector.stop();
+    stopRemotePolling();
     stopBuddyAnimation();
     state.buddy.mood = "sleepy";
     // Generate final dream on exit

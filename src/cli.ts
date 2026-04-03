@@ -17,6 +17,7 @@ import { ProviderRouter } from "./providers/router.ts";
 import { ToolRegistry } from "./tools/registry.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { loadSettings } from "./config/settings.ts";
+import { initRemoteSettings, startPolling, loadCachedSettings, stopPolling } from "./config/remote-settings.ts";
 import { Session, listSessions, resumeSession, getLastSessionForCwd, forkSession } from "./persistence/session.ts";
 import {
   needsCompaction,
@@ -125,6 +126,14 @@ async function main() {
   // Wire up permission rules from settings
   if (settings.permissionRules) {
     setRules(settings.permissionRules);
+  }
+
+  // Initialize remote managed settings
+  const remoteUrl = process.env.AC_REMOTE_SETTINGS_URL ?? settings.remoteSettingsUrl;
+  if (remoteUrl) {
+    initRemoteSettings(remoteUrl, settings.providers.primary.apiKey);
+    await loadCachedSettings();
+    startPolling();
   }
 
   // Parse mode flags
@@ -366,6 +375,7 @@ async function main() {
     }
     mcpManager.disconnectAll().catch(() => {});
     shutdownLSP().catch(() => {});
+    stopPolling();
     process.exit(0);
   });
 
