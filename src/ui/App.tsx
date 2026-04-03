@@ -8,6 +8,7 @@
 import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
+import { renderBuddyWithBubble } from "./speech-bubble.ts";
 
 interface OutputItem {
   id: number;
@@ -144,35 +145,30 @@ export function App({
             </Box>
           )}
           <Text dimColor>{"-".repeat(lineWidth)}</Text>
-          {/* Status line */}
-          <Box justifyContent="space-between">
-            <Box>
-              <Text color={modeColor} bold>❯❯ </Text>
-              <Text color={modeColor}>{mode}</Text>
-              <Text dimColor> (shift+tab)</Text>
-            </Box>
-            <Box>
-              <Text color={ctxColor}>{"█".repeat(filled)}</Text>
-              <Text dimColor>{"░".repeat(empty)}</Text>
-              <Text> </Text>
-              <Text color={ctxColor}>{contextPercent}%</Text>
-              <Text dimColor> · {contextUsed}/{contextLimit}</Text>
-            </Box>
-          </Box>
         </Box>
 
-        {/* Right: Buddy — sits beside the input lines */}
-        <Box flexDirection="column" alignItems="center" width={buddyWidth} marginLeft={1}>
-          {buddyArt.map((artLine, i) => (
-            <Text key={i} color="cyan">{artLine}</Text>
+        {/* Right: Buddy with speech bubble */}
+        <Box flexDirection="column" marginLeft={1}>
+          {renderBuddyWithBubble(buddyQuip, buddyArt, buddyName).map((line, i) => (
+            <Text key={i} color="cyan" dimColor>{line}</Text>
           ))}
-          <Text color="cyan" bold>{buddyName}</Text>
         </Box>
       </Box>
 
-      {/* Buddy speech bubble — left of buddy, right-aligned */}
-      <Box justifyContent="flex-end" marginRight={buddyWidth + 1}>
-        <Text dimColor italic>"{buddyQuip}"</Text>
+      {/* Status line — separate, below input+buddy */}
+      <Box justifyContent="space-between">
+        <Box>
+          <Text color={modeColor} bold>❯❯ </Text>
+          <Text color={modeColor}>{mode}</Text>
+          <Text dimColor> (shift+tab)</Text>
+        </Box>
+        <Box>
+          <Text color={ctxColor}>{"█".repeat(filled)}</Text>
+          <Text dimColor>{"░".repeat(empty)}</Text>
+          <Text> </Text>
+          <Text color={ctxColor}>{contextPercent}%</Text>
+          <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+        </Box>
       </Box>
     </Box>
   );
