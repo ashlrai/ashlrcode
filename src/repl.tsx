@@ -27,7 +27,7 @@ import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
 import { shutdownLSP } from "./tools/lsp.ts";
-import { setBypassMode } from "./config/permissions.ts";
+import { checkPermission, hasPendingPermission, answerPendingPermission, requestPermissionInk } from "./config/permissions.ts";
 import { listFeatures } from "./config/features.ts";
 import { hasPendingQuestion, answerPendingQuestion } from "./tools/ask-user.ts";
 import { generateBuddyComment, shouldUseAI, type BuddyCommentType } from "./ui/buddy-ai.ts";
@@ -39,6 +39,8 @@ import { FileHistoryStore, setFileHistory, getFileHistory } from "./state/file-h
 import { loadKeybindings, getBindings, InputHistory } from "./ui/keybindings.ts";
 import { SpeculationCache } from "./agent/speculation.ts";
 import { setSpeculationCache } from "./agent/tool-executor.ts";
+import { KairosLoop } from "./agent/kairos.ts";
+import { initTelemetry, logEvent, readRecentEvents, formatEvents } from "./telemetry/event-log.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -101,8 +103,23 @@ interface ReplState {
 }
 
 export function startInkRepl(state: ReplState, maxCostUSD: number): void {
-  // Ink owns stdin in raw mode — readline prompts would deadlock.
-  setBypassMode(true);
+  // We need addOutput before overriding requestPermission, but addOutput is
+  // defined later. Use a deferred wrapper that gets patched after addOutput exists.
+  let _addOutput: (text: string) => void = () => {};
+
+  // Override requestPermission to use Ink-native prompts instead of readline.
+  // This replaces the old setBypassMode(true) which disabled ALL permission checks.
+  state.toolContext.requestPermission = async (toolName: string, description: string) => {
+    const perm = checkPermission(toolName);
+    if (perm === "allow") return true;
+    if (perm === "deny") return false;
+    // Show permission prompt inline in the output stream
+    _addOutput(`\n  ⚡ ${theme.warning("Permission:")} ${theme.primary(toolName)}`);
+    _addOutput(theme.tertiary(`    ${description}`));
+    _addOutput(theme.tertiary(`    [y] allow  [a] always  [n] deny  [d] always deny\n`));
+    return requestPermissionInk(toolName, description);
+  };
+
   startBuddyAnimation();
 
   // Autopilot work queue
@@ -117,6 +134,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Speculation cache — pre-fetches likely read-only tool results
   const speculationCache = new SpeculationCache(100, 30_000);
   setSpeculationCache(speculationCache);
+
+  // KAIROS autonomous mode — lazy-initialized when /kairos is used
+  let kairos: KairosLoop | null = null;
 
   // Keybindings & input history
   loadKeybindings().catch(() => {});
@@ -159,6 +179,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     items = [...items.slice(-MAX_ITEMS), { id: nextId++, text }];
     update();
   }
+  // Patch the deferred wrapper so permission prompts can use addOutput
+  _addOutput = addOutput;
+
+  // (addOutput re-opened below for the closing brace — this is intentional)
+  }
 
   function getDisplayProps() {
     const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
@@ -189,6 +214,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/model", "/compact", "/diff", "/git", "/clear", "/quit",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
+        "/kairos", "/kairos stop",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
     };
@@ -286,7 +312,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /kairos /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -705,6 +731,38 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           addOutput(theme.tertiary(`  ... and ${snaps.length - 20} more\n`));
         }
         addOutput(theme.tertiary(`\n  ${fhHist.undoCount} undo(s) available. Use /undo to restore.\n`));
+        return true;
+      }
+
+      case "/kairos": {
+        if (!arg || arg === "stop") {
+          if (kairos?.isRunning()) {
+            await kairos.stop();
+            kairos = null;
+          } else {
+            addOutput(theme.tertiary("\n  KAIROS not running\n"));
+          }
+          return true;
+        }
+        if (kairos?.isRunning()) {
+          addOutput(theme.warning("\n  KAIROS already running. /kairos stop first.\n"));
+          return true;
+        }
+        kairos = new KairosLoop({
+          router: state.router,
+          toolRegistry: state.registry,
+          toolContext: state.toolContext,
+          systemPrompt: state.baseSystemPrompt,
+          heartbeatIntervalMs: 30_000,
+          maxAutonomousIterations: 5,
+          onOutput: (text) => { addOutput(text); },
+          onToolStart: (name) => { addOutput(`  * ${name}`); update(); },
+          onToolEnd: (_name, result, isError) => {
+            addOutput(isError ? `  x ${result.slice(0, 80)}` : `  > ${result.split("\n")[0]?.slice(0, 80)}`);
+            update();
+          },
+        });
+        await kairos.start(arg);
         return true;
       }
 
