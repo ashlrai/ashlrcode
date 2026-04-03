@@ -55,6 +55,7 @@ import {
   setBypassMode,
   setAutoAcceptEdits,
   isBypassMode,
+  setRules,
 } from "./config/permissions.ts";
 import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
@@ -84,6 +85,7 @@ import { initTasks } from "./tools/tasks.ts";
 import { loadSkills } from "./skills/loader.ts";
 import { SkillRegistry } from "./skills/registry.ts";
 import { categorizeError } from "./agent/error-handler.ts";
+import { buildSystemPrompt } from "./agent/system-prompt.ts";
 import { runSetupWizard, needsSetup } from "./setup.ts";
 import { loadProjectConfig } from "./config/project-config.ts";
 import { startInkRepl } from "./repl.tsx";
@@ -117,6 +119,11 @@ async function main() {
   // Load settings and permissions
   let settings = await loadSettings();
   await loadPermissions();
+
+  // Wire up permission rules from settings
+  if (settings.permissionRules) {
+    setRules(settings.permissionRules);
+  }
 
   // Parse mode flags
   const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions") || args.includes("--yolo");
@@ -195,24 +202,42 @@ async function main() {
     }).catch(() => {});
   }
 
-  // Load system prompt + project memories + git context
-  let baseSystemPrompt = await loadSystemPrompt();
+  // Load system prompt via builder (knowledge files, memory, git context)
+  const rawSystemPrompt = await loadSystemPrompt();
+  const cwd = process.cwd();
 
-  const memories = await loadMemories(process.cwd());
+  // Build prompt using SystemPromptBuilder — but skip addToolDescriptions()
+  // because tools are already sent via the API's `tools` parameter.
+  const { SystemPromptBuilder } = await import("./agent/system-prompt.ts");
+  const promptBuilder = new SystemPromptBuilder();
+  promptBuilder.addCoreInstructions(rawSystemPrompt);
+  promptBuilder.addPermissionContext(getCurrentMode());
+
+  if (isPlanMode()) {
+    promptBuilder.addPlanMode();
+  }
+
+  await promptBuilder.addKnowledgeFiles(cwd);
+  await promptBuilder.addMemoryFiles();
+
+  // Append legacy memories (from persistence/memory.ts) for backward compat
+  const memories = await loadMemories(cwd);
   if (memories.length > 0) {
-    baseSystemPrompt += formatMemoriesForPrompt(memories);
+    promptBuilder.addSection("legacy-memories", formatMemoriesForPrompt(memories), 45);
   }
 
-  const gitCtx = await getGitContext(process.cwd());
+  const gitCtx = await getGitContext(cwd);
   if (gitCtx.isRepo) {
-    baseSystemPrompt += "\n\n" + formatGitPrompt(gitCtx);
+    promptBuilder.addSection("git-context", formatGitPrompt(gitCtx), 50);
   }
+
+  const assembled = promptBuilder.build(8000);
+  let baseSystemPrompt = assembled.text;
 
   // Initialize agent tool with router/registry references
   initAgentTool(router, registry, baseSystemPrompt);
 
   // Tool context
-  const cwd = process.cwd();
   const toolContext: ToolContext = {
     cwd,
     requestPermission: async (tool, description) => {

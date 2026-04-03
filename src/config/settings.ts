@@ -16,6 +16,7 @@ export interface Settings {
   maxTokens?: number;
   hooks?: HooksConfig;
   mcpServers?: Record<string, MCPServerConfig>;
+  permissionRules?: Array<{ tool: string; inputPattern?: string; action: "allow" | "deny" | "ask" }>;
 }
 
 let configDirOverride: string | null = null;
