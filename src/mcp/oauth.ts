@@ -58,7 +58,7 @@ async function saveToken(serverId: string, token: TokenSet): Promise<void> {
   await writeFile(
     getTokenCachePath(serverId),
     JSON.stringify(token, null, 2),
-    "utf-8"
+    { encoding: "utf-8", mode: 0o600 }
   );
 }
 
@@ -190,6 +190,9 @@ export async function authorizeOAuth(
       if (returnedState !== state || !returnedCode) {
         res.writeHead(400);
         res.end("Invalid state or missing code");
+        clearTimeout(timeout);
+        server.close();
+        reject(new Error("Invalid OAuth state or missing code"));
         return;
       }
 

@@ -4,7 +4,7 @@
  * No external transmission — purely local diagnostics.
  */
 
-import { appendFile, mkdir, readFile, stat, rename } from "fs/promises";
+import { appendFile, mkdir, readFile, stat, rename, unlink } from "fs/promises";
 import { existsSync } from "fs";
 import { join } from "path";
 import { getConfigDir } from "../config/settings.ts";
@@ -71,6 +71,9 @@ export async function logEvent(type: EventType, data?: Record<string, unknown>):
 
 async function rotateLog(path: string): Promise<void> {
   const dir = getTelemetryDir();
+  // Delete the oldest file before shifting to prevent unbounded growth
+  const oldestPath = join(dir, `events.${MAX_FILES}.jsonl`);
+  if (existsSync(oldestPath)) await unlink(oldestPath).catch(() => {});
   // Shift existing rotated files
   for (let i = MAX_FILES - 1; i >= 1; i--) {
     const from = join(dir, `events.${i}.jsonl`);

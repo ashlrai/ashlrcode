@@ -9,11 +9,11 @@ import React from "react";
 import { render } from "ink";
 import { App } from "./ui/App.tsx";
 import { runAgentLoop } from "./agent/loop.ts";
-import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
+import { getCurrentMode, cycleMode } from "./ui/mode.ts";
 import { getEffort, setEffort, cycleEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
 import { runWithAgentContext, type AgentContext } from "./agent/async-context.ts";
-import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
+import { resetMarkdown } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
@@ -150,6 +150,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Uses deferred callback since runTurnInk is defined later
   let _triggerCallback: ((prompt: string) => Promise<void>) | null = null;
   const triggerRunner = new TriggerRunner(async (trigger) => {
+    if (isProcessing) return; // Don't fire during active turn
     addOutput(theme.accent(`\n  ⏰ Trigger: ${trigger.name} (${trigger.schedule})\n`));
     if (_triggerCallback) await _triggerCallback(trigger.prompt);
   });
@@ -995,6 +996,73 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/compact": {
+        addOutput(theme.tertiary("  [compacting context...]"));
+        state.history = contextCollapse(state.history);
+        state.history = snipCompact(state.history);
+        state.history = await autoCompact(state.history, state.router);
+        const summary = state.history.slice(-5).map(m => {
+          const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+          return `${m.role}: ${c.slice(0, 150)}`;
+        }).join("\n");
+        await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
+        addOutput(theme.success(`\n  ✓ Compacted to ${state.history.length} messages\n`));
+        return true;
+      }
+      case "/status": {
+        const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
+        const ctxUsed = estimateTokens(state.history);
+        addOutput(`\n  Provider: ${state.router.currentProvider.name}:${state.router.currentProvider.config.model}`);
+        addOutput(`  Context: ${ctxUsed}/${ctxLimit} tokens (${Math.round(ctxUsed/ctxLimit*100)}%)`);
+        addOutput(`  Session: ${state.session.id}`);
+        addOutput(`  History: ${state.history.length} messages\n`);
+        return true;
+      }
+      case "/sessions": {
+        const { listSessions } = await import("./persistence/session.ts");
+        const sessions = await listSessions(10);
+        if (sessions.length === 0) { addOutput(theme.tertiary("\n  No sessions found.\n")); return true; }
+        for (const s of sessions) {
+          addOutput(`  ${s.id} — ${s.title ?? "(untitled)"} — ${new Date(s.updatedAt).toLocaleDateString()} — ${s.messageCount} msgs`);
+        }
+        addOutput("");
+        return true;
+      }
+      case "/memory": {
+        const { loadMemories } = await import("./persistence/memory.ts");
+        const memories = await loadMemories(state.toolContext.cwd);
+        if (memories.length === 0) { addOutput(theme.tertiary("\n  No memory files.\n")); return true; }
+        for (const m of memories) { addOutput(`  [${m.type}] ${m.name} — ${m.description ?? m.filePath}`); }
+        addOutput("");
+        return true;
+      }
+      case "/diff": {
+        const proc = Bun.spawn(["git", "diff", "--stat"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+        const output = (await new Response(proc.stdout).text()).trim();
+        await proc.exited;
+        addOutput(output ? `\n${output}\n` : theme.tertiary("\n  No changes.\n"));
+        return true;
+      }
+      case "/git": {
+        const proc = Bun.spawn(["git", "log", "--oneline", "-10"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+        const output = (await new Response(proc.stdout).text()).trim();
+        await proc.exited;
+        addOutput(output ? `\n${output}\n` : theme.tertiary("\n  Not a git repo.\n"));
+        return true;
+      }
+      case "/plan": {
+        const { cycleMode: cm } = await import("./ui/mode.ts");
+        cm();
+        update();
+        return true;
+      }
+      case "/restore": {
+        const fh = getFileHistory();
+        if (!fh || fh.undoCount === 0) { addOutput(theme.tertiary("\n  Nothing to restore.\n")); return true; }
+        addOutput(`\n  ${fh.undoCount} snapshots available. Use /undo to restore.\n`);
+        return true;
+      }
+
       default:
         if (cmd?.startsWith("/")) {
           addOutput(theme.tertiary(`\n  Unknown command: ${cmd}\n`));
@@ -1191,6 +1259,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     triggerRunner.stop();
     stopRemotePolling();
     stopBuddyAnimation();
+    if (kairos?.isRunning()) await kairos.stop().catch(() => {});
+    const { stopRecording: stopRec, isRecording: isRec } = await import("./voice/voice-mode.ts");
+    if (isRec()) await stopRec().catch(() => {});
     state.buddy.mood = "sleepy";
     // Generate final dream on exit
     if (state.history.length > 4) {

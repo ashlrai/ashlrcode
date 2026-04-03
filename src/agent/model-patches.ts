@@ -13,37 +13,37 @@ export interface ModelPatch {
 
 const PATCHES: ModelPatch[] = [
   {
-    pattern: "grok",
+    pattern: "^grok(?!-4-1-fast)",
     name: "Grok verbosity control",
     promptSuffix: "\n\nIMPORTANT: Be concise. Avoid unnecessary preamble. Lead with the answer or action, not reasoning. If you can say it in one sentence, don't use three.",
   },
   {
-    pattern: "grok-4-1-fast",
+    pattern: "^grok-4-1-fast",
     name: "Grok fast mode",
     promptSuffix: "\n\nYou are running in fast mode. Prioritize speed. Use fewer tool calls. Give direct answers.",
   },
   {
-    pattern: "claude.*sonnet",
+    pattern: "^claude.*sonnet",
     name: "Sonnet conciseness",
     promptSuffix: "\n\nBe extremely concise. Skip filler words and preamble. No trailing summaries.",
   },
   {
-    pattern: "claude.*opus",
+    pattern: "^claude.*opus",
     name: "Opus thoroughness",
     promptSuffix: "\n\nBe thorough and precise. Verify your work. Check edge cases.",
   },
   {
-    pattern: "o1|o1-mini",
+    pattern: "^o1(-mini)?$",
     name: "OpenAI reasoning",
     promptSuffix: "\n\nYou have reasoning capabilities. Use them for complex problems. Think step by step when the problem requires it.",
   },
   {
-    pattern: "deepseek",
+    pattern: "^deepseek",
     name: "DeepSeek format control",
     promptSuffix: "\n\nAvoid over-commenting code. Keep code changes minimal and focused. Don't add docstrings unless asked.",
   },
   {
-    pattern: "llama|local",
+    pattern: "^(llama|local)",
     name: "Local model constraints",
     promptSuffix: "\n\nKeep tool calls simple. Avoid deeply nested or complex operations. You have limited context — be efficient with tokens.",
   },

@@ -28,8 +28,10 @@ export async function sendNotification(title: string, body: string): Promise<voi
       const proc = Bun.spawn(["notify-send", title, body], { stdout: "pipe", stderr: "pipe" });
       await proc.exited;
     } else if (platform === "win32") {
-      // Windows: PowerShell toast
-      const script = `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(0); $text = $xml.GetElementsByTagName('text'); $text[0].AppendChild($xml.CreateTextNode('${title}')); $text[1].AppendChild($xml.CreateTextNode('${body}')); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AshlrCode').Show([Windows.UI.Notifications.ToastNotification]::new($xml))`;
+      // Windows: PowerShell toast — escape single quotes to prevent injection
+      const safeTitle = title.replace(/'/g, "''");
+      const safeBody = body.replace(/'/g, "''");
+      const script = `[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; $xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent(0); $text = $xml.GetElementsByTagName('text'); $text[0].AppendChild($xml.CreateTextNode('${safeTitle}')); $text[1].AppendChild($xml.CreateTextNode('${safeBody}')); [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('AshlrCode').Show([Windows.UI.Notifications.ToastNotification]::new($xml))`;
       const proc = Bun.spawn(["powershell", "-Command", script], { stdout: "pipe", stderr: "pipe" });
       await proc.exited;
     }

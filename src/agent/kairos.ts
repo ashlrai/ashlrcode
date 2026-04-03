@@ -34,13 +34,13 @@ export type AutonomyLevel = "collaborative" | "autonomous" | "full-auto";
 
 /* ── Focus detection ────────────────────────────────────────────── */
 
-let _focusState: "focused" | "unfocused" | "unknown" = "unknown";
+export type FocusState = "focused" | "unfocused" | "unknown";
 
 /**
  * Detect whether a terminal application is the frontmost window.
  * macOS: uses osascript.  Linux: uses xdotool.  Otherwise: unknown.
  */
-export async function detectTerminalFocus(): Promise<"focused" | "unfocused" | "unknown"> {
+export async function detectTerminalFocus(): Promise<FocusState> {
   try {
     const platform = process.platform;
 
@@ -75,8 +75,8 @@ export async function detectTerminalFocus(): Promise<"focused" | "unfocused" | "
 
 /* ── Autonomy helpers ───────────────────────────────────────────── */
 
-function getAutonomyLevel(): AutonomyLevel {
-  switch (_focusState) {
+function getAutonomyLevel(focusState: FocusState): AutonomyLevel {
+  switch (focusState) {
     case "unfocused": return "full-auto";
     case "focused":   return "collaborative";
     default:          return "autonomous";
@@ -103,6 +103,7 @@ export class KairosLoop {
   private history: Message[] = [];
   private config: KairosConfig;
   private tickCount = 0;
+  private _focusState: FocusState = "unknown";
 
   constructor(config: KairosConfig) {
     this.config = config;
@@ -120,7 +121,7 @@ export class KairosLoop {
 
     // Poll terminal focus every 10 s
     this.focusTimer = setInterval(async () => {
-      _focusState = await detectTerminalFocus();
+      this._focusState = await detectTerminalFocus();
     }, 10_000);
 
     // Initial goal execution
@@ -155,9 +156,9 @@ export class KairosLoop {
     if (!this.running) return;
     this.tickCount++;
 
-    const level = getAutonomyLevel();
+    const level = getAutonomyLevel(this._focusState);
     const tick = [
-      `<tick count="${this.tickCount}" focus="${_focusState}" autonomy="${level}" time="${new Date().toISOString()}">`,
+      `<tick count="${this.tickCount}" focus="${this._focusState}" autonomy="${level}" time="${new Date().toISOString()}">`,
       "Continue your current work. Check task list for pending items.",
       "If nothing is pending, check if there are improvements to make or tests to run.",
     ].join("\n");
@@ -167,7 +168,7 @@ export class KairosLoop {
   }
 
   private async executeTick(prompt: string): Promise<void> {
-    const level = getAutonomyLevel();
+    const level = getAutonomyLevel(this._focusState);
     const autonomyPrompt = getAutonomyPrompt(level);
 
     try {
@@ -183,6 +184,12 @@ export class KairosLoop {
       });
 
       this.history = result.messages;
+
+      // Cap history to prevent unbounded growth
+      const MAX_HISTORY = 100;
+      if (this.history.length > MAX_HISTORY) {
+        this.history = this.history.slice(-MAX_HISTORY);
+      }
 
       // Auto-stop if the model signals completion
       if (

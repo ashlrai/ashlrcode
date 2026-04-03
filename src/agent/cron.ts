@@ -161,8 +161,13 @@ export class TriggerRunner {
         const triggers = await listTriggers();
         const due = getDueTriggers(triggers);
         for (const trigger of due) {
-          await markRun(trigger.id);
-          await this.onExecute(trigger).catch(() => {});
+          try {
+            await this.onExecute(trigger);
+            await markRun(trigger.id);
+          } catch (err) {
+            // Don't mark as run if execution failed
+            console.error(`Trigger ${trigger.id} failed:`, err);
+          }
         }
       } catch {
         // Silently continue on errors — triggers are best-effort
