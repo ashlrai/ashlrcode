@@ -45,7 +45,7 @@ import { askUserTool } from "./tools/ask-user.ts";
 import { webFetchTool } from "./tools/web-fetch.ts";
 import { enterPlanTool, exitPlanTool, planWriteTool } from "./planning/plan-tools.ts";
 import { agentTool, initAgentTool } from "./tools/agent.ts";
-import { taskCreateTool, taskUpdateTool, taskListTool } from "./tools/tasks.ts";
+import { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool } from "./tools/tasks.ts";
 import { loadMemories, formatMemoriesForPrompt } from "./persistence/memory.ts";
 import {
   loadPermissions,
@@ -156,6 +156,7 @@ async function main() {
   registry.register(taskCreateTool);
   registry.register(taskUpdateTool);
   registry.register(taskListTool);
+  registry.register(taskGetTool);
   registry.register(lsTool);
   registry.register(configTool);
   registry.register(enterWorktreeTool);
