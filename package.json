@@ -1,7 +1,7 @@
 {
   "name": "ashlrcode",
-  "version": "2.0.0",
-  "description": "Multi-provider AI coding agent CLI",
+  "version": "1.0.0",
+  "description": "Multi-provider AI coding agent CLI — 42 tools, 34 commands, autonomous mode",
   "module": "src/cli.ts",
   "type": "module",
   "private": false,
@@ -10,16 +10,18 @@
     "type": "git",
     "url": "https://github.com/ashlrai/ashlrcode"
   },
-  "keywords": ["ai", "coding", "agent", "cli", "grok", "claude", "mcp", "ollama", "autopilot"],
-  "files": ["src", "prompts", "scripts", "CLAUDE.md", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", "docs"],
+  "keywords": ["ai", "coding", "agent", "cli", "xai", "grok", "claude", "multi-provider", "autonomous"],
+  "files": ["src/", "README.md", "LICENSE"],
   "bin": {
     "ashlrcode": "./src/cli.ts",
     "ac": "./src/cli.ts"
   },
   "scripts": {
-    "start": "bun run src/cli.ts",
-    "dev": "bun --watch run src/cli.ts",
-    "test": "bun test"
+    "dev": "bun run src/cli.ts",
+    "test": "bun test",
+    "build": "bun build src/cli.ts --compile --outfile dist/ac",
+    "build:all": "bun build src/cli.ts --compile --outfile dist/ac-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/bun": "latest",
@@ -35,6 +37,10 @@
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",
     "openai": "^6.33.0",
-    "react": "^19.2.4"
+    "react": "^19.2.4",
+    "react-devtools-core": "^7.0.1"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^24.0.0"
   }
 }
