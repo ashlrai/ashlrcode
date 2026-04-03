@@ -34,6 +34,7 @@ import { scanCodebase } from "./autopilot/scanner.ts";
 import { WorkQueue } from "./autopilot/queue.ts";
 import { DEFAULT_CONFIG } from "./autopilot/types.ts";
 import { generateDream, loadRecentDreams, formatDreamsForPrompt, IdleDetector } from "./agent/dream.ts";
+import { FileHistoryStore, setFileHistory, getFileHistory } from "./state/file-history.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -103,6 +104,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Autopilot work queue
   const workQueue = new WorkQueue(state.toolContext.cwd);
   workQueue.load().catch(() => {});
+
+  // File history for undo support
+  const fileHistoryStore = new FileHistoryStore(state.session.id);
+  setFileHistory(fileHistoryStore);
+  fileHistoryStore.loadFromDisk().catch(() => {});
 
   // Load dreams from previous sessions into system prompt
   loadRecentDreams(3).then(dreams => {
@@ -645,6 +651,40 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/undo": {
+        const fh = getFileHistory();
+        if (!fh || fh.undoCount === 0) {
+          addOutput(theme.tertiary("\n  Nothing to undo.\n"));
+          return true;
+        }
+        const result = await fh.undoLast();
+        if (result) {
+          addOutput(theme.success(`\n  Restored: ${result.filePath}\n`));
+          addOutput(theme.tertiary(`  ${fh.undoCount} more undo(s) available\n`));
+        }
+        return true;
+      }
+
+      case "/history": {
+        const fhHist = getFileHistory();
+        if (!fhHist || fhHist.undoCount === 0) {
+          addOutput(theme.tertiary("\n  No file history.\n"));
+          return true;
+        }
+        const snaps = fhHist.getHistory();
+        addOutput(theme.secondary("\n  File History (newest first):\n"));
+        for (const snap of snaps.slice(0, 20)) {
+          const time = new Date(snap.timestamp).toLocaleTimeString();
+          const label = snap.content === "" ? "(new file)" : "(modified)";
+          addOutput(`  ${theme.tertiary(time)} ${snap.tool.padEnd(6)} ${label} ${snap.filePath}\n`);
+        }
+        if (snaps.length > 20) {
+          addOutput(theme.tertiary(`  ... and ${snaps.length - 20} more\n`));
+        }
+        addOutput(theme.tertiary(`\n  ${fhHist.undoCount} undo(s) available. Use /undo to restore.\n`));
+        return true;
+      }
+
       default:
         if (cmd?.startsWith("/")) {
           addOutput(theme.tertiary(`\n  Unknown command: ${cmd}\n`));
@@ -685,6 +725,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       resetMarkdown();
       const preTurnMessageCount = state.history.length;
+
+      // Update turn number on context so file snapshots track which turn modified them
+      state.toolContext.turnNumber = turnCount;
 
       let responseText = "";
 

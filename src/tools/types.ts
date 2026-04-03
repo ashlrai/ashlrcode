@@ -9,6 +9,8 @@ export interface ToolContext {
   cwd: string;
   /** Ask user for permission to run a tool */
   requestPermission: (tool: string, description: string) => Promise<boolean>;
+  /** Current turn number (for file history tracking) */
+  turnNumber?: number;
 }
 
 export interface Tool {

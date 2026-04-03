@@ -6,7 +6,7 @@ import { writeFile, mkdir } from "fs/promises";
 import { existsSync } from "fs";
 import { dirname, resolve } from "path";
 import type { Tool, ToolContext } from "./types.ts";
-import { fileHistory } from "../state/file-history.ts";
+import { getFileHistory } from "../state/file-history.ts";
 
 export const fileWriteTool: Tool = {
   name: "Write",
@@ -67,9 +67,10 @@ export const fileWriteTool: Tool = {
     const filePath = resolve(context.cwd, input.file_path as string);
     const content = input.content as string;
 
-    // Snapshot existing file before overwriting
-    if (existsSync(filePath)) {
-      await fileHistory.snapshot(filePath);
+    // Snapshot before overwriting (captures new files too for undo-as-delete)
+    const history = getFileHistory();
+    if (history) {
+      await history.capture(filePath, "Write", context.turnNumber ?? 0);
     }
 
     await mkdir(dirname(filePath), { recursive: true });
