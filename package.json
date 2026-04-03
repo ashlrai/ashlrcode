@@ -24,6 +24,7 @@
   "files": [
     "src/",
     "!src/__tests__/",
+    "prompts/",
     "README.md",
     "LICENSE"
   ],
