@@ -78,6 +78,7 @@ import { sendMessageTool } from "./tools/send-message.ts";
 import { sleepTool } from "./tools/sleep.ts";
 import { todoWriteTool } from "./tools/todo-write.ts";
 import { diffTool } from "./tools/diff.ts";
+import { lspTool, shutdownLSP } from "./tools/lsp.ts";
 import { teamCreateTool, teamDeleteTool, teamListTool, teamDispatchTool, initTeamTools } from "./tools/team.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
@@ -179,6 +180,7 @@ async function main() {
   registry.register(sleepTool);
   registry.register(todoWriteTool);
   registry.register(diffTool);
+  registry.register(lspTool);
   registry.register(teamCreateTool);
   registry.register(teamDeleteTool);
   registry.register(teamListTool);
@@ -359,6 +361,7 @@ async function main() {
       console.log(chalk.dim(`\n${router.getCostSummary()}`));
     }
     mcpManager.disconnectAll().catch(() => {});
+    shutdownLSP().catch(() => {});
     process.exit(0);
   });
 
