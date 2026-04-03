@@ -18,20 +18,30 @@ AshlrCode is an open-source AI coding agent CLI built as an alternative to Claud
 
 ---
 
-## Quick Start
+## Install
 
 ```bash
-git clone https://github.com/ashlrai/ashlrcode.git
-cd ashlrcode
-bun install
-bun link                    # makes 'ac' available globally
+bun install -g ashlrcode
+```
 
+Requires [Bun](https://bun.sh) runtime.
+
+```bash
 export XAI_API_KEY="your-key"
 
 ac                          # interactive REPL
 ac "fix the login bug"      # single-shot mode
 ac --continue               # resume last session
 ac --resume <id>            # resume specific session
+```
+
+### From source
+
+```bash
+git clone https://github.com/ashlrai/ashlrcode.git
+cd ashlrcode
+bun install
+bun link                    # makes 'ac' available globally
 ```
 
 ---

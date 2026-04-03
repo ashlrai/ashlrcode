@@ -1,6 +1,6 @@
 {
   "name": "ashlrcode",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Multi-provider AI coding agent CLI — 42 tools, 34 commands, autonomous mode",
   "module": "src/cli.ts",
   "type": "module",
@@ -8,13 +8,28 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ashlrai/ashlrcode"
+    "url": "git+https://github.com/ashlrai/ashlrcode.git"
   },
-  "keywords": ["ai", "coding", "agent", "cli", "xai", "grok", "claude", "multi-provider", "autonomous"],
-  "files": ["src/", "README.md", "LICENSE"],
+  "keywords": [
+    "ai",
+    "coding",
+    "agent",
+    "cli",
+    "xai",
+    "grok",
+    "claude",
+    "multi-provider",
+    "autonomous"
+  ],
+  "files": [
+    "src/",
+    "!src/__tests__/",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
-    "ashlrcode": "./src/cli.ts",
-    "ac": "./src/cli.ts"
+    "ashlrcode": "src/cli.ts",
+    "ac": "src/cli.ts"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
