@@ -8,7 +8,7 @@
 import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
-// speech-bubble.ts available but not used in live area (causes duplication)
+import { BuddyPanel } from "./BuddyPanel.tsx";
 
 interface OutputItem { id: number; text: string; }
 
@@ -112,9 +112,10 @@ export function App({
       )}
       <Text dimColor>{"-".repeat(w)}</Text>
 
-      {/* Status + Buddy — single row to avoid multi-line flicker */}
-      <Box justifyContent="space-between">
-        <Box>
+      {/* Bottom area: input status on left, buddy panel on right */}
+      <Box>
+        {/* Left: status line */}
+        <Box flexGrow={1}>
           <Text color={modeColor} bold>❯❯ </Text>
           <Text color={modeColor}>{mode}</Text>
           <Text dimColor> (shift+tab)</Text>
@@ -125,22 +126,11 @@ export function App({
           <Text color={ctxColor}>{contextPercent}%</Text>
           <Text dimColor> · {contextUsed}/{contextLimit}</Text>
         </Box>
-        <Box>
-          {/* Buddy art as single text — prevents duplication */}
-          <Text color="cyan" dimColor>{buddyArt.join(" ")}</Text>
-          <Text> </Text>
-          <Text color="cyan" bold>{buddyName}</Text>
+
+        {/* Right: buddy panel — fixed width, fixed height */}
+        <Box width={20} flexShrink={0}>
+          <BuddyPanel art={buddyArt} name={buddyName} quip={buddyQuip} quipType={buddyQuipType} />
         </Box>
-      </Box>
-      {/* Buddy quip — separate line, right-aligned */}
-      <Box justifyContent="flex-end">
-        {buddyQuipType === "suggestion" ? (
-          <Text color="green">💡 {buddyQuip}</Text>
-        ) : buddyQuipType === "reaction" ? (
-          <Text color="yellow">{buddyQuip}</Text>
-        ) : (
-          <Text dimColor italic>{buddyName}: "{buddyQuip}"</Text>
-        )}
       </Box>
     </Box>
   );

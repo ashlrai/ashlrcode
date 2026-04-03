@@ -13,6 +13,7 @@ import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
+import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
 import { categorizeError } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
@@ -701,6 +702,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
       addOutput(theme.muted(`\n  ── turn ${tc} · $${state.router.costs.totalCostUSD.toFixed(4)} · ${state.buddy.name} ──\n`));
+
+      // Speech bubble — render buddy + bubble as Static output so it scrolls up with history
+      const bubbleLines = renderBuddyWithBubble(cachedQuip, getBuddyArt(state.buddy), state.buddy.name);
+      addOutput(theme.accentDim(bubbleLines.join("\n")));
 
       // AI-powered buddy comment (every 5th turn, fire-and-forget)
       if (shouldUseAI(turnCount, lastHadError)) {
