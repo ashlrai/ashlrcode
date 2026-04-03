@@ -1,6 +1,5 @@
-import { createRequire } from "module";
+// Use Bun's built-in JSON import so the version is embedded at compile time.
+// This works both in dev (bun run) and in compiled binaries (bun build --compile).
+import packageJson from "../package.json";
 
-const require = createRequire(import.meta.url);
-const packageJson = require("../package.json") as { version: string };
-
-export const VERSION = packageJson.version;
+export const VERSION: string = packageJson.version;
