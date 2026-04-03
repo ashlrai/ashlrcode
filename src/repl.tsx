@@ -10,6 +10,7 @@ import { render } from "ink";
 import { App } from "./ui/App.tsx";
 import { runAgentLoop } from "./agent/loop.ts";
 import { getCurrentMode, cycleMode, getPromptForMode } from "./ui/mode.ts";
+import { getEffort, setEffort, cycleEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
@@ -26,6 +27,8 @@ import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
 import { setBypassMode } from "./config/permissions.ts";
+import { listFeatures } from "./config/features.ts";
+import { hasPendingQuestion, answerPendingQuestion } from "./tools/ask-user.ts";
 import { generateBuddyComment, shouldUseAI, type BuddyCommentType } from "./ui/buddy-ai.ts";
 import { scanCodebase } from "./autopilot/scanner.ts";
 import { WorkQueue } from "./autopilot/queue.ts";
@@ -164,7 +167,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
         "/model", "/compact", "/diff", "/git", "/clear", "/quit",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
-        "/autopilot approve all", "/autopilot run",
+        "/autopilot approve all", "/autopilot run", "/features",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
     };
@@ -172,6 +175,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   async function handleSubmit(input: string) {
     idleDetector.ping();
+
+    // If the AskUser tool is waiting for an answer, route the input there
+    // instead of starting a new agent turn.
+    if (hasPendingQuestion()) {
+      answerPendingQuestion(input);
+      return;
+    }
 
     // Prevent concurrent turns
     if (isProcessing) return;
@@ -254,7 +264,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -293,6 +303,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           addOutput(`\n  ${state.router.currentProvider.name}:${state.router.currentProvider.config.model}\n`);
         }
         return true;
+      case "/effort": {
+        if (arg && ["low", "normal", "high"].includes(arg)) {
+          setEffort(arg as EffortLevel);
+          addOutput(theme.success(`\n  Effort: ${getEffortEmoji()} ${arg}\n`));
+        } else {
+          const next = cycleEffort();
+          addOutput(theme.success(`\n  Effort: ${getEffortEmoji()} ${next}\n`));
+        }
+        return true;
+      }
       case "/autopilot": {
         const subCmd = arg?.split(" ")[0];
 
@@ -610,6 +630,15 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         addOutput(theme.secondary("  /autopilot auto         — FULL AUTO: scan → fix → test → PR → merge"));
         addOutput(theme.tertiary("\n  Manual: scan → queue → approve → run"));
         addOutput(theme.tertiary("  Auto:   /autopilot auto (does everything)\n"));
+        return true;
+      }
+
+      case "/features": {
+        const flags = listFeatures();
+        const lines = Object.entries(flags).map(([k, v]) =>
+          `  ${v ? theme.success("✓") : theme.error("✗")} ${k}`
+        );
+        addOutput(`\n  Feature Flags:\n${lines.join("\n")}\n`);
         return true;
       }
 
