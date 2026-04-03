@@ -9,6 +9,14 @@ import { getConfigDir } from "./settings.ts";
 
 const CHECK_INTERVAL = 24 * 60 * 60 * 1000; // Once per day
 
+function isNewer(latest: string, current: string): boolean {
+  const [lMaj = 0, lMin = 0, lPat = 0] = latest.split(".").map(Number);
+  const [cMaj = 0, cMin = 0, cPat = 0] = current.split(".").map(Number);
+  if (lMaj !== cMaj) return lMaj > cMaj;
+  if (lMin !== cMin) return lMin > cMin;
+  return lPat > cPat;
+}
+
 interface UpgradeState {
   lastCheck: string;
   latestVersion?: string;
@@ -29,7 +37,7 @@ export async function checkForUpgrade(currentVersion: string): Promise<string | 
       const state = JSON.parse(raw) as UpgradeState;
       if (Date.now() - new Date(state.lastCheck).getTime() < CHECK_INTERVAL) {
         // Already checked recently — return cached result
-        if (state.latestVersion && state.latestVersion !== currentVersion) {
+        if (state.latestVersion && isNewer(state.latestVersion, currentVersion)) {
           return state.latestVersion;
         }
         return null;
@@ -57,7 +65,7 @@ export async function checkForUpgrade(currentVersion: string): Promise<string | 
     await mkdir(getConfigDir(), { recursive: true });
     await writeFile(getStatePath(), JSON.stringify(state), "utf-8");
 
-    if (data.version !== currentVersion) return data.version;
+    if (isNewer(data.version, currentVersion)) return data.version;
     return null;
   } catch {
     return null;

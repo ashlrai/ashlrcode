@@ -175,7 +175,7 @@ export function App({
         </Box>
 
         {/* Right: buddy panel — fixed width, fixed height */}
-        <Box width={20} flexShrink={0}>
+        <Box width={42} flexShrink={0}>
           <BuddyPanel art={buddyArt} name={buddyName} quip={buddyQuip} quipType={buddyQuipType} />
         </Box>
       </Box>
