@@ -149,8 +149,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     const mode = getCurrentMode();
     const modeColors: Record<string, string> = { normal: "green", plan: "magenta", "accept-edits": "yellow", yolo: "red" };
 
+    const effort = getEffort();
+    const effortDisplay = effort !== "normal" ? ` ${getEffortEmoji()} ${effort}` : "";
+
     return {
-      mode,
+      mode: mode + effortDisplay,
       modeColor: modeColors[mode] ?? "green",
       contextPercent: ctxPct,
       contextUsed: formatTk(ctxUsed),
@@ -661,7 +664,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     addOutput("\n" + theme.accent("  ❯ ") + theme.primary(echo.length > 200 ? echo.slice(0, 197) + "..." : echo) + "\n");
 
     try {
-      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt();
+      const effortConfig = getEffortConfig();
+      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt() + effortConfig.systemPromptSuffix;
       const systemTokens = Math.ceil(systemPrompt.length / 4);
       const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
 
@@ -686,6 +690,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       const result = await runAgentLoop(input, state.history, {
         systemPrompt,
+        maxIterations: effortConfig.maxIterations,
         router: state.router,
         toolRegistry: state.registry,
         toolContext: state.toolContext,
