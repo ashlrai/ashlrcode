@@ -1,8 +1,8 @@
 /**
- * Main Ink REPL application.
+ * Main Ink REPL — clean layout.
  *
- * Layout: output scrolls above, input box with buddy beside it at bottom.
- * Buddy sits to the right of the input lines (like Claude Code's Velum).
+ * Output scrolls above. Buddy + bubble right-aligned above input.
+ * Full-width input box. Status line below.
  */
 
 import React, { useState, useCallback } from "react";
@@ -10,10 +10,7 @@ import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
 import { renderBuddyWithBubble } from "./speech-bubble.ts";
 
-interface OutputItem {
-  id: number;
-  text: string;
-}
+interface OutputItem { id: number; text: string; }
 
 interface AppProps {
   onSubmit: (text: string) => void;
@@ -30,34 +27,19 @@ interface AppProps {
   items: OutputItem[];
   isProcessing: boolean;
   spinnerText: string;
-  /** Available slash commands for autocomplete */
   commands: string[];
 }
 
 export function App({
-  onSubmit,
-  onExit,
-  onModeSwitch,
-  mode,
-  modeColor,
-  contextPercent,
-  contextUsed,
-  contextLimit,
-  buddyName,
-  buddyQuip,
-  buddyArt,
-  items,
-  isProcessing,
-  spinnerText,
-  commands,
+  onSubmit, onExit, onModeSwitch, mode, modeColor,
+  contextPercent, contextUsed, contextLimit,
+  buddyName, buddyQuip, buddyArt,
+  items, isProcessing, spinnerText, commands,
 }: AppProps) {
   const [input, setInput] = useState("");
   const { exit } = useApp();
   const w = process.stdout.columns || 80;
-  const buddyWidth = 16;
-  const lineWidth = w - buddyWidth;
 
-  // Autocomplete: find matching command when input starts with /
   const suggestion = input.startsWith("/") && input.length > 1
     ? commands.find(c => c.startsWith(input) && c !== input)
     : undefined;
@@ -68,94 +50,70 @@ export function App({
     if (text) onSubmit(text);
   }, [onSubmit]);
 
-  const handleModeSwitch = useCallback(() => {
-    onModeSwitch();
-  }, [onModeSwitch]);
+  const handleModeSwitch = useCallback(() => onModeSwitch(), [onModeSwitch]);
 
-  useInput(useCallback((ch: string, key: Parameters<Parameters<typeof useInput>[0]>[1]) => {
-    if (key.ctrl && ch === "c") {
-      onExit();
-      exit();
-    }
-    // Shift+Tab cycles mode
-    if (key.tab && key.shift) {
-      handleModeSwitch();
-      return;
-    }
-    // Tab or right arrow accepts autocomplete (only if suggestion exists)
-    if (key.tab && suggestion) {
-      setInput(suggestion + " "); // trailing space moves cursor to end
-      return;
-    }
-    if (key.rightArrow && suggestion && input.length > 0) {
-      setInput(suggestion + " ");
-    }
+  useInput(useCallback((ch: string, key: any) => {
+    if (key.ctrl && ch === "c") { onExit(); exit(); }
+    if (key.tab && key.shift) { handleModeSwitch(); return; }
+    if (key.tab && suggestion) { setInput(suggestion + " "); return; }
+    if (key.rightArrow && suggestion && input.length > 0) { setInput(suggestion + " "); }
   }, [suggestion, input, handleModeSwitch, onExit, exit]));
 
-  // Context bar
   const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);
   const empty = barWidth - filled;
   const ctxColor = contextPercent < 50 ? "green" : contextPercent < 75 ? "yellow" : "red";
 
+  // Compose buddy + speech bubble as right-aligned text lines
+  const buddyComposite = renderBuddyWithBubble(buddyQuip, buddyArt, buddyName);
+
   return (
     <Box flexDirection="column">
       {/* Scrollable output */}
       <Static items={items}>
-        {(item) => (
-          <Text key={item.id}>{item.text}</Text>
-        )}
+        {(item) => <Text key={item.id}>{item.text}</Text>}
       </Static>
 
-      {/* Spinner when processing */}
-      {isProcessing && (
-        <Text dimColor>  ⠋ {spinnerText}</Text>
-      )}
+      {/* Spinner */}
+      {isProcessing && <Text dimColor>  ⠋ {spinnerText}</Text>}
 
-      {/* Input area + Buddy side by side */}
-      <Box>
-        {/* Left: input box */}
-        <Box flexDirection="column" width={lineWidth}>
-          <Text dimColor>{"-".repeat(lineWidth)}</Text>
-          <Box>
-            <Text color={modeColor} bold>❯ </Text>
-            {isProcessing ? (
-              <Text dimColor>waiting for response...</Text>
-            ) : (
-              <Box>
-                <TextInput
-                  value={input}
-                  onChange={setInput}
-                  onSubmit={handleSubmit}
-                  placeholder="Type a message..."
-                />
-                {suggestion && (
-                  <Text dimColor>{suggestion.slice(input.length)}</Text>
-                )}
-              </Box>
-            )}
-          </Box>
-          {/* Autocomplete suggestions */}
-          {input.startsWith("/") && input.length > 1 && !isProcessing && (
-            <Box marginLeft={2}>
-              <Text dimColor>
-                {commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}
-              </Text>
-              {suggestion && <Text dimColor italic>  tab ↹</Text>}
-            </Box>
-          )}
-          <Text dimColor>{"-".repeat(lineWidth)}</Text>
-        </Box>
-
-        {/* Right: Buddy with speech bubble */}
-        <Box flexDirection="column" marginLeft={1}>
-          {renderBuddyWithBubble(buddyQuip, buddyArt, buddyName).map((line, i) => (
+      {/* Buddy + speech bubble — right-aligned above input */}
+      <Box justifyContent="flex-end">
+        <Box flexDirection="column">
+          {buddyComposite.map((line, i) => (
             <Text key={i} color="cyan" dimColor>{line}</Text>
           ))}
         </Box>
       </Box>
 
-      {/* Status line — separate, below input+buddy */}
+      {/* Input box — full width */}
+      <Text dimColor>{"-".repeat(w)}</Text>
+      <Box>
+        <Text color={modeColor} bold>❯ </Text>
+        {isProcessing ? (
+          <Text dimColor>waiting for response...</Text>
+        ) : (
+          <Box>
+            <TextInput
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              placeholder="Type a message..."
+            />
+            {suggestion && <Text dimColor>{suggestion.slice(input.length)}</Text>}
+          </Box>
+        )}
+      </Box>
+      {/* Autocomplete hints */}
+      {input.startsWith("/") && input.length > 1 && !isProcessing && (
+        <Box marginLeft={2}>
+          <Text dimColor>{commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}</Text>
+          {suggestion && <Text dimColor italic>  tab ↹</Text>}
+        </Box>
+      )}
+      <Text dimColor>{"-".repeat(w)}</Text>
+
+      {/* Status line */}
       <Box justifyContent="space-between">
         <Box>
           <Text color={modeColor} bold>❯❯ </Text>
