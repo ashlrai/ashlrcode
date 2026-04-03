@@ -715,11 +715,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           state.router.currentProvider.config.baseURL
         ).then((comment) => {
           currentQuipType = comment.type;
-          // Override the quip getter for next render
-          const origGetQuip = getQuip;
-          const aiText = comment.text;
-          // Store for display on next update
-          QUIPS[state.buddy.mood] = [aiText, ...(QUIPS[state.buddy.mood] ?? [])];
+          cachedQuip = comment.text;
+          QUIPS[state.buddy.mood] = [comment.text, ...(QUIPS[state.buddy.mood] ?? [])];
           update();
         }).catch(() => {});
       }

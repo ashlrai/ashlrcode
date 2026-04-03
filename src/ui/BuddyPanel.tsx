@@ -16,21 +16,30 @@ interface Props {
   quipType: "quip" | "suggestion" | "reaction";
 }
 
+const MAX_QUIP_WIDTH = 18; // 20-col box minus 2 for padding/emoji
+
 export function BuddyPanel({ art, name, quip, quipType }: Props) {
   // Fixed height = art lines + name line + quip line
   const height = art.length + 2;
+  const truncatedQuip = quip.length > MAX_QUIP_WIDTH
+    ? quip.slice(0, MAX_QUIP_WIDTH - 1) + "…"
+    : quip;
 
   return (
     <Box flexDirection="column" alignItems="flex-end" height={height} flexShrink={0}>
-      <Text color="cyan">{art.join("\n")}</Text>
+      {art.map((line, i) => <Text key={i} color="cyan">{line}</Text>)}
       <Text color="cyan" bold>{name}</Text>
-      {quipType === "suggestion" ? (
-        <Text color="green">💡 {quip}</Text>
-      ) : quipType === "reaction" ? (
-        <Text color="yellow">{quip}</Text>
-      ) : (
-        <Text dimColor italic>"{quip}"</Text>
-      )}
+      <QuipText quip={truncatedQuip} quipType={quipType} />
     </Box>
   );
+}
+
+function QuipText({ quip, quipType }: Pick<Props, "quip" | "quipType">) {
+  if (quipType === "suggestion") {
+    return <Text color="green">💡 {quip}</Text>;
+  }
+  if (quipType === "reaction") {
+    return <Text color="yellow">{quip}</Text>;
+  }
+  return <Text dimColor italic>"{quip}"</Text>;
 }
