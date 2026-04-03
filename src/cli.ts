@@ -80,8 +80,12 @@ import { sendMessageTool } from "./tools/send-message.ts";
 import { sleepTool } from "./tools/sleep.ts";
 import { todoWriteTool } from "./tools/todo-write.ts";
 import { diffTool } from "./tools/diff.ts";
+import { snipTool, initSnipTool } from "./tools/snip.ts";
 import { lspTool, shutdownLSP } from "./tools/lsp.ts";
+import { webBrowserTool, shutdownBrowser } from "./tools/web-browser.ts";
+import { feature } from "./config/features.ts";
 import { teamCreateTool, teamDeleteTool, teamListTool, teamDispatchTool, initTeamTools } from "./tools/team.ts";
+import { workflowTool } from "./tools/workflow.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { listMcpResourcesTool, setMCPManager } from "./tools/mcp-resources.ts";
@@ -191,13 +195,18 @@ async function main() {
   registry.register(sleepTool);
   registry.register(todoWriteTool);
   registry.register(diffTool);
+  registry.register(snipTool);
   registry.register(lspTool);
   registry.register(teamCreateTool);
   registry.register(teamDeleteTool);
   registry.register(teamListTool);
   registry.register(teamDispatchTool);
+  registry.register(workflowTool);
   if (process.platform === "win32") {
     registry.register(powershellTool);
+  }
+  if (feature("BROWSER_TOOL")) {
+    registry.register(webBrowserTool);
   }
   initToolSearch(registry);
 
@@ -336,6 +345,12 @@ async function main() {
     buddy,
   };
 
+  // Wire SnipTool with history accessors
+  initSnipTool(
+    () => state.history,
+    (msgs) => { state.history.length = 0; state.history.push(...msgs); },
+  );
+
   // Set initial mode based on flags
   if (dangerouslySkipPermissions) setMode("yolo");
   else if (autoAcceptEditsFlag) setMode("accept-edits");
@@ -376,6 +391,7 @@ async function main() {
     }
     mcpManager.disconnectAll().catch(() => {});
     shutdownLSP().catch(() => {});
+    shutdownBrowser().catch(() => {});
     stopPolling();
     process.exit(0);
   });
