@@ -1,16 +1,20 @@
 # AshlrCode (ac)
 
-**Multi-provider AI coding agent CLI with Claude Code-level features.**
+**Multi-provider AI coding agent for the terminal.**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)]()
-[![Tests](https://img.shields.io/badge/tests-124%20passing-green)]()
+[![Version](https://img.shields.io/badge/version-1.0.0-blue)]()
+[![Tests](https://img.shields.io/badge/tests-335%20passing-green)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**31 tools | 15 skills | 6 providers | 124 tests | 11K+ lines TypeScript/Bun**
+**42 tools | 34 commands | 6 providers | 335 tests | 130 source files**
 
-Open-source (MIT), CI/CD-ready, npm publish-ready. Built as a Claude Code alternative that runs on xAI Grok ($0.001/request average) when Claude usage is exhausted.
+---
+
+## What is AshlrCode?
+
+AshlrCode is an open-source AI coding agent CLI built as an alternative to Claude Code. It runs multi-provider LLM conversations with tool use in your terminal — powered by xAI Grok by default, with failover to Anthropic, OpenAI, DeepSeek, Groq, and Ollama. It ships with 42 built-in tools, an autonomous KAIROS mode, sub-agent orchestration, and a persistent buddy companion.
 
 ---
 
@@ -20,122 +24,167 @@ Open-source (MIT), CI/CD-ready, npm publish-ready. Built as a Claude Code altern
 git clone https://github.com/ashlrai/ashlrcode.git
 cd ashlrcode
 bun install
-bun link                    # makes 'ac' and 'ashlrcode' available globally
+bun link                    # makes 'ac' available globally
 
-export XAI_API_KEY="your-key-here"
+export XAI_API_KEY="your-key"
 
 ac                          # interactive REPL
-ac "do something"           # single-shot mode
-ac --continue               # resume last session in this directory
+ac "fix the login bug"      # single-shot mode
+ac --continue               # resume last session
 ac --resume <id>            # resume specific session
-ac --fork-session <id>      # copy session history into new session
 ```
 
 ---
 
-## What's New in v2.0.0
+## Features
 
-- **Ink UI** — full React-based terminal rendering (replaces readline), input box with speech bubbles
-- **Buddy system** — ASCII companion beside input with mood-based poses and satirical quips
-- **Autopilot** — autonomous scan, queue, approve, auto mode (scan → fix → test → PR → merge)
-- **Image support** — drag-and-drop image input with smart paste collapse
-- **PowerShell tool** — Windows-native shell execution
-- **Context collapse** — 3-tier context compression with `contextCollapse`
-- **Slash command autocomplete** — Tab completion for skills and commands
-- **Mode switching** — Shift+Tab to switch modes inline
-- **Open-source release** — MIT license, CI/CD pipeline, npm publish ready
+### Core
+
+- **Agent loop** — AsyncGenerator-based streaming with parallel tool execution
+- **Multi-provider failover** — automatic retry and provider switching on rate limits
+- **3-tier context compression** — autoCompact, snipCompact, contextCollapse
+- **Speculation** — speculative tool execution for faster responses
+- **Model patches** — per-model prompt adjustments for optimal behavior
+
+### Tools (42)
+
+| Category | Tools | Description |
+|----------|-------|-------------|
+| **File I/O** | Read, Write, Edit, NotebookEdit, LS | Read, write, and edit files with undo snapshots |
+| **Search** | Glob, Grep, ToolSearch | Pattern matching, regex search, tool discovery |
+| **Execution** | Bash, PowerShell | Shell execution with live streaming and timeouts |
+| **Web** | WebFetch, WebSearch, WebBrowser | HTTP requests, search engines, browser automation |
+| **Interaction** | AskUser, SendMessage | Structured user prompts, inter-agent messaging |
+| **Agents** | Agent, ListPeers | Parallel sub-agents, peer discovery |
+| **Tasks** | TaskCreate, TaskUpdate, TaskList, TaskGet, TodoWrite | Task boards with dependencies and ownership |
+| **Planning** | EnterPlan, PlanWrite, ExitPlan (via mode) | Read-only exploration then structured execution |
+| **Memory** | MemorySave, MemoryList, MemoryDelete | Persistent per-project context across sessions |
+| **Config** | Config | View and modify settings at runtime |
+| **Git** | EnterWorktree, ExitWorktree, Diff | Isolated worktree branches, diff inspection |
+| **Teams** | TeamCreate, TeamDelete, TeamList, TeamDispatch | Named teammate roles with task dispatch |
+| **Infrastructure** | LSP, Workflow, Snip, Sleep | Language server, reusable workflows, context trimming, polling |
+| **MCP** | ListMcpResources, mcp__*__* | External tool servers via Model Context Protocol |
+
+### Commands (34)
+
+| Command | Description |
+|---------|-------------|
+| `/help` | List all commands |
+| `/cost` | Token usage and cost breakdown |
+| `/status` | Provider, context usage, session info |
+| `/model [name]` | Show or switch model (aliases: `grok-fast`, `sonnet`, `opus`, `local`) |
+| `/effort [level]` | Cycle or set effort level (low / normal / high) |
+| `/compact` | Run all 3 context compression tiers |
+| `/clear` | Clear conversation history |
+| `/history` | File change history with timestamps |
+| `/undo` | Revert last file change |
+| `/restore` | Show available file snapshots |
+| `/diff` | Git diff --stat |
+| `/git` | Recent git log |
+| `/plan` | Cycle mode (normal / plan / auto) |
+| `/tools` | List all registered tools |
+| `/skills` | List available slash-command skills |
+| `/sessions` | List saved sessions |
+| `/memory` | Show project memories |
+| `/buddy` | Buddy stats, species, rarity, level |
+| `/btw <question>` | Side question in sub-agent (no main context pollution) |
+| `/autopilot` | Autonomous scan / queue / approve / run / auto |
+| `/kairos <goal>` | Start KAIROS autonomous mode |
+| `/trigger` | Scheduled triggers (add / list / toggle / delete) |
+| `/voice` | Voice input via Whisper (record / transcribe) |
+| `/sync` | Export / import settings across machines |
+| `/bridge` | Bridge server status (HTTP API for external tools) |
+| `/keybindings` | Show and customize keyboard shortcuts |
+| `/features` | Feature flag status |
+| `/patches` | Active model patches for current model |
+| `/undercover` | Toggle undercover mode (stealth prompts) |
+| `/remote` | Remote settings status |
+| `/telemetry` | Recent telemetry events |
+| `/quit` | Exit (also `/exit`, `/q`) |
+
+Plus **custom skills** loaded from `~/.ashlrcode/skills/*.md` — invoked as `/skill-name`.
+
+### Agent System
+
+- **Sub-agents** — spawn parallel agents for research, exploration, and independent tasks
+- **Worktree isolation** — agents work in git worktrees to avoid conflicts
+- **KAIROS autonomous mode** — heartbeat-driven loop with focus-aware autonomy levels
+- **Team dispatch** — named teammates with roles, dispatched to tasks
+- **IPC** — inter-process communication between agent instances
+- **Peer discovery** — agents find and message sibling instances
+
+### UX
+
+- **Ink-based UI** — React terminal rendering with input box, context bar, and autocomplete
+- **Buddy system** — persistent ASCII pet companion with species, moods, hats, rarity, and stats
+- **Keybindings** — customizable shortcuts, chord bindings, Shift+Tab mode switching
+- **Effort levels** — low / normal / high controls response depth
+- **Smart paste** — large clipboard pastes auto-collapsed in context
+- **Image support** — drag-and-drop images with base64 collapse
+- **Voice mode** — record and transcribe via Whisper
+- **Notifications** — system notifications on task completion
+
+### Persistence
+
+- **Sessions** — JSONL at `~/.ashlrcode/sessions/`, resume with `--continue` or `--resume`
+- **Dreams** — background memory consolidation when idle, loaded on next session
+- **File undo** — every Write/Edit snapshots the original, revert with `/undo`
+- **Settings sync** — export/import settings across machines with `/sync`
+- **Memory** — persistent per-project context loaded automatically
+
+### Security
+
+- **Permission system** — read-only tools auto-allowed; write tools prompt `[y]es / [a]lways / [n]o / [d]eny-always`
+- **Permission rules** — regex-based allow/deny rules in settings
+- **Hook system** — pre/post tool hooks can block, modify, or extend tool calls
+- **Undercover mode** — stealth prompt adjustments
+- **Input validation** — tool input schemas validated before execution
+
+### Infrastructure
+
+- **Feature flags** — runtime toggles for experimental features
+- **Telemetry** — event logging for debugging and analytics
+- **Cost tracking** — per-provider token and cost accounting
+- **Retry with backoff** — rate limits (3x, 1s base), network errors (2x, 2s base)
+- **Speculation** — predictive tool execution
+- **LSP integration** — Language Server Protocol for diagnostics and completions
+- **MCP OAuth** — OAuth flow for MCP server authentication
+- **Cron triggers** — scheduled recurring agent tasks
+- **IPC** — inter-process messaging between instances
+- **Bridge server** — HTTP API for external tool integration
+- **Remote settings** — fetch config overrides from a URL
+- **Model patches** — per-model prompt tuning
 
 ---
 
-## 31 Built-in Tools
+## Configuration
 
-| Category | Tools |
-|----------|-------|
-| **File Operations** | Read, Write, Edit, NotebookEdit, LS |
-| **Search** | Glob, Grep, ToolSearch, WebSearch |
-| **Execution** | Bash (live streaming), PowerShell (Windows) |
-| **Research** | WebFetch, WebSearch, Diff |
-| **Interaction** | AskUser (structured options with labels) |
-| **Agents** | Agent (parallel sub-agents), SendMessage |
-| **Tasks** | TaskCreate, TaskUpdate, TaskList, TodoWrite |
-| **Planning** | EnterPlan, PlanWrite, ExitPlan |
-| **Memory** | MemorySave, MemoryList, MemoryDelete |
-| **Config** | Config (view/modify settings) |
-| **Git** | EnterWorktree, ExitWorktree |
-| **Utility** | Sleep (polling/backoff) |
+| Path | Purpose |
+|------|---------|
+| `~/.ashlrcode/settings.json` | Providers, hooks, MCP servers, feature flags |
+| `~/.ashlrcode/keybindings.json` | Custom keyboard shortcuts |
+| `~/.ashlrcode/permissions.json` | Persisted tool permission rules |
+| `~/.ashlrcode/sessions/` | Saved conversation sessions (JSONL) |
+| `~/.ashlrcode/dreams/` | Background memory consolidation files |
+| `~/.ashlrcode/memory/` | Per-project persistent memories |
+| `~/.ashlrcode/tasks/` | Persisted task boards |
+| `~/.ashlrcode/skills/` | Custom skill definitions (`.md` files) |
+| `./ASHLR.md` or `./CLAUDE.md` | Project-level instructions |
 
----
+### Environment Variables
 
-## 15 Built-in Skills (Slash Commands)
+| Variable | Purpose |
+|----------|---------|
+| `XAI_API_KEY` | xAI Grok API key (primary) |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key |
+| `OPENAI_API_KEY` | OpenAI API key (also used for Whisper voice) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key |
+| `GROQ_API_KEY` | Groq API key |
+| `AC_BRIDGE_PORT` | Enable bridge server on this port |
+| `AC_REMOTE_SETTINGS_URL` | URL for remote settings fetch |
+| `AC_FEATURE_VOICE_MODE` | Enable voice input (`true`) |
 
-| Skill | Description |
-|-------|-------------|
-| `/commit` | Git commit with proper protocol |
-| `/review` | Code review for bugs and security |
-| `/simplify` | Refine code for clarity |
-| `/pr` | Create a pull request |
-| `/plan-task` | Enter plan mode for complex tasks |
-| `/test` | Run tests and fix failures |
-| `/debug` | Systematic root-cause debugging |
-| `/explore` | Deep codebase architecture analysis |
-| `/refactor` | Behavior-preserving improvements |
-| `/init` | Generate ASHLR.md for new projects |
-| `/deep-work` | Strategic session kickoff with parallel exploration |
-| `/polish` | Autonomous lint, review, security, fix loop |
-| `/daily-review` | Morning status check across projects |
-| `/weekly-plan` | Weekly progress review and planning |
-| `/resume-branch` | Switch branches with context restoration |
-
-Custom skills: add `.md` files to `~/.ashlrcode/skills/`
-
----
-
-## Autopilot
-
-Autonomous codebase scanner and work queue:
-
-```bash
-ac /autopilot              # scan codebase, build work queue
-ac /autopilot approve      # review and approve queued items
-ac /autopilot auto         # fully autonomous: scan → fix → test → PR → merge
-```
-
-Autopilot scans your codebase for issues (lint, type errors, security, TODOs), queues fixes, and can execute them autonomously with test verification.
-
----
-
-## Image Support
-
-Drag-and-drop images directly into the terminal. AshlrCode processes images inline with smart paste collapse — large base64 payloads are automatically compressed in the context window.
-
----
-
-## Smart Paste
-
-Large clipboard pastes are automatically collapsed to preserve context. The full content is available to the agent but displayed compactly in the conversation history.
-
----
-
-## MCP Server Support
-
-Connect external tools via Model Context Protocol:
-
-```json
-{
-  "mcpServers": {
-    "supabase": {
-      "command": "npx",
-      "args": ["-y", "@supabase/mcp-server-supabase", "--access-token", "..."],
-    }
-  }
-}
-```
-
-MCP tools appear as `mcp__<server>__<tool>` and work like any built-in tool.
-
----
-
-## Hook System
+### Hook System
 
 Pre/post tool execution hooks for automation and safety:
 
@@ -155,184 +204,92 @@ Pre/post tool execution hooks for automation and safety:
 
 ---
 
-## Key Features
-
-### Ink-Based Terminal UI
-Full React-based terminal rendering via Ink. Input box with borders, context bar, ASCII buddy companion with mood-based poses and speech bubbles. Slash command autocomplete with Tab, mode switching with Shift+Tab.
-
-### Parallel Tool Execution
-Concurrency-safe tools (Read, Glob, Grep, WebFetch, Agent, LS) run in parallel via `Promise.all()`. Unsafe tools (Bash, Write, Edit) run sequentially.
-
-### Context Management
-3-tier compression keeps conversations efficient:
-1. **autoCompact** — summarize older messages when approaching limits
-2. **snipCompact** — truncate verbose tool results
-3. **contextCollapse** — collapse large pastes, images, and repetitive content
-4. **Provider-aware limits** — xAI 2M tokens, Anthropic 200K
-
-### Provider Retry
-Automatic exponential backoff:
-- Rate limits (429): 3 retries, 1s→2s→4s
-- Network errors: 2 retries, 2s base
-- Auth errors: immediate fail with clear message
-
-### Session Persistence
-- Conversations saved as JSONL at `~/.ashlrcode/sessions/`
-- `ac --continue` resumes last session in current directory
-- `ac --resume <id>` resumes specific session
-- `ac --fork-session <id>` copies history into new session
-
-### Permission System
-- Read-only tools auto-allowed (no prompts)
-- `[y]es / [a]lways / [n]o / [d]eny-always` for write tools
-- Persisted across sessions in `~/.ashlrcode/permissions.json`
-
-### File Undo
-Every Write/Edit snapshots the file first. `/restore <path>` reverts.
-
-### Plan Mode
-Enter plan mode for complex tasks: explore codebase read-only, ask strategic questions, write a detailed plan, get approval, then execute.
-
-### Memory System
-Save persistent per-project context that carries across sessions. The model loads memories automatically in future conversations.
-
-### Buddy System
-ASCII companion beside the input box with mood-based poses, speech bubbles, and satirical quips. Reacts to agent state and conversation context.
-
----
-
-## CLI Commands
-
-| Command | Description |
-|---------|-------------|
-| `/plan` | Plan mode status |
-| `/cost` | Token usage and costs |
-| `/history` | Conversation turn history |
-| `/undo` | Remove last turn |
-| `/restore [path]` | Undo file changes |
-| `/diff` | Git diff --stat |
-| `/git` | Branch, remote, changes |
-| `/tools` | List all registered tools |
-| `/skills` | List available skills |
-| `/memory` | View project memories |
-| `/sessions` | List saved sessions |
-| `/model [name]` | Show/switch model |
-| `/compact` | Compress context |
-| `/clear` | Clear conversation |
-| `/autopilot` | Autonomous scanner + work queue |
-| `/help` | All commands |
-| `/quit` | Exit |
-
-Multi-line input: end a line with `\` to continue.
-
----
-
 ## Providers
 
-| Provider | Model | Cost/M tokens | Context |
-|----------|-------|---------------|---------|
-| **xAI** (primary) | grok-4-1-fast-reasoning | $0.20 in / $0.50 out | 2M |
-| **Anthropic** (fallback) | claude-sonnet-4-6 | $3 in / $15 out | 200K |
-| **OpenAI** | gpt-4o | $2.50 in / $10 out | 128K |
-| **Ollama** (local) | any local model | Free | Model limit |
-| **Groq** | llama-3.3-70b | $0.59 in / $0.79 out | 128K |
-| **DeepSeek** | deepseek-chat | $0.14 in / $0.28 out | 128K |
+| Provider | Model | Cost (in/out per 1M tokens) | Context |
+|----------|-------|-----------------------------|---------|
+| **xAI** (default) | grok-4-1-fast-reasoning | $0.20 / $0.50 | 2M |
+| **Anthropic** | claude-sonnet-4-6 | $3.00 / $15.00 | 200K |
+| **OpenAI** | gpt-4o | $2.50 / $10.00 | 128K |
+| **DeepSeek** | deepseek-chat | $0.14 / $0.28 | 128K |
+| **Groq** | llama-3.3-70b | $0.59 / $0.79 | 128K |
+| **Ollama** (local) | any local model | Free | Model-dependent |
 
-Auto-failover on rate limits. Model aliases: `grok-fast`, `grok-4`, `grok-3`, `sonnet`, `opus`, `haiku`.
+Auto-failover on rate limits. Model aliases: `grok-fast`, `grok-4`, `grok-3`, `sonnet`, `opus`, `llama`, `local`.
 
 ---
 
-## Bifrost: Use Claude Code with Grok
+## KAIROS Mode
 
-Route Claude Code itself through xAI Grok when your Max plan runs out:
+KAIROS is an autonomous agent mode with a heartbeat-driven loop. It detects terminal focus to adjust autonomy:
+
+- **Focused** — collaborative: asks before significant changes
+- **Unfocused** — full-auto: acts independently while you're away
+- **Unknown** — balanced default
 
 ```bash
-./scripts/bifrost-setup.sh                                        # Terminal 1
-ANTHROPIC_BASE_URL=http://localhost:8080/anthropic claude          # Terminal 2
+ac
+> /kairos "refactor the auth module and add tests"
+> /kairos stop
 ```
 
 ---
 
-## Configuration
+## Buddy System
 
-| Path | Purpose |
-|------|---------|
-| `~/.ashlrcode/settings.json` | Providers, hooks, MCP servers |
-| `~/.ashlrcode/permissions.json` | Tool permission rules |
-| `~/.ashlrcode/sessions/` | Saved sessions (JSONL) |
-| `~/.ashlrcode/plans/` | Plan files |
-| `~/.ashlrcode/memory/` | Per-project persistent memory |
-| `~/.ashlrcode/tasks/` | Persisted task boards |
-| `~/.ashlrcode/skills/` | Custom skill definitions |
-| `./ASHLR.md` or `./CLAUDE.md` | Project-level instructions |
-
----
-
-## Architecture
+Every user gets a deterministic ASCII pet companion based on a hash of their home directory. Eight species with rarity tiers, mood-based animations, equippable hats, and stats that grow with usage.
 
 ```
-src/
-├── cli.ts                  # Entry point, Ink UI, REPL, 15+ commands
-├── agent/
-│   ├── loop.ts             # Core agent loop (AsyncGenerator streaming)
-│   ├── context.ts          # 3-tier compression, provider-aware limits
-│   ├── sub-agent.ts        # Sub-agent spawning
-│   ├── tool-executor.ts    # Parallel tool execution
-│   └── error-handler.ts    # Error categorization + retry
-├── providers/
-│   ├── types.ts            # Unified provider interface
-│   ├── xai.ts              # xAI Grok (OpenAI SDK) + retry
-│   ├── anthropic.ts        # Claude (Anthropic SDK) + retry
-│   └── router.ts           # Selection, failover, cost tracking
-├── tools/                  # 31 tools (incl. PowerShell)
-├── mcp/                    # MCP client + manager
-├── skills/                 # Skill loader + registry
-├── planning/               # Plan mode + tools
-├── persistence/            # Sessions + memory
-├── config/                 # Settings, hooks, permissions, git
-├── state/                  # File history (undo)
-├── ui/                     # Ink components, buddy, speech bubbles
-└── __tests__/              # 10+ test files, 124 tests
+  ┌──────────────────────────────┐     c\  /c
+  │ What if we tried a different │    ( .  . )
+  │ approach to the auth flow?   │    ( _nn_ )
+  └──────────────────────┐       │    (______)
+                         └───────┘     ||  ||
 ```
 
----
-
-## Documentation
-
-| Guide | Description |
-|-------|-------------|
-| [Getting Started](docs/getting-started.md) | Installation, setup, first use, common workflows |
-| [Tool Reference](docs/tools.md) | All 31 tools with parameters, examples, and notes |
-| [Skills Guide](docs/skills.md) | All 15 skills + how to create custom ones |
-| [CLI Reference](docs/cli-reference.md) | Every flag, command, and environment variable |
-| [Configuration](docs/configuration.md) | Settings, hooks, MCP servers, permissions |
-| [Examples](docs/examples.md) | 20 real-world usage patterns |
-| [Architecture](docs/architecture.md) | How AshlrCode works internally |
-| [Migration from Claude Code](docs/migration-from-claude-code.md) | Side-by-side feature comparison |
-| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+Species: penguin, cat, ghost, owl, robot, dragon, axolotl (epic), capybara (legendary). Stats: debugging, patience, chaos, wisdom, snark.
 
 ---
-
-## Testing
-
-```bash
-bun test                    # 124 tests, 200+ assertions, ~8s
-```
 
 ## Development
 
 ```bash
-bun run start               # Run CLI
-bun run dev                 # Watch mode
-bunx tsc --noEmit           # Type check
+git clone https://github.com/ashlrai/ashlrcode.git
+cd ashlrcode
+bun install
+
+bun run dev                 # watch mode
+bun run start               # run CLI
+bun test                    # 335 tests, 666 assertions, ~10s
+bunx tsc --noEmit           # type check
+bun run build               # bundle to dist/
+```
+
+### Architecture
+
+```
+src/                        # 130 source files
+├── cli.ts                  # Entry point + fallback REPL
+├── repl.tsx                # Ink-based terminal UI
+├── setup.ts                # Initialization and wiring
+├── agent/                  # Core agent loop, sub-agents, KAIROS, teams, dreams, IPC
+├── providers/              # xAI, Anthropic, router, retry, cost tracking
+├── tools/                  # 42 tools (32 files)
+├── skills/                 # Skill loader + registry
+├── mcp/                    # MCP client, manager, OAuth
+├── planning/               # Plan mode + plan tools
+├── persistence/            # Sessions + memory
+├── config/                 # Settings, hooks, permissions, features, sync, undercover
+├── state/                  # File history (undo)
+├── ui/                     # Ink components, buddy, speech bubbles, theme, effort
+├── autopilot/              # Scanner + work queue
+├── bridge/                 # HTTP bridge server + client
+├── telemetry/              # Event logging
+└── voice/                  # Voice input via Whisper
 ```
 
 ---
 
-## Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up your dev environment, run tests, add tools/skills, and submit PRs.
-
 ## License
 
-MIT License
+MIT
