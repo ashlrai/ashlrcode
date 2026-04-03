@@ -150,13 +150,15 @@ export function App({
           </Box>
         )}
       </Box>
-      {/* Autocomplete hints */}
-      {input.startsWith("/") && input.length > 1 && !isProcessing && (
-        <Box marginLeft={2}>
-          <Text dimColor>{commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}</Text>
-          {suggestion && <Text dimColor italic>  tab ↹</Text>}
-        </Box>
-      )}
+      {/* Autocomplete hints — always rendered for stable height */}
+      <Box marginLeft={2} height={1}>
+        {input.startsWith("/") && input.length > 1 && !isProcessing ? (
+          <>
+            <Text dimColor>{commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}</Text>
+            {suggestion && <Text dimColor italic>  tab ↹</Text>}
+          </>
+        ) : <Text> </Text>}
+      </Box>
       <Text dimColor>{"-".repeat(w)}</Text>
 
       {/* Bottom area: input status on left, buddy panel on right */}

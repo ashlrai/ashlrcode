@@ -2,9 +2,8 @@
  * BuddyPanel — fixed-height Ink component for the buddy's ASCII art
  * with speech bubble rendered beside it.
  *
- * Owns its own terminal region so Ink knows exactly how many lines to
- * clear on re-render, preventing the duplication/flicker that plagued
- * the previous inline approach.
+ * Uses a constant height to prevent Ink's Static component from
+ * miscounting terminal lines on re-render (which causes duplication).
  */
 
 import React from "react";
@@ -18,13 +17,15 @@ interface Props {
   quipType: "quip" | "suggestion" | "reaction";
 }
 
+// Fixed height covers: tallest art (6 lines with hat) + longest bubble (6 lines) → max 7 composite + 1 padding
+const FIXED_HEIGHT = 8;
+
 export function BuddyPanel({ art, name, quip, quipType }: Props) {
-  const formatted = quipType === "suggestion" ? `💡 ${quip}` : quip;
-  const lines = renderBuddyWithBubble(formatted, art, name, 1);
-  const height = lines.length;
+  const bubbleText = quipType === "suggestion" ? `💡 ${quip}` : quip;
+  const lines = renderBuddyWithBubble(bubbleText, art, name, 1, FIXED_HEIGHT);
 
   return (
-    <Box flexDirection="column" alignItems="flex-end" height={height} flexShrink={0}>
+    <Box flexDirection="column" alignItems="flex-end" height={FIXED_HEIGHT} flexShrink={0}>
       {lines.map((line, i) => <Text key={i} color="cyan">{line}</Text>)}
     </Box>
   );

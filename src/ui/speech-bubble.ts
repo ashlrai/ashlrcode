@@ -40,7 +40,8 @@ export function renderBuddyWithBubble(
   quip: string,
   buddyArt: string[],
   buddyName: string,
-  gap: number = 3
+  gap: number = 3,
+  targetHeight?: number
 ): string[] {
   const maxBubbleWidth = 26;
   const textLines = wrapText(quip, maxBubbleWidth - 4); // 4 for "| " and " |"
@@ -89,6 +90,17 @@ export function renderBuddyWithBubble(
     }
 
     result.push(bubblePart + gapStr + buddyPart);
+  }
+
+  // Pad or trim to targetHeight if specified
+  if (targetHeight !== undefined) {
+    const lineWidth = result[0]?.length ?? 0;
+    while (result.length < targetHeight) {
+      result.push(" ".repeat(lineWidth));
+    }
+    if (result.length > targetHeight) {
+      result.splice(0, result.length - targetHeight);
+    }
   }
 
   return result;
