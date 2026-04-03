@@ -42,10 +42,13 @@ import { FileHistoryStore, setFileHistory, getFileHistory } from "./state/file-h
 import { loadKeybindings, getBindings, InputHistory } from "./ui/keybindings.ts";
 import { SpeculationCache } from "./agent/speculation.ts";
 import { setSpeculationCache } from "./agent/tool-executor.ts";
-import { KairosLoop } from "./agent/kairos.ts";
+import { KairosLoop, detectTerminalFocus } from "./agent/kairos.ts";
+import { notifyTurnComplete, notifyError } from "./ui/notifications.ts";
 import { initTelemetry, logEvent, readRecentEvents, formatEvents } from "./telemetry/event-log.ts";
 import { createTrigger, listTriggers, deleteTrigger, toggleTrigger, TriggerRunner } from "./agent/cron.ts";
 import { startRecording, stopRecording, isRecording, transcribeRecording, checkVoiceAvailability, type VoiceConfig } from "./voice/voice-mode.ts";
+import { checkForUpgrade } from "./config/upgrade-notice.ts";
+import { VERSION } from "./version.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -203,6 +206,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Patch the deferred wrapper so permission prompts can use addOutput
   _addOutput = addOutput;
 
+  // Check for upgrades (fire and forget)
+  checkForUpgrade(VERSION).then(newVersion => {
+    if (newVersion) {
+      addOutput(theme.warning(`\n  ⬆ AshlrCode ${newVersion} available (current: ${VERSION}). Run: bun update -g ashlrcode\n`));
+    }
+  }).catch(() => {});
 
   function getDisplayProps() {
     const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
@@ -907,6 +916,31 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/btw": {
+        if (!arg) { addOutput(theme.tertiary("\n  Usage: /btw <question>\n  Ask a side question without interrupting the current task.\n")); return true; }
+        // Run the question in a sub-agent so it doesn't pollute main history
+        const { runSubAgent } = await import("./agent/sub-agent.ts");
+        addOutput(theme.accent(`\n  💬 Side question: ${arg}\n`));
+        isProcessing = true; spinnerText = "Thinking (side)"; update();
+        try {
+          const result = await runSubAgent({
+            name: "btw",
+            prompt: arg,
+            systemPrompt: state.baseSystemPrompt + "\n\nThis is a brief side question. Answer concisely (1-3 sentences). Do not modify any files.",
+            router: state.router,
+            toolRegistry: state.registry,
+            toolContext: state.toolContext,
+            readOnly: true,
+            maxIterations: 5,
+          });
+          addOutput(result.text + "\n");
+        } catch (err) {
+          addOutput(theme.error(`  Error: ${err instanceof Error ? err.message : String(err)}\n`));
+        }
+        isProcessing = false; update();
+        return true;
+      }
+
       case "/voice": {
         if (!feature("VOICE_MODE")) {
           addOutput(theme.tertiary("\n  Voice mode disabled. Set AC_FEATURE_VOICE_MODE=true\n"));
@@ -1073,6 +1107,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       // Turn separator
       turnCount++;
       logEvent("turn_end", { cost: state.router.costs.totalCostUSD, turn: turnCount }).catch(() => {});
+
+      // Auto-generate session title from first user message
+      if (turnCount === 1 && input.length > 0) {
+        const title = input.slice(0, 60).replace(/\n/g, " ").trim();
+        state.session.setTitle(title).catch(() => {});
+      }
       cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
       currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
