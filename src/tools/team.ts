@@ -2,7 +2,8 @@
  * Team management tools — create, manage, and delegate to persistent teammates.
  */
 
-import type { Tool } from "./types.ts";
+import type { Tool, ToolContext } from "./types.ts";
+import type { Teammate } from "../agent/team.ts";
 import {
   createTeam,
   addTeammate,
@@ -10,7 +11,27 @@ import {
   deleteTeam,
   listTeams,
   loadTeam,
+  pickTeammateForTask,
+  recordTeammateActivity,
 } from "../agent/team.ts";
+import { runSubAgent } from "../agent/sub-agent.ts";
+import type { ProviderRouter } from "../providers/router.ts";
+import type { ToolRegistry } from "./registry.ts";
+
+// Module-level refs injected at registration time (same pattern as agent.ts)
+let _router: ProviderRouter | null = null;
+let _registry: ToolRegistry | null = null;
+let _baseSystemPrompt: string = "";
+
+export function initTeamTools(
+  router: ProviderRouter,
+  registry: ToolRegistry,
+  systemPrompt: string,
+) {
+  _router = router;
+  _registry = registry;
+  _baseSystemPrompt = systemPrompt;
+}
 
 export const teamCreateTool: Tool = {
   name: "TeamCreate",
@@ -181,5 +202,108 @@ export const teamListTool: Tool = {
     return teams
       .map((t) => `${t.name} (${t.id}) — ${t.teammates.length} teammates`)
       .join("\n");
+  },
+};
+
+export const teamDispatchTool: Tool = {
+  name: "TeamDispatch",
+  prompt() {
+    return "Dispatch a task to a teammate. The teammate runs as a sub-agent with their specialized role and system prompt. Returns the teammate's findings/results.";
+  },
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        teamId: { type: "string", description: "Team ID" },
+        teammateId: {
+          type: "string",
+          description:
+            "Teammate ID (optional — auto-picks best match if omitted)",
+        },
+        task: {
+          type: "string",
+          description: "Task description for the teammate",
+        },
+        taskType: {
+          type: "string",
+          description:
+            "Task type for auto-matching (e.g., 'code-reviewer', 'test-writer')",
+        },
+        mode: {
+          type: "string",
+          enum: ["in_process", "worktree"],
+          description: "Execution mode",
+        },
+      },
+      required: ["teamId", "task"],
+    };
+  },
+  isReadOnly() {
+    return true;
+  },
+  isDestructive() {
+    return false;
+  },
+  isConcurrencySafe() {
+    return true;
+  },
+  validateInput(input) {
+    if (!input.teamId) return "teamId required";
+    if (!input.task) return "task required";
+    if (!_router || !_registry)
+      return "Team tools not initialized. Call initTeamTools() first.";
+    return null;
+  },
+  async call(input: Record<string, unknown>, context: ToolContext) {
+    const teamId = input.teamId as string;
+    const team = await loadTeam(teamId);
+    if (!team) return "Team not found";
+
+    let teammate: Teammate | null = null;
+    if (input.teammateId) {
+      teammate =
+        team.teammates.find((t) => t.id === (input.teammateId as string)) ??
+        null;
+    } else {
+      teammate = pickTeammateForTask(
+        team,
+        (input.taskType as string) ?? "",
+      );
+    }
+
+    if (!teammate) return "No suitable teammate found";
+
+    const task = input.task as string;
+    const mode = (input.mode as "in_process" | "worktree") ?? "in_process";
+    const readOnly =
+      teammate.role === "code-reviewer" || teammate.role === "explorer";
+
+    console.log(`  ◈ Dispatching to ${teammate.name} (${teammate.role})`);
+
+    const result = await runSubAgent({
+      name: `${teammate.name}-${teammate.role}`,
+      prompt: task,
+      systemPrompt:
+        _baseSystemPrompt + "\n\n" + teammate.systemPrompt,
+      router: _router!,
+      toolRegistry: _registry!,
+      toolContext: context,
+      readOnly,
+      maxIterations: 15,
+      mode,
+    });
+
+    await recordTeammateActivity(
+      teamId,
+      teammate.id,
+      1,
+      result.toolCalls.length,
+    );
+
+    const worktreeInfo = result.worktree
+      ? `\nWorktree: ${result.worktree.path} (${result.worktree.branch})`
+      : "";
+
+    return `## ${teammate.name} (${teammate.role})\n\n${result.text}${worktreeInfo}`;
   },
 };

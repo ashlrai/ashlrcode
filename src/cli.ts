@@ -78,7 +78,7 @@ import { sendMessageTool } from "./tools/send-message.ts";
 import { sleepTool } from "./tools/sleep.ts";
 import { todoWriteTool } from "./tools/todo-write.ts";
 import { diffTool } from "./tools/diff.ts";
-import { teamCreateTool, teamDeleteTool, teamListTool } from "./tools/team.ts";
+import { teamCreateTool, teamDeleteTool, teamListTool, teamDispatchTool, initTeamTools } from "./tools/team.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
 import { initTasks } from "./tools/tasks.ts";
@@ -182,6 +182,7 @@ async function main() {
   registry.register(teamCreateTool);
   registry.register(teamDeleteTool);
   registry.register(teamListTool);
+  registry.register(teamDispatchTool);
   if (process.platform === "win32") {
     registry.register(powershellTool);
   }
@@ -236,6 +237,7 @@ async function main() {
 
   // Initialize agent tool with router/registry references
   initAgentTool(router, registry, baseSystemPrompt);
+  initTeamTools(router, registry, baseSystemPrompt);
 
   // Tool context
   const toolContext: ToolContext = {
