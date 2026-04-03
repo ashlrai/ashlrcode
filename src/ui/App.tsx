@@ -23,6 +23,7 @@ interface AppProps {
   contextLimit: string;
   buddyName: string;
   buddyQuip: string;
+  buddyQuipType: "quip" | "suggestion" | "reaction";
   buddyArt: string[];
   items: OutputItem[];
   isProcessing: boolean;
@@ -33,7 +34,7 @@ interface AppProps {
 export function App({
   onSubmit, onExit, onModeSwitch, mode, modeColor,
   contextPercent, contextUsed, contextLimit,
-  buddyName, buddyQuip, buddyArt,
+  buddyName, buddyQuip, buddyQuipType, buddyArt,
   items, isProcessing, spinnerText, commands,
 }: AppProps) {
   const [input, setInput] = useState("");
@@ -127,7 +128,13 @@ export function App({
           <Text dimColor>  · </Text>
           <Text color="cyan" bold>{buddyName}</Text>
           <Text dimColor>: </Text>
-          <Text dimColor italic>"{buddyQuip}"</Text>
+          {buddyQuipType === "suggestion" ? (
+            <Text color="green">💡 {buddyQuip}</Text>
+          ) : buddyQuipType === "reaction" ? (
+            <Text color="yellow">{buddyQuip}</Text>
+          ) : (
+            <Text dimColor italic>"{buddyQuip}"</Text>
+          )}
         </Box>
       </Box>
     </Box>

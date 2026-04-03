@@ -25,6 +25,7 @@ import type { Session } from "./persistence/session.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import type { BuddyData } from "./ui/buddy.ts";
 import { setBypassMode } from "./config/permissions.ts";
+import { generateBuddyComment, shouldUseAI, type BuddyCommentType } from "./ui/buddy-ai.ts";
 import { scanCodebase } from "./autopilot/scanner.ts";
 import { WorkQueue } from "./autopilot/queue.ts";
 import { DEFAULT_CONFIG } from "./autopilot/types.ts";
@@ -102,6 +103,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     { id: 0, text: theme.warning("  ⚠ All tools auto-approved (Ink mode). Use with care.") },
   ];
   let nextId = 1;
+  let turnCount = 0;
+  let currentQuipType: BuddyCommentType = "quip";
+  let lastToolName = "";
+  let lastToolResult = "";
+  let lastHadError = false;
   let isProcessing = false;
   let spinnerText = "Thinking";
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
@@ -128,6 +134,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       contextLimit: formatTk(ctxLimit),
       buddyName: state.buddy.name,
       buddyQuip: getQuip(state.buddy.mood),
+      buddyQuipType: currentQuipType,
       buddyArt: getBuddyArt(state.buddy),
       items,
       isProcessing,
@@ -657,7 +664,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         },
         onToolEnd: (_name, result, isError) => {
           isProcessing = false;
-          if (isError) recordError(state.buddy);
+          lastToolName = _name;
+          lastToolResult = result.slice(0, 50);
+          if (isError) { recordError(state.buddy); lastHadError = true; }
           else recordToolCallSuccess(state.buddy);
           const status = isError ? theme.error("  ✗") : theme.success("  ✓");
           const lines = result.split("\n");
@@ -683,13 +692,33 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
 
       // Turn separator
-      const turnCount = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
-      addOutput(theme.muted(`\n  ── turn ${turnCount} · $${state.router.costs.totalCostUSD.toFixed(4)} · ${state.buddy.name} ──\n`));
+      turnCount++;
+      const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
+      addOutput(theme.muted(`\n  ── turn ${tc} · $${state.router.costs.totalCostUSD.toFixed(4)} · ${state.buddy.name} ──\n`));
+
+      // AI-powered buddy comment (every 5th turn, fire-and-forget)
+      if (shouldUseAI(turnCount, lastHadError)) {
+        generateBuddyComment(
+          { lastTool: lastToolName, lastResult: lastToolResult, mood: state.buddy.mood, errorOccurred: lastHadError },
+          state.router.currentProvider.config.apiKey,
+          state.router.currentProvider.config.baseURL
+        ).then((comment) => {
+          currentQuipType = comment.type;
+          // Override the quip getter for next render
+          const origGetQuip = getQuip;
+          const aiText = comment.text;
+          // Store for display on next update
+          QUIPS[state.buddy.mood] = [aiText, ...(QUIPS[state.buddy.mood] ?? [])];
+          update();
+        }).catch(() => {});
+      }
+      lastHadError = false;
 
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       const categorized = categorizeError(error);
       addOutput(theme.error(`\n  Error: ${categorized.message}\n`));
+      lastHadError = true;
     }
 
     isProcessing = false;
