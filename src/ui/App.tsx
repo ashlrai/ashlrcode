@@ -37,6 +37,7 @@ export function App({
   items, isProcessing, spinnerText, commands,
 }: AppProps) {
   const [input, setInput] = useState("");
+  const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
   const { exit } = useApp();
   const w = process.stdout.columns || 80;
 
@@ -47,17 +48,17 @@ export function App({
   const handleSubmit = useCallback((value: string) => {
     const text = value.trim();
     setInput("");
+    setInputKey(k => k + 1); // Remount to reset cursor
     if (text) onSubmit(text);
   }, [onSubmit]);
 
   const handleModeSwitch = useCallback(() => onModeSwitch(), [onModeSwitch]);
 
-  // Accept autocomplete: clear input first, then set suggestion on next tick
-  // This forces ink-text-input to reset its internal cursor to the end
+  // Accept autocomplete: set value AND force remount to reset cursor to end
   const acceptSuggestion = useCallback(() => {
     if (!suggestion) return;
-    setInput("");
-    setTimeout(() => setInput(suggestion + " "), 0);
+    setInput(suggestion + " ");
+    setInputKey(k => k + 1); // Force TextInput remount — cursor goes to end
   }, [suggestion]);
 
   useInput(useCallback((ch: string, key: any) => {
@@ -103,6 +104,7 @@ export function App({
         ) : (
           <Box>
             <TextInput
+              key={inputKey}
               value={input}
               onChange={setInput}
               onSubmit={handleSubmit}
