@@ -159,6 +159,11 @@ class SimpleLSPClient {
 
   async stop(): Promise<void> {
     if (!this.proc) return;
+    // Reject all pending requests before shutting down
+    for (const [id, pending] of this.pendingRequests) {
+      pending.reject(new Error("LSP client stopped"));
+    }
+    this.pendingRequests.clear();
     try {
       await this.request("shutdown", null);
       this.notify("exit", null);
@@ -173,6 +178,7 @@ class SimpleLSPClient {
 
 // Cache active LSP clients by language:cwd
 const clients = new Map<string, SimpleLSPClient>();
+const inFlight = new Map<string, Promise<SimpleLSPClient>>();
 
 async function getClient(
   language: string,
@@ -180,14 +186,20 @@ async function getClient(
 ): Promise<SimpleLSPClient> {
   const key = `${language}:${cwd}`;
   if (clients.has(key)) return clients.get(key)!;
+  if (inFlight.has(key)) return inFlight.get(key)!;
 
   const config = SERVER_CONFIGS[language];
   if (!config) throw new Error(`No LSP server configured for ${language}`);
 
-  const client = new SimpleLSPClient();
-  await client.start(config, cwd);
-  clients.set(key, client);
-  return client;
+  const p = (async () => {
+    const client = new SimpleLSPClient();
+    await client.start(config, cwd);
+    clients.set(key, client);
+    inFlight.delete(key);
+    return client;
+  })();
+  inFlight.set(key, p);
+  return p;
 }
 
 // LSP location result shapes

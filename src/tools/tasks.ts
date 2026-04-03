@@ -99,7 +99,7 @@ export const taskCreateTool: Tool = {
 
   isReadOnly() { return true; },
   isDestructive() { return false; },
-  isConcurrencySafe() { return true; },
+  isConcurrencySafe() { return false; },
 
   validateInput(input) {
     if (!input.subject) return "subject is required";
@@ -178,7 +178,7 @@ export const taskUpdateTool: Tool = {
 
   isReadOnly() { return true; },
   isDestructive() { return false; },
-  isConcurrencySafe() { return true; },
+  isConcurrencySafe() { return false; },
 
   validateInput(input) {
     if (!input.taskId) return "taskId is required";

@@ -882,9 +882,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   // Keybinding action callbacks
   const handleModeSwitch = () => { cycleMode(); update(); };
-  const handleUndo = () => { handleCommand("/undo"); };
+  const handleUndo = () => { handleCommand("/undo").catch(() => {}); };
   const handleEffortCycle = () => { cycleEffort(); update(); };
-  const handleCompact = () => { handleCommand("/compact"); };
+  const handleCompact = () => { handleCommand("/compact").catch(() => {}); };
   const handleClearScreen = () => { items = []; update(); };
 
   function appProps() {

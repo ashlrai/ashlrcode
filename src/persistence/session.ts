@@ -159,8 +159,8 @@ export class Session {
     // Prepend synthetic summary message if we found a compact boundary
     if (lastCompactIndex >= 0) {
       messages.unshift({
-        role: "assistant",
-        content: "[Previous conversation summary]\n" + compactSummary,
+        role: "user",
+        content: "[Previous session context]\n" + compactSummary,
       });
     }
 

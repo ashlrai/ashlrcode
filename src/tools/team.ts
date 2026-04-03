@@ -239,13 +239,13 @@ export const teamDispatchTool: Tool = {
     };
   },
   isReadOnly() {
-    return true;
+    return false;
   },
   isDestructive() {
     return false;
   },
   isConcurrencySafe() {
-    return true;
+    return false;
   },
   validateInput(input) {
     if (!input.teamId) return "teamId required";

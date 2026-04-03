@@ -159,6 +159,7 @@ export class CircuitBreaker {
   private failures = 0;
   private lastFailureTime = 0;
   private state: CircuitState = "closed";
+  private probeInFlight = false;
 
   constructor(
     /** Number of consecutive failures before opening the circuit */
@@ -175,12 +176,15 @@ export class CircuitBreaker {
       // Check if enough time has passed to try again
       if (Date.now() - this.lastFailureTime >= this.resetTimeMs) {
         this.state = "half-open";
+        this.probeInFlight = true;
         return true;
       }
       return false;
     }
 
-    // half-open: allow one probe request
+    // half-open: allow only one probe request at a time
+    if (this.probeInFlight) return false;
+    this.probeInFlight = true;
     return true;
   }
 
@@ -188,10 +192,12 @@ export class CircuitBreaker {
   recordSuccess(): void {
     this.failures = 0;
     this.state = "closed";
+    this.probeInFlight = false;
   }
 
   /** Record a failed request — may trip the breaker */
   recordFailure(): void {
+    this.probeInFlight = false;
     this.failures++;
     this.lastFailureTime = Date.now();
     if (this.failures >= this.threshold) {

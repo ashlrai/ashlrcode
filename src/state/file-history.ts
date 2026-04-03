@@ -37,31 +37,29 @@ export class FileHistoryStore {
    * If the file doesn't exist yet, records an empty snapshot so undo can delete it.
    */
   async capture(filePath: string, tool: string, turnNumber: number): Promise<void> {
-    if (!existsSync(filePath)) {
-      // File doesn't exist yet — undo means delete
-      const snapshot: FileSnapshot = {
-        id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        filePath,
-        content: "",
-        timestamp: new Date().toISOString(),
-        tool,
-        turnNumber,
-      };
-      this.snapshots.push(snapshot);
-      this.persistSnapshot(snapshot).catch(() => {});
-      return;
-    }
-
-    const content = await readFile(filePath, "utf-8");
-    const snapshot: FileSnapshot = {
+    const baseSnapshot = {
       id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       filePath,
-      content,
       timestamp: new Date().toISOString(),
       tool,
       turnNumber,
     };
 
+    let content: string;
+    try {
+      content = await readFile(filePath, "utf-8");
+    } catch (err: any) {
+      if (err?.code === "ENOENT") {
+        // File doesn't exist (or was deleted between check and read) — undo means delete
+        const snapshot: FileSnapshot = { ...baseSnapshot, content: "" };
+        this.snapshots.push(snapshot);
+        this.persistSnapshot(snapshot).catch(() => {});
+        return;
+      }
+      throw err;
+    }
+
+    const snapshot: FileSnapshot = { ...baseSnapshot, content };
     this.snapshots.push(snapshot);
     this.persistSnapshot(snapshot).catch(() => {});
   }

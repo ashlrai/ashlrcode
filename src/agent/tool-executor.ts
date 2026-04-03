@@ -79,6 +79,10 @@ export async function executeToolCalls(
     results.push(result);
   }
 
+  // Restore original tool call ordering
+  const orderMap = new Map(toolCalls.map((tc, i) => [tc.id, i]));
+  results.sort((a, b) => (orderMap.get(a.toolCallId) ?? 0) - (orderMap.get(b.toolCallId) ?? 0));
+
   return results;
 }
 

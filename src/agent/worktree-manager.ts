@@ -22,22 +22,30 @@ export async function createWorktree(name: string): Promise<WorktreeInfo> {
   const branch = `agent/${safeName}-${timestamp}`;
   const wtPath = join(WORKTREE_DIR, `${safeName}-${timestamp}`);
 
-  // Get current branch
+  // Get current branch — read streams before awaiting exit to avoid deadlock
   const headProc = Bun.spawn(["git", "rev-parse", "--abbrev-ref", "HEAD"], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const parentBranch = (await new Response(headProc.stdout).text()).trim();
-  await headProc.exited;
+  const headStdoutPromise = new Response(headProc.stdout).text();
+  const headStderrPromise = new Response(headProc.stderr).text();
+  const headExit = await headProc.exited;
+  const parentBranch = (await headStdoutPromise).trim();
+  if (headExit !== 0 || !parentBranch) {
+    const headStderr = await headStderrPromise;
+    throw new Error(`Not inside a git repository: ${headStderr}`);
+  }
 
-  // Create worktree with new branch
+  // Create worktree with new branch — same pattern: read streams before exit
   const proc = Bun.spawn(["git", "worktree", "add", "-b", branch, wtPath], {
     stdout: "pipe",
     stderr: "pipe",
   });
+  const procStdoutPromise = new Response(proc.stdout).text();
+  const procStderrPromise = new Response(proc.stderr).text();
   const exitCode = await proc.exited;
   if (exitCode !== 0) {
-    const stderr = await new Response(proc.stderr).text();
+    const stderr = await procStderrPromise;
     throw new Error(`Failed to create worktree: ${stderr}`);
   }
 
