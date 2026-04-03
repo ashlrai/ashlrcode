@@ -132,6 +132,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       items,
       isProcessing,
       spinnerText,
+      commands: [
+        "/help", "/cost", "/status", "/effort", "/btw", "/history", "/undo",
+        "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
+        "/model", "/compact", "/diff", "/git", "/clear", "/quit",
+        "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
+        "/autopilot approve all", "/autopilot run",
+        ...state.skillRegistry.getAll().map(s => s.trigger),
+      ],
     };
   }
 

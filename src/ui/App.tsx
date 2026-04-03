@@ -28,6 +28,8 @@ interface AppProps {
   items: OutputItem[];
   isProcessing: boolean;
   spinnerText: string;
+  /** Available slash commands for autocomplete */
+  commands: string[];
 }
 
 export function App({
@@ -44,12 +46,18 @@ export function App({
   items,
   isProcessing,
   spinnerText,
+  commands,
 }: AppProps) {
   const [input, setInput] = useState("");
   const { exit } = useApp();
   const w = process.stdout.columns || 80;
-  const buddyWidth = 16; // space reserved for buddy on the right
+  const buddyWidth = 16;
   const lineWidth = w - buddyWidth;
+
+  // Autocomplete: find matching command when input starts with /
+  const suggestion = input.startsWith("/") && input.length > 1
+    ? commands.find(c => c.startsWith(input) && c !== input)
+    : undefined;
 
   const handleSubmit = useCallback((value: string) => {
     const text = value.trim();
@@ -61,6 +69,10 @@ export function App({
     if (key.ctrl && ch === "c") {
       onExit();
       exit();
+    }
+    // Tab or right arrow accepts autocomplete suggestion
+    if ((key.tab || key.rightArrow) && suggestion) {
+      setInput(suggestion);
     }
   });
 
@@ -94,14 +106,28 @@ export function App({
             {isProcessing ? (
               <Text dimColor>waiting for response...</Text>
             ) : (
-              <TextInput
-                value={input}
-                onChange={setInput}
-                onSubmit={handleSubmit}
-                placeholder="Type a message..."
-              />
+              <Box>
+                <TextInput
+                  value={input}
+                  onChange={setInput}
+                  onSubmit={handleSubmit}
+                  placeholder="Type a message..."
+                />
+                {suggestion && (
+                  <Text dimColor>{suggestion.slice(input.length)}</Text>
+                )}
+              </Box>
             )}
           </Box>
+          {/* Autocomplete suggestions */}
+          {input.startsWith("/") && input.length > 1 && !isProcessing && (
+            <Box marginLeft={2}>
+              <Text dimColor>
+                {commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}
+              </Text>
+              {suggestion && <Text dimColor italic>  tab ↹</Text>}
+            </Box>
+          )}
           <Text dimColor>{"─".repeat(lineWidth)}</Text>
           {/* Status line */}
           <Box justifyContent="space-between">
