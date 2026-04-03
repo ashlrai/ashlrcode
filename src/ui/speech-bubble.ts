@@ -1,5 +1,5 @@
 /**
- * ASCII speech bubble renderer.
+ * ASCII speech bubble renderer using Unicode box-drawing characters.
  * Creates a speech bubble to the left with a tail pointing at the buddy.
  */
 
@@ -28,12 +28,13 @@ function wrapText(text: string, maxWidth: number): string[] {
  *
  * Output:
  * ```
- *  .------------------------.
- *  | ship it, no tests      |   .---.
- *  | needed                 |  (•ᴗ•)>
- *  '--------.               '  /| |\
- *            \                  " " "
- *             `--              Glitch
+ *  ╭──────────────────────╮
+ *  │ ship it, no tests    │   c\  /c
+ *  │ needed               │  ( .  . )
+ *  ╰─────────╮            │  ( _nn_ )
+ *             ╰───────────╯  (______)
+ *                             ||  ||
+ *                            Glitch
  * ```
  */
 export function renderBuddyWithBubble(
@@ -44,27 +45,26 @@ export function renderBuddyWithBubble(
   targetHeight?: number
 ): string[] {
   const maxBubbleWidth = 26;
-  const textLines = wrapText(quip, maxBubbleWidth - 4); // 4 for "| " and " |"
+  const textLines = wrapText(quip, maxBubbleWidth - 4); // 4 for "│ " and " │"
   const innerWidth = textLines.reduce((a, l) => Math.max(a, l.length), 8);
-  const bubbleWidth = innerWidth + 4; // "| " + text + " |"
+  const bubbleWidth = innerWidth + 4; // "│ " + text + " │"
 
   // Build bubble lines
   const bubbleLines: string[] = [];
 
   // Top border
-  bubbleLines.push(" ." + "-".repeat(bubbleWidth - 2) + ".");
+  bubbleLines.push(" ╭" + "─".repeat(bubbleWidth - 2) + "╮");
 
   // Content lines
   for (const line of textLines) {
-    bubbleLines.push(" | " + line.padEnd(innerWidth) + " |");
+    bubbleLines.push(" │ " + line.padEnd(innerWidth) + " │");
   }
 
-  // Bottom border with tail
+  // Bottom border with tail — two rows for a closed look
   const tailPos = Math.min(10, bubbleWidth - 3);
-  bubbleLines.push(" '" + "-".repeat(tailPos) + "." + " ".repeat(Math.max(0, bubbleWidth - tailPos - 3)) + "'");
-
-  // Tail lines
-  bubbleLines.push(" ".repeat(tailPos + 3) + "\\");
+  const rightSide = bubbleWidth - tailPos - 3;
+  bubbleLines.push(" ╰" + "─".repeat(tailPos) + "╮" + " ".repeat(rightSide) + "│");
+  bubbleLines.push(" ".repeat(tailPos + 3) + "╰" + "─".repeat(rightSide) + "╯");
 
   // Now compose: bubble on left, buddy art on right
   // The buddy should start at the same height as the bottom of the bubble

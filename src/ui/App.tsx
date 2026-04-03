@@ -166,7 +166,7 @@ export function App({
             <Text color={modeColor} bold>❯❯ </Text>
             <Text color={modeColor}>{mode}</Text>
             <Text dimColor> (shift+tab)</Text>
-            <Text>{"    "}</Text>
+            <Text dimColor>{"      ·      "}</Text>
             <Text color={ctxColor}>{"█".repeat(filled)}</Text>
             <Text dimColor>{"░".repeat(empty)}</Text>
             <Text> </Text>
