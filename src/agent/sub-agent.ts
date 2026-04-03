@@ -12,6 +12,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
 import type { Message } from "../providers/types.ts";
 import { runAgentLoop } from "./loop.ts";
+import { createWorktree, removeWorktree } from "./worktree-manager.ts";
 
 export interface SubAgentConfig {
   name: string;
@@ -22,6 +23,8 @@ export interface SubAgentConfig {
   toolContext: ToolContext;
   /** Only allow read-only tools */
   readOnly?: boolean;
+  /** Execution mode: in-process (default) or worktree-isolated */
+  mode?: "in_process" | "worktree";
   /** Max iterations for this sub-agent */
   maxIterations?: number;
   /** Callback for streaming text */
@@ -36,12 +39,51 @@ export interface SubAgentResult {
   text: string;
   toolCalls: Array<{ name: string; input: Record<string, unknown>; result: string }>;
   messages: Message[];
+  worktree?: { path: string; branch: string };
+}
+
+/**
+ * Run a sub-agent in an isolated git worktree.
+ * The worktree is created before the agent runs and preserved after
+ * so the parent can inspect or merge the branch. On error, the
+ * worktree is cleaned up automatically.
+ */
+async function runWorktreeSubAgent(config: SubAgentConfig): Promise<SubAgentResult> {
+  const wt = await createWorktree(config.name);
+  const worktreeContext: ToolContext = { ...config.toolContext, cwd: wt.path };
+
+  try {
+    const result = await runAgentLoop(config.prompt, [], {
+      systemPrompt: config.systemPrompt,
+      router: config.router,
+      toolRegistry: config.toolRegistry,
+      toolContext: worktreeContext,
+      readOnly: config.readOnly,
+      maxIterations: config.maxIterations ?? 15,
+      onText: config.onText,
+      onToolStart: config.onToolStart,
+      onToolEnd: config.onToolEnd,
+    });
+
+    return {
+      name: config.name,
+      text: result.finalText,
+      toolCalls: result.toolCalls,
+      messages: result.messages,
+      worktree: { path: wt.path, branch: wt.branch },
+    };
+  } catch (err) {
+    await removeWorktree(wt.path).catch(() => {});
+    throw err;
+  }
 }
 
 /**
  * Run a sub-agent with its own fresh message context.
  */
 export async function runSubAgent(config: SubAgentConfig): Promise<SubAgentResult> {
+  if (config.mode === "worktree") return runWorktreeSubAgent(config);
+
   const result = await runAgentLoop(config.prompt, [], {
     systemPrompt: config.systemPrompt,
     router: config.router,

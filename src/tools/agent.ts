@@ -57,6 +57,12 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
           type: "boolean",
           description: "Only allow read-only tools (default: true)",
         },
+        mode: {
+          type: "string",
+          enum: ["in_process", "worktree"],
+          description:
+            "Execution mode. 'worktree' creates an isolated git worktree so the sub-agent can make changes without affecting the current working tree.",
+        },
       },
       required: ["description", "prompt"],
     };
@@ -89,8 +95,10 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
     const description = input.description as string;
     const prompt = input.prompt as string;
     const readOnly = (input.readOnly as boolean) ?? true;
+    const mode = (input.mode as SubAgentConfig["mode"]) ?? "in_process";
 
-    console.log(chalk.dim(`  ◈ Spawning agent: ${description}`));
+    const modeLabel = mode === "worktree" ? " [worktree]" : "";
+    console.log(chalk.dim(`  ◈ Spawning agent${modeLabel}: ${description}`));
 
     const result = await runSubAgent({
       name: description,
@@ -100,6 +108,7 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
       toolRegistry: _registry!,
       toolContext: context,
       readOnly,
+      mode,
       maxIterations: 15,
       onToolStart: (name) => {
         console.log(chalk.dim(`    ↳ ${name}`));
@@ -113,8 +122,12 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
       ? `\n\nTools used: ${result.toolCalls.map((t) => t.name).join(", ")}`
       : "";
 
-    console.log(chalk.dim(`  ◈ Agent "${description}" completed`));
+    const worktreeInfo = result.worktree
+      ? `\n\nWorktree branch: \`${result.worktree.branch}\` at ${result.worktree.path}`
+      : "";
 
-    return `## Agent: ${description}\n\n${result.text}${toolSummary}`;
+    console.log(chalk.dim(`  ◈ Agent "${description}" completed${modeLabel}`));
+
+    return `## Agent: ${description}\n\n${result.text}${toolSummary}${worktreeInfo}`;
   },
 };
