@@ -285,6 +285,10 @@ bunx tsc --noEmit           # Type check
 
 ---
 
+## Contributing
+
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up your dev environment, run tests, add tools/skills, and submit PRs.
+
 ## License
 
-Private — AshlrAI internal tooling.
+MIT License

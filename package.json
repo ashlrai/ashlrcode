@@ -4,7 +4,13 @@
   "description": "Multi-provider AI coding agent CLI",
   "module": "src/cli.ts",
   "type": "module",
-  "private": true,
+  "private": false,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ashlrai/ashlrcode"
+  },
+  "keywords": ["ai", "coding", "agent", "cli", "grok", "claude", "mcp"],
   "bin": {
     "ashlrcode": "./src/cli.ts",
     "ac": "./src/cli.ts"
