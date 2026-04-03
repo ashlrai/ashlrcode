@@ -8,7 +8,7 @@
 import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
-import { renderBuddyWithBubble } from "./speech-bubble.ts";
+// speech-bubble.ts available but not used in live area (causes duplication)
 
 interface OutputItem { id: number; text: string; }
 
@@ -73,9 +73,6 @@ export function App({
   const empty = barWidth - filled;
   const ctxColor = contextPercent < 50 ? "green" : contextPercent < 75 ? "yellow" : "red";
 
-  // Compose buddy + speech bubble as right-aligned text lines
-  const buddyComposite = renderBuddyWithBubble(buddyQuip, buddyArt, buddyName);
-
   return (
     <Box flexDirection="column">
       {/* Scrollable output */}
@@ -85,15 +82,6 @@ export function App({
 
       {/* Spinner */}
       {isProcessing && <Text dimColor>  ⠋ {spinnerText}</Text>}
-
-      {/* Buddy + speech bubble — right-aligned above input */}
-      <Box justifyContent="flex-end">
-        <Box flexDirection="column">
-          {buddyComposite.map((line, i) => (
-            <Text key={i} color="cyan" dimColor>{line}</Text>
-          ))}
-        </Box>
-      </Box>
 
       {/* Input box — full width */}
       <Text dimColor>{"-".repeat(w)}</Text>
@@ -123,7 +111,7 @@ export function App({
       )}
       <Text dimColor>{"-".repeat(w)}</Text>
 
-      {/* Status line */}
+      {/* Status line — mode left, context + buddy right */}
       <Box justifyContent="space-between">
         <Box>
           <Text color={modeColor} bold>❯❯ </Text>
@@ -136,6 +124,10 @@ export function App({
           <Text> </Text>
           <Text color={ctxColor}>{contextPercent}%</Text>
           <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+          <Text dimColor>  · </Text>
+          <Text color="cyan" bold>{buddyName}</Text>
+          <Text dimColor>: </Text>
+          <Text dimColor italic>"{buddyQuip}"</Text>
         </Box>
       </Box>
     </Box>
