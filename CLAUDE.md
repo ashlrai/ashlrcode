@@ -1,29 +1,38 @@
-# AshlrCode v1.5.0
+# AshlrCode v2.0.0
 
-Multi-provider AI coding agent CLI. Internal tooling for AshlrAI.
-30 tools, 15 skills, MCP support, 121 tests.
+Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
+31 tools, 15 skills, 6 providers, 124 tests. Ink-based terminal UI with buddy system.
 
 ## Architecture
 
 - **Runtime**: Bun (TypeScript, no build step, strict mode)
-- **Entry point**: `src/cli.ts` — REPL, commands, state management
+- **Entry point**: `src/cli.ts` — Ink-based REPL, commands, state management
+- **UI**: `src/ui/` — Ink components (React terminal rendering), input box, buddy companion, speech bubbles, context bar
 - **Agent loop**: `src/agent/loop.ts` — AsyncGenerator streaming, tool dispatch
-- **Providers**: `src/providers/` — xAI (OpenAI SDK) + Anthropic (native SDK), auto-failover with retry
-- **Tools**: `src/tools/` — 30 tools with registry pattern (validate → permissions → hooks → execute)
+- **Providers**: `src/providers/` — 6 providers (xAI, Anthropic, OpenAI, Ollama, Groq, DeepSeek), auto-failover with retry
+- **Tools**: `src/tools/` — 31 tools including PowerShell for Windows, with registry pattern (validate → permissions → hooks → execute)
 - **MCP**: `src/mcp/` — stdio transport client, auto-discovery of MCP server tools
 - **Skills**: `src/skills/` — slash command loader + registry, templates in `prompts/skills/`
 - **Planning**: `src/planning/` — plan mode (read-only enforcement), plan file management
 - **Persistence**: `src/persistence/` — JSONL sessions, per-project memory
 - **Config**: `src/config/` — settings, hooks, permissions, git context
-- **UI**: `src/ui/` — spinner, markdown renderer
 - **State**: `src/state/` — file snapshot/undo history
+
+## Key Features
+
+- **Ink UI**: Full React-based terminal rendering (replaces readline). Input box with borders, slash command autocomplete (Tab), mode switching (Shift+Tab)
+- **Buddy system**: ASCII companion beside input with mood-based poses, speech bubbles, satirical quips
+- **Autopilot**: `/autopilot` scans codebase, builds work queue. `/autopilot auto` runs fully autonomous scan → fix → test → PR → merge
+- **Image support**: Drag-and-drop image input with smart paste collapse
+- **PowerShell**: Windows-native shell execution tool
+- **3-tier context compression**: autoCompact (summarize old messages), snipCompact (truncate tool results), contextCollapse (collapse large pastes/images/repetitive content). Provider-aware limits: xAI 2M, Anthropic 200K
 
 ## Commands
 
 ```bash
 bun run start           # Run CLI
 bun run dev             # Watch mode
-bun test                # Run 121 tests
+bun test                # Run 124 tests
 bunx tsc --noEmit       # Type check
 ```
 
@@ -37,18 +46,18 @@ bunx tsc --noEmit       # Type check
 
 ```
 src/
-├── cli.ts                 # Entry point, REPL, 15 commands
+├── cli.ts                 # Entry point, Ink UI, REPL, 15+ commands
 ├── agent/                 # Loop, context compression, parallel executor, sub-agents
-├── providers/             # xAI + Anthropic with retry logic
-├── tools/                 # 30 tools (file ops, search, exec, planning, memory, git)
+├── providers/             # 6 providers with retry logic
+├── tools/                 # 31 tools (file ops, search, exec, PowerShell, planning, memory, git)
 ├── mcp/                   # MCP client + manager (stdio transport)
 ├── skills/                # Skill loader + registry (15 slash commands)
 ├── planning/              # Plan mode + tools
 ├── persistence/           # Sessions (JSONL) + memory (markdown)
 ├── config/                # Settings, hooks, permissions, git context
 ├── state/                 # File history (snapshot/undo)
-├── ui/                    # Spinner, markdown renderer
-└── __tests__/             # 10 test files, 121 tests
+├── ui/                    # Ink components, buddy, speech bubbles, context bar
+└── __tests__/             # 10+ test files, 124 tests
 ```
 
 ## Tool Interface
@@ -94,6 +103,7 @@ Skills are auto-loaded from `prompts/skills/`, `~/.ashlrcode/skills/`, and `.ash
 
 - **Primary**: xAI Grok 4.1 Fast ($0.20/$0.50 per M tokens, 2M context)
 - **Fallback**: Anthropic Claude Sonnet ($3/$15 per M tokens, 200K context)
+- 4 additional providers: OpenAI, Ollama (local), Groq, DeepSeek
 - Auto-failover on rate limits with exponential backoff (3 retries)
 - Network errors: 2 retries with 2s base delay
 - Auth errors: immediate fail with clear message
@@ -103,6 +113,7 @@ Skills are auto-loaded from `prompts/skills/`, `~/.ashlrcode/skills/`, and `.ash
 
 - **autoCompact**: summarize older messages when approaching token limit
 - **snipCompact**: truncate tool results > 2000 chars
+- **contextCollapse**: collapse large pastes, images, and repetitive content
 - Provider-aware limits: xAI 2M, Anthropic 200K
 - Automatic compaction triggered before each turn
 
@@ -118,7 +129,7 @@ Skills are auto-loaded from `prompts/skills/`, `~/.ashlrcode/skills/`, and `.ash
 ## Testing
 
 ```bash
-bun test              # All 121 tests
+bun test              # All 124 tests
 bun test --watch      # Watch mode
 ```
 

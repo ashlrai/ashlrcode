@@ -2,6 +2,36 @@
 
 All notable changes to AshlrCode are documented here.
 
+## [2.0.0] - 2026-04-01
+
+### Added
+- **Ink UI**: Full React-based terminal rendering via Ink (replaces readline). Input box with borders, context bar, visual status
+- **Buddy system**: ASCII companion beside input with mood-based poses, speech bubbles, and satirical quips
+- **Autopilot**: `/autopilot` scans codebase and builds work queue; `/autopilot approve` for review; `/autopilot auto` for fully autonomous scan → fix → test → PR → merge
+- **Image support**: Drag-and-drop image input directly into the terminal
+- **Smart paste**: Large clipboard pastes automatically collapsed to preserve context
+- **PowerShell tool**: Windows-native shell execution alongside Bash
+- **contextCollapse**: Third tier of context compression — collapses large pastes, images, and repetitive content
+- **Slash command autocomplete**: Tab completion for skills and CLI commands
+- **Mode switching**: Shift+Tab to switch modes inline
+- **Open-source release**: MIT license, CI/CD pipeline, npm publish configuration, CONTRIBUTING.md
+
+### Fixed
+- 7 autopilot security and reliability issues (push safety, bypass warning, SIGINT guard)
+- Tab race condition, stale callback, grep shell injection
+- Speech bubble math, key typing, spread overflow
+- Radically simplified layout — no more width bugs
+- Cursor positioning: status above, line, prompt at bottom
+- Context alternation and default provider fixes
+
+## [1.5.0] - 2026-04-01
+
+### Added
+- **6 providers**: xAI, Anthropic, OpenAI, Ollama (local), Groq, DeepSeek
+- **3-tier context compression**: autoCompact + snipCompact + contextCollapse
+- Prompt above status line using ANSI cursor save/restore
+- Input box with lines above and below prompt
+
 ## [1.3.0] - 2026-04-01
 
 ### Added
