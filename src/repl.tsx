@@ -46,7 +46,6 @@ import { KairosLoop } from "./agent/kairos.ts";
 import { initTelemetry, logEvent, readRecentEvents, formatEvents } from "./telemetry/event-log.ts";
 import { createTrigger, listTriggers, deleteTrigger, toggleTrigger, TriggerRunner } from "./agent/cron.ts";
 import { startRecording, stopRecording, isRecording, transcribeRecording, checkVoiceAvailability, type VoiceConfig } from "./voice/voice-mode.ts";
-import { feature } from "./config/features.ts";
 
 // Buddy quips (imported from banner for status line)
 const QUIPS: Record<string, string[]> = {
@@ -225,7 +224,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/model", "/compact", "/diff", "/git", "/clear", "/quit",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
-        "/kairos", "/kairos stop", "/telemetry",
+        "/kairos", "/kairos stop", "/telemetry", "/voice",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
     };
@@ -339,7 +338,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /undercover /patches /kairos /trigger /telemetry /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /features /keybindings /undercover /patches /kairos /trigger /telemetry /voice /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -899,6 +898,41 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
       }
 
+      case "/voice": {
+        if (!feature("VOICE_MODE")) {
+          addOutput(theme.tertiary("\n  Voice mode disabled. Set AC_FEATURE_VOICE_MODE=true\n"));
+          return true;
+        }
+        const check = await checkVoiceAvailability();
+        if (!check.available) {
+          addOutput(theme.error(`\n  ${check.details}\n`));
+          return true;
+        }
+
+        if (isRecording()) {
+          addOutput(theme.accent("  Transcribing...\n"));
+          const voiceConfig: VoiceConfig = {
+            sttProvider: process.env.OPENAI_API_KEY ? "whisper-api" : "whisper-local",
+            whisperApiKey: process.env.OPENAI_API_KEY,
+          };
+          try {
+            const text = await transcribeRecording(voiceConfig);
+            if (text) {
+              addOutput(theme.success(`  Voice: "${text}"\n`));
+              await runTurnInk(text);
+            } else {
+              addOutput(theme.error("  Failed to transcribe\n"));
+            }
+          } catch (e: any) {
+            addOutput(theme.error(`  Transcription error: ${e.message}\n`));
+          }
+        } else {
+          await startRecording();
+          addOutput(theme.accent("  Recording... /voice again to stop and transcribe\n"));
+        }
+        return true;
+      }
+
       default:
         if (cmd?.startsWith("/")) {
           addOutput(theme.tertiary(`\n  Unknown command: ${cmd}\n`));
@@ -1093,6 +1127,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   const handleEffortCycle = () => { cycleEffort(); update(); };
   const handleCompact = () => { handleCommand("/compact").catch(() => {}); };
   const handleClearScreen = () => { items = []; update(); };
+  const handleVoiceToggle = () => { handleCommand("/voice").catch(() => {}); };
 
   function appProps() {
     return {
@@ -1103,6 +1138,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       onEffortCycle: handleEffortCycle,
       onCompact: handleCompact,
       onClearScreen: handleClearScreen,
+      onVoiceToggle: handleVoiceToggle,
       inputHistory,
       ...getDisplayProps(),
     };

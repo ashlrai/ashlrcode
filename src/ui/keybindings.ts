@@ -31,6 +31,7 @@ const DEFAULT_BINDINGS: Keybinding[] = [
   { key: "up",        action: "history-prev",  description: "Previous input" },
   { key: "down",      action: "history-next",  description: "Next input" },
   { key: "right",     action: "autocomplete",  description: "Accept autocomplete (arrow)" },
+  { key: "ctrl+v",    action: "voice-toggle",  description: "Toggle voice recording (push-to-talk)" },
 ];
 
 let bindings: Keybinding[] = [...DEFAULT_BINDINGS];

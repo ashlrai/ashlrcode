@@ -21,6 +21,7 @@ interface AppProps {
   onEffortCycle?: () => void;
   onCompact?: () => void;
   onClearScreen?: () => void;
+  onVoiceToggle?: () => void;
   inputHistory?: InputHistory;
   mode: string;
   modeColor: string;
@@ -38,7 +39,7 @@ interface AppProps {
 }
 
 export function App({
-  onSubmit, onExit, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen,
+  onSubmit, onExit, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle,
   inputHistory, mode, modeColor,
   contextPercent, contextUsed, contextLimit,
   buddyName, buddyQuip, buddyQuipType, buddyArt,
@@ -110,8 +111,10 @@ export function App({
         onCompact?.(); return;
       case "clear-screen":
         onClearScreen?.(); return;
+      case "voice-toggle":
+        onVoiceToggle?.(); return;
     }
-  }, [suggestion, input, handleModeSwitch, onExit, exit, acceptSuggestion, inputHistory, onUndo, onEffortCycle, onCompact, onClearScreen]));
+  }, [suggestion, input, handleModeSwitch, onExit, exit, acceptSuggestion, inputHistory, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle]));
 
   const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);
