@@ -161,18 +161,16 @@ export function App({
 
       {/* Bottom: status left, buddy right */}
       <Box>
-        <Box flexGrow={1} flexDirection="column">
-          <Box>
-            <Text color={modeColor} bold>❯❯ </Text>
-            <Text color={modeColor}>{mode}</Text>
-            <Text dimColor> (shift+tab)</Text>
-            <Text dimColor>{"      ·      "}</Text>
-            <Text color={ctxColor}>{"█".repeat(filled)}</Text>
-            <Text dimColor>{"░".repeat(empty)}</Text>
-            <Text> </Text>
-            <Text color={ctxColor}>{contextPercent}%</Text>
-            <Text dimColor> · {contextUsed}/{contextLimit}</Text>
-          </Box>
+        <Box flexGrow={1}>
+          <Text color={modeColor} bold>❯❯ </Text>
+          <Text color={modeColor}>{mode}</Text>
+          <Text dimColor> (shift+tab)</Text>
+          <Text dimColor>{"      ·      "}</Text>
+          <Text color={ctxColor}>{"█".repeat(filled)}</Text>
+          <Text dimColor>{"░".repeat(empty)}</Text>
+          <Text> </Text>
+          <Text color={ctxColor}>{contextPercent}%</Text>
+          <Text dimColor> · {contextUsed}/{contextLimit}</Text>
         </Box>
 
         {/* Buddy panel — fixed height, right-aligned */}

@@ -137,7 +137,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   startBuddyAnimation();
 
   // Re-render on animation frames so the buddy visibly cycles between poses
-  const buddyAnimInterval = setInterval(() => { update(); }, 1500);
+  const buddyAnimInterval = setInterval(update, 1500);
 
   // Autopilot work queue
   const workQueue = new WorkQueue(state.toolContext.cwd);

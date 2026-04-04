@@ -13,7 +13,7 @@ function wrapText(text: string, maxWidth: number): string[] {
 
   for (const word of words) {
     if (current.length + word.length + 1 > maxWidth) {
-      lines.push(current);
+      if (current) lines.push(current);
       current = word;
     } else {
       current = current ? `${current} ${word}` : word;
@@ -45,7 +45,11 @@ export function renderBuddyWithBubble(
   targetHeight?: number
 ): string[] {
   const maxBubbleWidth = 26;
-  const textLines = wrapText(quip, maxBubbleWidth - 4); // 4 for "│ " and " │"
+  let textLines = wrapText(quip, maxBubbleWidth - 4); // 4 for "│ " and " │"
+  // Cap text lines so bubble always fits: top border + text + 2 tail rows = textLines + 3
+  if (targetHeight !== undefined && textLines.length > targetHeight - 3) {
+    textLines = textLines.slice(0, Math.max(1, targetHeight - 3));
+  }
   const innerWidth = textLines.reduce((a, l) => Math.max(a, l.length), 8);
   const bubbleWidth = innerWidth + 4; // "│ " + text + " │"
 
@@ -64,7 +68,7 @@ export function renderBuddyWithBubble(
   const tailPos = Math.min(10, bubbleWidth - 3);
   const rightSide = bubbleWidth - tailPos - 3;
   bubbleLines.push(" ╰" + "─".repeat(tailPos) + "╮" + " ".repeat(rightSide) + "│");
-  bubbleLines.push(" ".repeat(tailPos + 3) + "╰" + "─".repeat(rightSide) + "╯");
+  bubbleLines.push(" ".repeat(tailPos + 2) + "╰" + "─".repeat(rightSide + 1) + "╯");
 
   // Now compose: bubble on left, buddy art on right
   // The buddy should start at the same height as the bottom of the bubble
