@@ -10,8 +10,8 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, stat } from "fs/promises";
-import { dirname } from "path";
+import { readFile, readdir, stat } from "fs/promises";
+import { dirname, extname, join } from "path";
 
 // ---------------------------------------------------------------------------
 // Cache entry
@@ -162,8 +162,6 @@ export class SpeculationCache {
       const filePath = last.input.file_path;
       const dir = dirname(filePath);
       try {
-        const { readdir } = await import("fs/promises");
-        const { extname, join } = await import("path");
         const ext = extname(filePath);
         const entries = await readdir(dir);
         const siblings = entries

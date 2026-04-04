@@ -377,8 +377,8 @@ function parseTableCells(line: string): string[] {
   return inner.split("|").map((cell) => cell.trim());
 }
 
-/** Strip ANSI escape sequences for measuring visible string width. */
-function stripAnsi(str: string): number {
+/** Measure visible string width (strips ANSI escape sequences). */
+function visibleLength(str: string): number {
   // eslint-disable-next-line no-control-regex
   return str.replace(/\x1B\[[0-9;]*m/g, "").length;
 }
@@ -405,7 +405,7 @@ function renderTable(rows: string[][]): string {
   for (let c = 0; c < colCount; c++) {
     let max = 0;
     for (const row of formatted) {
-      const w = stripAnsi(row[c]!);
+      const w = visibleLength(row[c]!);
       if (w > max) max = w;
     }
     colWidths.push(Math.max(max, 1));
@@ -425,7 +425,7 @@ function renderTable(rows: string[][]): string {
     const row = formatted[r]!;
     // Data row: │ cell │ cell │
     const cells = row.map((cell, c) => {
-      const visible = stripAnsi(cell);
+      const visible = visibleLength(cell);
       const pad = colWidths[c]! - visible;
       return " " + cell + " ".repeat(pad + 1);
     });
