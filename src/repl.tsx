@@ -296,7 +296,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       commands: [
         "/help", "/cost", "/status", "/effort", "/btw", "/history", "/undo",
         "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
-        "/model", "/compact", "/diff", "/git", "/clear", "/quit", "/bug",
+        "/model", "/compact", "/diff", "/git", "/clear", "/quit", "/bug", "/version",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
         "/kairos", "/kairos stop", "/telemetry", "/voice",
@@ -433,7 +433,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /sync /features /keybindings /undercover /patches /kairos /trigger /telemetry /voice /clear /help /quit\n`);
+        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /sync /features /keybindings /undercover /patches /kairos /trigger /telemetry /voice /version /clear /help /quit\n`);
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -1162,6 +1162,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         }
         return true;
       }
+
+      case "/version":
+        addOutput(`\n  AshlrCode v${VERSION}\n`);
+        return true;
 
       default:
         if (cmd?.startsWith("/")) {

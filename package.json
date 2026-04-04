@@ -1,6 +1,6 @@
 {
   "name": "ashlrcode",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Multi-provider AI coding agent CLI — 42 tools, 34 commands, autonomous mode",
   "module": "src/cli.ts",
   "type": "module",

@@ -899,7 +899,9 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         break;
       case "auth":
         console.error(chalk.red(`\nAuth error: ${categorized.message}`));
-        console.error(chalk.dim("Check your API key (XAI_API_KEY or ANTHROPIC_API_KEY)"));
+        console.error(chalk.dim("Check your API key. Set XAI_API_KEY to get started."));
+        console.error(chalk.dim("Or set ANTHROPIC_API_KEY, OPENAI_API_KEY, GROQ_API_KEY, or DEEPSEEK_API_KEY as a fallback."));
+        console.error(chalk.dim("Run `ac` with no key to re-run the setup wizard."));
         break;
       case "network":
         console.error(chalk.red(`\nNetwork error: ${categorized.message}`));
