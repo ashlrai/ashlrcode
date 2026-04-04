@@ -85,18 +85,20 @@ function buildScanPrompt(goal: string): string {
 ## Product Goal
 ${goal}
 
-## Your Task
+## Your Task (READ-ONLY — use only Read, Glob, Grep tools)
 1. Read the project's CLAUDE.md or README to understand what exists
-2. Scan key directories (src/, prompts/, package.json) to understand structure
-3. Run tests (if they exist) to find failures
-4. Look for TODOs, FIXMEs, incomplete implementations
-5. Check for missing error handling at system boundaries
-6. Identify features a paying user would expect but are missing
-7. Check for security issues (credential handling, input validation)
+2. Use Glob to scan key directories (src/, prompts/, package.json)
+3. Use Grep to search for TODOs, FIXMEs, incomplete implementations
+4. Read key files to check for missing error handling at system boundaries
+5. Identify features a paying user would expect but are missing
+6. Use Grep to search for security patterns (hardcoded keys, unsanitized input)
+
+IMPORTANT: You only have read-only tools (Read, Glob, Grep). Do NOT attempt to run commands, tests, or scripts.
 
 ## Output Format
-Return a JSON array of work items, prioritized by user impact. Each item:
-\`\`\`json
+Return a JSON array of work items, prioritized by user impact. Start your response with \`[\` and end with \`]\`. No explanation before or after.
+
+Each item:
 [
   {
     "title": "Short title",
@@ -107,7 +109,6 @@ Return a JSON array of work items, prioritized by user impact. Each item:
     "files": ["src/path/to/file.ts"]
   }
 ]
-\`\`\`
 
 Prioritization rules:
 - **critical**: Broken functionality, security holes, data loss risks
@@ -115,22 +116,32 @@ Prioritization rules:
 - **medium**: Quality improvements, test coverage, documentation
 - **low**: Nice-to-haves, cosmetic issues, minor optimizations
 
-Return ONLY the JSON array. Maximum 15 items. Focus on what matters most.`;
+Maximum 15 items. Focus on what matters most.`;
 }
 
 /**
  * Parse the scan output into structured work items.
+ * Returns empty array with diagnostic info on failure.
  */
-function parseScanOutput(text: string): WorkItem[] {
+function parseScanOutput(text: string, onOutput?: (text: string) => void): WorkItem[] {
   try {
-    const jsonMatch = text.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) return [];
+    // Find the JSON array in the output (agent may include explanation text)
+    const jsonMatch = text.match(/\[[\s\S]*?\]/);
+    if (!jsonMatch) {
+      onOutput?.(`  ⚠ Scan returned no JSON array. Raw output (first 500 chars):\n  ${text.slice(0, 500)}\n`);
+      return [];
+    }
     const items = JSON.parse(jsonMatch[0]) as Omit<WorkItem, "id">[];
+    if (!Array.isArray(items) || items.length === 0) {
+      onOutput?.("  ⚠ Scan returned empty array\n");
+      return [];
+    }
     return items.map((item, i) => ({
       ...item,
       id: `work-${Date.now()}-${i}`,
     }));
-  } catch {
+  } catch (err) {
+    onOutput?.(`  ⚠ Failed to parse scan output: ${err instanceof Error ? err.message : String(err)}\n  Raw (first 500 chars): ${text.slice(0, 500)}\n`);
     return [];
   }
 }
@@ -281,7 +292,7 @@ export class ProductAgent {
       maxIterations: 15,
     });
 
-    return parseScanOutput(scanResult.text);
+    return parseScanOutput(scanResult.text, this.config.onOutput);
   }
 
   /** Phase 2: Sort by priority and impact */

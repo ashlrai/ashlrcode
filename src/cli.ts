@@ -327,10 +327,12 @@ async function main() {
         history = resumed.messages;
         console.log(chalk.dim(`Continued session ${lastId} (${history.length} messages)`));
       } else {
+        console.log(chalk.yellow(`  ⚠ Could not load session ${lastId} — starting fresh`));
         session = new Session();
         await session.init(router.currentProvider.name, router.currentProvider.config.model);
       }
     } else {
+      console.log(chalk.dim("  No previous session for this directory — starting fresh"));
       session = new Session();
       await session.init(router.currentProvider.name, router.currentProvider.config.model);
     }

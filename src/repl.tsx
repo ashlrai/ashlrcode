@@ -1561,7 +1561,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
       currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
-      addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount, speculationCache.getStats()));
+      const budgetInfo = {
+        budgetUSD: state.router.costTracker.budgetUSD,
+        percentUsed: state.router.costTracker.getBudgetPercent(),
+      };
+      addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount, speculationCache.getStats(), budgetInfo));
 
       // Suggest verification after multi-file changes
       const { shouldAutoVerify, getModifiedFiles, clearModifiedFiles } = await import("./agent/verification.ts");

@@ -196,8 +196,17 @@ export function formatTurnSeparator(
   buddyName: string,
   toolCount: number,
   speculationStats?: { hits: number; misses: number },
+  budgetInfo?: { budgetUSD: number; percentUsed: number },
 ): string {
-  const parts = [`turn ${turnNumber}`, `$${cost.toFixed(4)}`];
+  // Cost display: show budget % if set, otherwise just cost
+  let costStr = `$${cost.toFixed(4)}`;
+  if (budgetInfo && budgetInfo.budgetUSD !== Infinity) {
+    const pct = Math.round(budgetInfo.percentUsed);
+    const indicator = pct >= 90 ? "🔴" : pct >= 75 ? "🟡" : "";
+    costStr += ` / $${budgetInfo.budgetUSD.toFixed(2)} ${indicator}${pct}%`;
+  }
+
+  const parts = [`turn ${turnNumber}`, costStr];
   if (toolCount > 0) parts.push(`${toolCount} tools`);
   // Show speculation cache performance when active
   if (speculationStats) {

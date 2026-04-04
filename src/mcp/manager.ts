@@ -59,8 +59,9 @@ export class MCPManager {
               `  MCP: ${name} connected (${client.tools.length} tools)`
             )
           );
-        } catch {
-          // Silently skip failed MCP servers — they may not be running
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(chalk.yellow(`  MCP: ${name} failed to connect — ${msg.slice(0, 100)}`));
         }
       })
     );
