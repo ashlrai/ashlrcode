@@ -226,17 +226,9 @@ export async function* streamAgentLoop(
   history: Message[],
   config: AgentConfig
 ): AsyncGenerator<AgentEvent> {
-  // Note: AsyncGenerator + AsyncLocalStorage requires the generator body
-  // to run within the context. We set it up here and it propagates to
-  // all awaited calls within the generator.
-  const agentCtx = config.agentId || config.agentName ? {
-    agentId: config.agentId,
-    cwd: config.toolContext.cwd,
-    parentId: config.parentAgentId,
-    name: config.agentName,
-  } : undefined;
-
-  // AsyncLocalStorage context is set up per-iteration below
+  // Note: streamAgentLoop does not use AsyncLocalStorage context isolation.
+  // Sub-agents should use runAgentLoop (which wraps in runWithAgentContext)
+  // rather than the streaming variant for proper context isolation.
   const messages: Message[] = [
     ...history,
     { role: "user", content: userMessage },
@@ -321,20 +313,33 @@ export async function* streamAgentLoop(
       break;
     }
 
-    // Execute tool calls, yielding start/end events for each
+    // Execute tool calls, collecting start/end events in order.
+    // Events are buffered during execution since we can't yield from callbacks,
+    // then yielded immediately after. The onToolStart/onToolEnd callbacks on
+    // config still fire in real-time for non-streaming consumers.
+    const toolEvents: AgentEvent[] = [];
     const executionResults = await executeToolCalls(
       toolCalls,
       config.toolRegistry,
       config.toolContext,
       {
-        onToolStart: config.onToolStart,
-        onToolEnd: config.onToolEnd,
+        onToolStart: (name, input) => {
+          toolEvents.push({ type: "tool_start", name, input });
+          config.onToolStart?.(name, input);
+        },
+        onToolEnd: (name, result, isError) => {
+          toolEvents.push({ type: "tool_end", name, result, isError });
+          config.onToolEnd?.(name, result, isError);
+        },
       }
     );
 
+    // Yield buffered tool events in execution order
+    for (const event of toolEvents) {
+      yield event;
+    }
+
     for (const er of executionResults) {
-      yield { type: "tool_start", name: er.name, input: er.input };
-      yield { type: "tool_end", name: er.name, result: er.result, isError: er.isError };
       allToolCalls.push({ name: er.name, input: er.input, result: er.result });
     }
 

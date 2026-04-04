@@ -152,7 +152,7 @@ async function runGrep(
   }
 
   if (globFilter) {
-    args.push(`--include=${globFilter}`);
+    args.push("--include", globFilter);
   } else {
     args.push("--include=*.ts", "--include=*.js", "--include=*.tsx",
       "--include=*.jsx", "--include=*.py", "--include=*.go",
@@ -181,8 +181,4 @@ async function runGrep(
   }
 
   return stdout.trim() || `No matches found for "${pattern}"`;
-}
-
-function shellEscape(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }

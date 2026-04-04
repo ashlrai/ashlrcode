@@ -26,6 +26,7 @@ class MailboxSystem {
   private pendingReplies = new Map<string, {
     resolve: (reply: AgentMessage) => void;
     timer: ReturnType<typeof setTimeout>;
+    from: string;
   }>();
 
   /**
@@ -47,6 +48,21 @@ class MailboxSystem {
     // Notify handler if registered
     this.handlers.get(msg.to)?.(fullMsg);
 
+    // Register pending reply BEFORE resolving any prior promise,
+    // so that if the recipient replies synchronously within the same
+    // microtask tick, the pending entry already exists.
+    let replyPromise: Promise<AgentMessage> | undefined;
+    if (msg.expectsReply) {
+      replyPromise = new Promise<AgentMessage>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pendingReplies.delete(fullMsg.id);
+          reject(new Error(`Reply timeout: no response from "${msg.to}" within 60s`));
+        }, 60_000);
+
+        this.pendingReplies.set(fullMsg.id, { resolve, timer, from: msg.from });
+      });
+    }
+
     // If this is a reply, resolve the pending promise
     if (msg.replyTo) {
       const pending = this.pendingReplies.get(msg.replyTo);
@@ -57,17 +73,7 @@ class MailboxSystem {
       }
     }
 
-    // If sender expects a reply, wait for it
-    if (msg.expectsReply) {
-      return new Promise<AgentMessage>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          this.pendingReplies.delete(fullMsg.id);
-          reject(new Error(`Reply timeout: no response from "${msg.to}" within 60s`));
-        }, 60_000);
-
-        this.pendingReplies.set(fullMsg.id, { resolve, timer });
-      });
-    }
+    if (replyPromise) return replyPromise;
   }
 
   /**
@@ -101,11 +107,18 @@ class MailboxSystem {
   }
 
   /**
-   * Clean up agent's inbox and handlers.
+   * Clean up agent's inbox, handlers, and pending reply timers.
    */
   cleanup(agentId: string): void {
     this.inboxes.delete(agentId);
     this.handlers.delete(agentId);
+    // Cancel pending reply timers owned by this agent
+    for (const [msgId, pending] of this.pendingReplies) {
+      if (pending.from === agentId) {
+        clearTimeout(pending.timer);
+        this.pendingReplies.delete(msgId);
+      }
+    }
   }
 
   /**

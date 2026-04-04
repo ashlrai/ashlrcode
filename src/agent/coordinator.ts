@@ -92,8 +92,10 @@ function extractJSON<T>(text: string): T | null {
   // Strategy 3: Find first [ ... ] or { ... } block
   let depth = 0;
   let start = -1;
-  const opener = text.indexOf("[") < text.indexOf("{") || !text.includes("{")
-    ? "[" : "{";
+  const bracketIdx = text.indexOf("[");
+  const braceIdx = text.indexOf("{");
+  const opener =
+    bracketIdx >= 0 && (braceIdx < 0 || bracketIdx < braceIdx) ? "[" : "{";
   const closer = opener === "[" ? "]" : "}";
 
   for (let i = 0; i < text.length; i++) {
@@ -322,6 +324,8 @@ async function dispatchTasks(
       taskCount: wave.length,
     });
 
+    const waveStartIdx = results.length;
+
     // Process wave in batches of maxParallel
     for (let batch = 0; batch < wave.length; batch += maxParallel) {
       const batchTasks = wave.slice(batch, batch + maxParallel);
@@ -390,8 +394,9 @@ async function dispatchTasks(
       }
     }
 
-    const waveSuccess = results.filter((r) => r.success).length;
-    const waveFail = results.filter((r) => !r.success).length;
+    const waveResults = results.slice(waveStartIdx);
+    const waveSuccess = waveResults.filter((r) => r.success).length;
+    const waveFail = waveResults.filter((r) => !r.success).length;
     config.onProgress?.({
       type: "wave_complete",
       waveIndex: waveIdx,
