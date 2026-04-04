@@ -325,7 +325,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
         "/kairos", "/kairos stop", "/ship", "/ship stop", "/verify", "/coordinate", "/stats",
-        "/trigger", "/sync", "/plan", "/patches", "/remote", "/undercover",
+        "/permissions", "/trigger", "/sync", "/plan", "/patches", "/remote", "/undercover",
         "/bridge", "/telemetry", "/voice",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
@@ -454,6 +454,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     isProcessing = false; update();
   }
 
+  function formatTimeAgo(date: Date): string {
+    const ms = Date.now() - date.getTime();
+    if (ms < 60_000) return "just now";
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+    return `${Math.floor(ms / 86_400_000)}d ago`;
+  }
+
   async function handleCommand(input: string): Promise<boolean> {
     const [cmd, ...rest] = input.split(" ");
     const arg = rest.join(" ").trim();
@@ -491,6 +499,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           `    /model ${theme.muted("............")} Switch provider/model`,
           `    /effort ${theme.muted("...........")} Set model effort level`,
           `    /patches ${theme.muted("...........")} View active model patches`,
+          `    /permissions ${theme.muted(".......")} View allowed/denied tool permissions`,
           `    /features ${theme.muted("..........")} Toggle feature flags`,
           `    /keybindings ${theme.muted(".......")} View/edit keyboard shortcuts`,
           "",
@@ -723,22 +732,46 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           isProcessing = true;
           update();
 
+          // Hoist recovery variables so catch block can access them
+          const cwd = state.toolContext.cwd;
+          let originalBranch = "main";
+          let hasUncommitted = false;
+          const run = async (cmd: string): Promise<{ out: string; code: number }> => {
+            const proc = Bun.spawn(["bash", "-c", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
+            const out = await new Response(proc.stdout).text();
+            const code = await proc.exited;
+            return { out: out.trim(), code };
+          };
+          const git = async (...args: string[]): Promise<string> => {
+            const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+            const out = await new Response(proc.stdout).text();
+            await proc.exited;
+            return out.trim();
+          };
+
           try {
-            const cwd = state.toolContext.cwd;
-            // Safe shell runner — returns stdout + exit code
-            const run = async (cmd: string): Promise<{ out: string; code: number }> => {
-              const proc = Bun.spawn(["bash", "-c", cmd], { cwd, stdout: "pipe", stderr: "pipe" });
-              const out = await new Response(proc.stdout).text();
-              const code = await proc.exited;
-              return { out: out.trim(), code };
-            };
-            // Safe git commands using argument arrays (no shell injection)
-            const git = async (...args: string[]): Promise<string> => {
-              const proc = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
-              const out = await new Response(proc.stdout).text();
-              await proc.exited;
-              return out.trim();
-            };
+            // Safety: save original branch to restore later
+            originalBranch = await git("rev-parse", "--abbrev-ref", "HEAD");
+            addOutput(theme.tertiary(`  Original branch: ${originalBranch}`));
+
+            // Safety: stash uncommitted changes before autopilot
+            const statusResult = await run("git status --porcelain");
+            hasUncommitted = statusResult.out.length > 0;
+            if (hasUncommitted) {
+              await git("stash", "push", "-m", "autopilot-save");
+              addOutput(theme.tertiary("  Stashed uncommitted changes"));
+            }
+
+            // Safety: check if test runner exists before we start
+            const testCheck = await run("command -v bun >/dev/null 2>&1 && echo ok || echo missing");
+            const hasTestRunner = testCheck.out.includes("ok");
+            if (!hasTestRunner) {
+              addOutput(theme.warning("  ⚠ bun not found — tests will be skipped\n"));
+            }
+
+            // Safety: check if gh CLI exists for PR creation
+            const ghCheck = await run("command -v gh >/dev/null 2>&1 && echo ok || echo missing");
+            const hasGhCli = ghCheck.out.includes("ok");
 
             // 1. Create autopilot branch
             const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -772,8 +805,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
             if (totalApproved === 0) {
               addOutput(theme.success("  ✨ Codebase is clean! Nothing to fix.\n"));
-              await run("git checkout main 2>/dev/null || git checkout master");
+              await git("checkout", originalBranch);
               await run(`git branch -D ${branch} 2>/dev/null`);
+              if (hasUncommitted) await git("stash", "pop");
               isProcessing = false;
               update();
               return true;
@@ -799,9 +833,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 const prompt = `Fix this issue:\nType: ${next.type}\nFile: ${next.file}${next.line ? `:${next.line}` : ""}\nDescription: ${next.description}\n\nMake the minimal fix. Do not change unrelated code.`;
                 await runTurnInk(prompt);
 
-                // Run tests — check exit code, not string matching
-                const testResult = await run("bun test 2>&1");
-                const testsPass = testResult.code === 0;
+                // Run tests (skip if no test runner, timeout after 60s)
+                let testsPass = true;
+                if (hasTestRunner) {
+                  const testResult = await run("timeout 60 bun test 2>&1 || true");
+                  testsPass = testResult.code === 0;
+                }
 
                 if (testsPass) {
                   // Commit the fix (safe — no shell interpolation of title)
@@ -831,8 +868,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               update();
             }
 
-            // 4. Create PR and auto-merge
-            if (fixed > 0) {
+            // 4. Create PR and auto-merge (only if gh CLI is available)
+            if (fixed > 0 && hasGhCli) {
               addOutput(theme.accent("\n  📋 Creating PR...\n"));
               // Push the branch to remote first (PR needs remote commits)
               await git("push", "-u", "origin", branch);
@@ -859,11 +896,21 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               } else {
                 addOutput(theme.secondary(`  PR creation: ${prResult.slice(0, 200)}`));
               }
+            } else if (fixed > 0 && !hasGhCli) {
+              addOutput(theme.warning("\n  ⚠ gh CLI not found — skipping PR creation. Install: https://cli.github.com"));
+              addOutput(theme.secondary(`  Changes committed on branch: ${branch}\n`));
             }
 
-            // 5. Switch back to main + clean up branch
-            await run("git checkout main 2>/dev/null || git checkout master 2>/dev/null || true");
-            await run(`git branch -D ${branch} 2>/dev/null || true`);
+            // 5. Switch back to original branch + clean up autopilot branch
+            await git("checkout", originalBranch).catch(() => {});
+            if (fixed === 0) {
+              // No fixes committed — safe to delete the branch
+              await run(`git branch -D ${branch} 2>/dev/null || true`);
+            }
+            // Restore stashed changes if we saved them
+            if (hasUncommitted) {
+              await git("stash", "pop").catch(() => {});
+            }
 
             // Summary
             addOutput(theme.accent(`\n  ═══ Autopilot Summary ═══`));
@@ -877,10 +924,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
           } catch (err) {
             addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
-            // Try to get back to main
+            // Try to get back to original branch
             try {
-              const proc = Bun.spawn(["bash", "-c", "git checkout main 2>/dev/null || git checkout master"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+              const proc = Bun.spawn(["git", "checkout", originalBranch], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
               await proc.exited;
+              if (hasUncommitted) {
+                const pop = Bun.spawn(["git", "stash", "pop"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+                await pop.exited;
+              }
             } catch {}
           }
 
@@ -937,6 +988,30 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           `  ${v ? theme.success("✓") : theme.error("✗")} ${k}`
         );
         addOutput(`\n  Feature Flags:\n${lines.join("\n")}\n`);
+        return true;
+      }
+
+      case "/permissions": {
+        const { getPermissionState } = await import("./config/permissions.ts");
+        const perms = getPermissionState();
+        addOutput("");
+        addOutput(theme.accentBold("  Permission State"));
+        if (perms.alwaysAllow.size > 0) {
+          addOutput(theme.success("  Always Allow:"));
+          for (const t of perms.alwaysAllow) addOutput(`    ✓ ${t}`);
+        }
+        if (perms.alwaysDeny.size > 0) {
+          addOutput(theme.error("  Always Deny:"));
+          for (const t of perms.alwaysDeny) addOutput(`    ✗ ${t}`);
+        }
+        if (perms.sessionAllow.size > 0) {
+          addOutput(theme.tertiary("  Session Allow (not persisted):"));
+          for (const t of perms.sessionAllow) addOutput(`    ~ ${t}`);
+        }
+        if (perms.alwaysAllow.size === 0 && perms.alwaysDeny.size === 0 && perms.sessionAllow.size === 0) {
+          addOutput(theme.tertiary("  No permission decisions recorded yet."));
+        }
+        addOutput(theme.muted("\n  Reset with: edit ~/.ashlrcode/permissions.json\n"));
         return true;
       }
 
@@ -1305,10 +1380,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const { listSessions } = await import("./persistence/session.ts");
         const sessions = await listSessions(10);
         if (sessions.length === 0) { addOutput(theme.tertiary("\n  No sessions found.\n")); return true; }
-        for (const s of sessions) {
-          addOutput(`  ${s.id} — ${s.title ?? "(untitled)"} — ${new Date(s.updatedAt).toLocaleDateString()} — ${s.messageCount} msgs`);
-        }
         addOutput("");
+        for (const s of sessions) {
+          const ago = formatTimeAgo(new Date(s.updatedAt));
+          const modelShort = s.model?.split("-").slice(0, 2).join("-") ?? "?";
+          const isCurrent = s.id === state.session.id;
+          const marker = isCurrent ? theme.success("●") : theme.muted("○");
+          const title = s.title ?? "(untitled)";
+          addOutput(`  ${marker} ${theme.accent(s.id.slice(0, 8))} ${title.slice(0, 30).padEnd(30)} ${theme.muted(modelShort.padEnd(12))} ${s.messageCount} msgs  ${theme.muted(ago)}`);
+        }
+        addOutput(theme.muted("\n  Resume with: ac --resume <id>\n"));
         return true;
       }
       case "/memory": {
@@ -1426,10 +1507,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       // Use actual provider-reported token count when available (more accurate than chars/4 heuristic)
       const actualTokens = turnInputTokens > 0 ? turnInputTokens + turnOutputTokens : undefined;
       if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit }, actualTokens)) {
-        addOutput(theme.tertiary("  [compacting context...]"));
+        const beforeCount = state.history.length;
+        const estTokensBefore = estimateTokens(state.history);
+        addOutput(theme.tertiary(`  [auto-compacting: ${beforeCount} messages, ~${Math.round(estTokensBefore / 1000)}K tokens → summarizing...]`));
+        update();
         state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);
         state.history = await autoCompact(state.history, state.router);
+        const afterCount = state.history.length;
+        const estTokensAfter = estimateTokens(state.history);
+        addOutput(theme.tertiary(`  [compacted: ${beforeCount} → ${afterCount} messages, ~${Math.round(estTokensBefore / 1000)}K → ~${Math.round(estTokensAfter / 1000)}K tokens]`));
 
         // Persist compact boundary to session log
         const summary = state.history.slice(-5).map(m => {

@@ -116,6 +116,13 @@ interface AppState {
 }
 
 async function main() {
+  // Runtime check — AshlrCode requires Bun
+  if (!(process as any).versions?.bun) {
+    console.error("AshlrCode requires the Bun runtime. Install: https://bun.sh");
+    console.error("Then run: bun run start (or use the 'ac' binary)");
+    process.exit(1);
+  }
+
   const args = process.argv.slice(2);
 
   if (args.includes("--version") || args.includes("-v")) {
