@@ -92,12 +92,7 @@ async function* streamAnthropicEvents(
         const delta = event.delta;
         yield {
           type: "message_end",
-          stopReason:
-            delta.stop_reason === "tool_use"
-              ? "tool_use"
-              : delta.stop_reason === "max_tokens"
-                ? "max_tokens"
-                : "end_turn",
+          stopReason: mapStopReason(delta.stop_reason),
           usage: {
             inputTokens: 0,
             outputTokens: event.usage?.output_tokens ?? 0,
@@ -135,6 +130,12 @@ async function* streamAnthropicEvents(
       };
     }
   }
+}
+
+function mapStopReason(reason: string | null | undefined): "end_turn" | "tool_use" | "max_tokens" {
+  if (reason === "tool_use") return "tool_use";
+  if (reason === "max_tokens") return "max_tokens";
+  return "end_turn";
 }
 
 function convertMessage(

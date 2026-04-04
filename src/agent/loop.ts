@@ -67,10 +67,11 @@ async function* withStreamTimeout<T>(
 ): AsyncGenerator<T> {
   const iterator = iterable[Symbol.asyncIterator]();
   while (true) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const result = await Promise.race([
       iterator.next(),
-      new Promise<never>((_, reject) =>
-        setTimeout(
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
           () =>
             reject(
               new Error(
@@ -78,9 +79,10 @@ async function* withStreamTimeout<T>(
               )
             ),
           ms
-        )
-      ),
+        );
+      }),
     ]);
+    clearTimeout(timer);
     if (result.done) break;
     yield result.value;
   }

@@ -14,14 +14,6 @@ import type {
   JsonRpcResponse,
 } from "./types.ts";
 
-/** Common interface for both transport types */
-interface MCPTransport {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  request(method: string, params: Record<string, unknown>): Promise<unknown>;
-  notify(method: string, params: Record<string, unknown>): void;
-}
-
 export class MCPClient {
   private proc: any = null;
   private nextId = 1;
@@ -242,12 +234,15 @@ export class MCPSSEClient {
   async connect(): Promise<void> {
     this.abortController = new AbortController();
 
-    // Start SSE connection to get session ID and receive responses
+    // Start SSE connection in background to get session ID and receive responses
     const ssePromise = this.startSSE();
 
-    // Wait for the SSE connection to establish and get session ID
+    // Wait for session ID or SSE failure, whichever comes first
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("SSE connection timeout")), 10_000);
+      const timeout = setTimeout(() => {
+        clearInterval(check);
+        reject(new Error("SSE connection timeout"));
+      }, 10_000);
       const check = setInterval(() => {
         if (this.sessionId) {
           clearTimeout(timeout);
@@ -259,6 +254,12 @@ export class MCPSSEClient {
         clearTimeout(timeout);
         clearInterval(check);
         reject(new Error("SSE connection aborted"));
+      });
+      // If SSE fetch fails immediately (server not running), reject early
+      ssePromise.catch((err) => {
+        clearTimeout(timeout);
+        clearInterval(check);
+        reject(err);
       });
     });
 
@@ -371,6 +372,11 @@ export class MCPSSEClient {
     }
   }
 
+  private getEndpoint(): string {
+    if (this.sessionId?.startsWith("http")) return this.sessionId;
+    return `${this.baseUrl}${this.sessionId ?? "/message"}`;
+  }
+
   private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
     const id = this.nextId++;
     const message: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
@@ -386,12 +392,7 @@ export class MCPSSEClient {
         reject: (err) => { clearTimeout(timeout); reject(err); },
       });
 
-      // POST the message to the server
-      const endpoint = this.sessionId?.startsWith("http")
-        ? this.sessionId
-        : `${this.baseUrl}${this.sessionId ?? "/message"}`;
-
-      fetch(endpoint, {
+      fetch(this.getEndpoint(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(message),
@@ -405,11 +406,7 @@ export class MCPSSEClient {
   }
 
   private notify(method: string, params: Record<string, unknown>): void {
-    const endpoint = this.sessionId?.startsWith("http")
-      ? this.sessionId
-      : `${this.baseUrl}${this.sessionId ?? "/message"}`;
-
-    fetch(endpoint, {
+    fetch(this.getEndpoint(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", method, params }),

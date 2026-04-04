@@ -252,11 +252,11 @@ export function AnimatedSpinner({ text, tokenStats }: Props) {
   const lastPhraseChangeRef = useRef(Date.now());
   const isThinking = text === "Thinking" || text === "";
 
-  // Reset start time when text changes significantly (new tool, back to thinking)
+  // Reset elapsed timer when the spinner text changes (new tool, back to thinking)
   useEffect(() => {
     startTimeRef.current = Date.now();
     lastPhraseChangeRef.current = Date.now();
-  }, [isThinking]);
+  }, [text]);
 
   // Animate frames at 80ms
   useEffect(() => {

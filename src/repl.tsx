@@ -240,7 +240,19 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let turnOutputTokens = 0;
   let turnInputTokens = 0;
   let turnCharCount = 0;
-  const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
+  function formatTk(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+    return `${n}`;
+  }
+
+  function computeTokenStats(tokens: number, approximate: boolean): string {
+    const elapsed = turnStreamStart ? (Date.now() - turnStreamStart) / 1000 : 0;
+    const tokSec = elapsed > 0.5 ? Math.round(tokens / elapsed) : 0;
+    if (tokSec <= 0) return "";
+    const prefix = approximate ? "~" : "";
+    return `${prefix}${tokens} tokens · ${tokSec} tok/s`;
+  }
 
   const MAX_ITEMS = 2000;
 
@@ -1162,7 +1174,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   async function runTurnInk(input: string, displayText?: string) {
     const turnStartTime = Date.now();
-    turnStreamStart = 0;
+    turnStreamStart = Date.now();
     turnOutputTokens = 0;
     turnInputTokens = 0;
     turnCharCount = 0;
@@ -1227,11 +1239,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         onUsage: (usage) => {
           if (usage.inputTokens) turnInputTokens = usage.inputTokens;
           if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
-          // Update token stats display
-          const elapsed = turnStreamStart ? (Date.now() - turnStreamStart) / 1000 : 0;
           const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
-          const tokSec = elapsed > 0.5 ? Math.round(tokens / elapsed) : 0;
-          tokenStats = tokSec > 0 ? `${tokens} tokens · ${tokSec} tok/s` : "";
+          tokenStats = computeTokenStats(tokens, false);
           update();
         },
         onText: (text) => {
@@ -1253,10 +1262,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           responseText = allLines[allLines.length - 1]!;
           // Update token stats from char estimate if no actual usage yet
           if (!turnOutputTokens) {
-            const elapsed = turnStreamStart ? (Date.now() - turnStreamStart) / 1000 : 0;
-            const estTokens = Math.round(turnCharCount / 4);
-            const tokSec = elapsed > 0.5 ? Math.round(estTokens / elapsed) : 0;
-            tokenStats = tokSec > 0 ? `~${estTokens} tokens · ${tokSec} tok/s` : "";
+            tokenStats = computeTokenStats(Math.round(turnCharCount / 4), true);
           }
           spinnerText = responseText;
           update();
