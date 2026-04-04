@@ -5,7 +5,7 @@
  * Centralizes retry behavior previously duplicated across xai.ts and anthropic.ts.
  */
 
-import { categorizeError, type CategorizedError } from "../agent/error-handler.ts";
+import { categorizeError, sleep, type CategorizedError } from "../agent/error-handler.ts";
 
 // ── Retry Config ──────────────────────────────────────────────────────
 
@@ -259,6 +259,4 @@ function calculateDelay(
   return Math.min(Math.round(exponential + jitter), cfg.maxDelayMs);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+// sleep is now imported from ../agent/error-handler.ts (single definition)

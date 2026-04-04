@@ -377,6 +377,17 @@ async function main() {
   const buddy = await loadBuddy();
   await startSession(buddy);
 
+  // Inject buddy stats to influence agent behavior
+  if (buddy.stats) {
+    const { SystemPromptBuilder: SPB } = await import("./agent/system-prompt.ts");
+    const influenceBuilder = new SPB();
+    influenceBuilder.addBuddyInfluence(buddy.stats);
+    const influence = influenceBuilder.build();
+    if (influence.text) {
+      baseSystemPrompt += "\n\n" + influence.text;
+    }
+  }
+
   const state: AppState = {
     router,
     registry,

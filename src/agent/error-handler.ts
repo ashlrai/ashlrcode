@@ -1,5 +1,10 @@
 /**
- * Error handler — categorized errors with retry logic.
+ * Error handler — categorized errors.
+ *
+ * This module provides error categorization. For retry logic, use
+ * withRetry/withStreamRetry from ../providers/retry.ts instead.
+ * The retryWithBackoff function here is kept for backward compatibility
+ * but delegates to the shared sleep utility.
  */
 
 export type ErrorCategory = "rate_limit" | "network" | "auth" | "validation" | "tool_failure" | "server" | "unknown";
@@ -11,8 +16,23 @@ export interface CategorizedError {
   retryAfterMs?: number;
 }
 
+/** Shared sleep utility — single implementation, no duplication. */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Extract Retry-After header value from error message.
+ */
+export function extractRetryAfter(message: string): number | null {
+  const match = message.match(/retry.after.*?(\d+)/i);
+  if (match) return parseInt(match[1]!, 10) * 1000;
+  return null;
+}
+
 /**
  * Categorize an error for appropriate handling.
+ * Used by both this module and providers/retry.ts.
  */
 export function categorizeError(error: Error | string): CategorizedError {
   const message = typeof error === "string" ? error : error.message;
@@ -69,7 +89,9 @@ export function categorizeError(error: Error | string): CategorizedError {
 }
 
 /**
- * Retry with exponential backoff.
+ * Simple retry with exponential backoff.
+ * For production use, prefer withRetry() from providers/retry.ts which has
+ * category-aware max retries, jitter, and circuit breaker integration.
  */
 export async function retryWithBackoff<T>(
   fn: () => Promise<T>,
@@ -95,14 +117,4 @@ export async function retryWithBackoff<T>(
   }
 
   throw lastError ?? new Error("Retry exhausted");
-}
-
-function extractRetryAfter(message: string): number | null {
-  const match = message.match(/retry.after.*?(\d+)/i);
-  if (match) return parseInt(match[1]!, 10) * 1000;
-  return null;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }

@@ -159,6 +159,25 @@ export class SystemPromptBuilder {
     return this;
   }
 
+  /** Inject buddy stats to subtly influence agent behavior. */
+  addBuddyInfluence(stats: { debugging: number; patience: number; chaos: number; wisdom: number; snark: number }): this {
+    const traits: string[] = [];
+
+    // High stats (7+) add behavioral nudges
+    if (stats.patience >= 7) traits.push("Be extra thorough — explore edge cases, verify assumptions, and don't rush to conclusions.");
+    if (stats.patience <= 3) traits.push("Be efficient — move quickly, skip deep dives unless something looks wrong.");
+    if (stats.wisdom >= 7) traits.push("Think strategically — consider architectural implications, suggest better patterns when you see them.");
+    if (stats.chaos >= 7) traits.push("Be creative — suggest unconventional approaches when they might work better. Take calculated risks.");
+    if (stats.chaos <= 3) traits.push("Be conservative — stick to proven patterns and well-tested approaches.");
+    if (stats.debugging >= 7) traits.push("When something fails, dig deep — read error messages carefully, check logs, bisect the problem.");
+    if (stats.snark >= 7) traits.push("Be opinionated — if you see something that could be better, say so directly.");
+
+    if (traits.length > 0) {
+      this.addPart("buddy-influence", `## Working Style\n${traits.join("\n")}`, 85);
+    }
+    return this;
+  }
+
   /** Build the final prompt, respecting a token budget */
   build(maxTokens?: number): AssembledPrompt {
     // Sort by priority (lower = earlier / more important)

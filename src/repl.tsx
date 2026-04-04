@@ -149,7 +149,31 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   fileHistoryStore.loadFromDisk().catch(() => {});
 
   // IPC server — enables peer discovery and inter-process messaging
-  startIPCServer(state.session.id, state.toolContext.cwd).catch(() => {});
+  startIPCServer(state.session.id, state.toolContext.cwd, (msg) => {
+    // Process incoming IPC messages from peer instances
+    switch (msg.type) {
+      case "ping":
+        // Auto-reply with pong (peer discovery)
+        import("./agent/ipc.ts").then(({ sendToPeer }) =>
+          sendToPeer(msg.from, "pong", "alive").catch(() => {}),
+        );
+        break;
+      case "message":
+        // Show peer messages in the output
+        addOutput(theme.accent(`\n  📨 From peer ${msg.from}: ${msg.payload}\n`));
+        update();
+        break;
+      case "task":
+        // Queue task from peer for execution
+        addOutput(theme.accent(`\n  📋 Task from peer ${msg.from}: ${msg.payload}\n`));
+        update();
+        break;
+      case "result":
+        addOutput(theme.success(`\n  ✓ Result from peer ${msg.from}: ${msg.payload.slice(0, 200)}\n`));
+        update();
+        break;
+    }
+  }).catch(() => {});
 
   // Speculation cache — pre-fetches likely read-only tool results
   const speculationCache = new SpeculationCache(100, 30_000);
@@ -1399,7 +1423,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       const systemTokens = Math.ceil(systemPrompt.length / 4);
       const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
 
-      if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit })) {
+      // Use actual provider-reported token count when available (more accurate than chars/4 heuristic)
+      const actualTokens = turnInputTokens > 0 ? turnInputTokens + turnOutputTokens : undefined;
+      if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit }, actualTokens)) {
         addOutput(theme.tertiary("  [compacting context...]"));
         state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);

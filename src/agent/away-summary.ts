@@ -65,11 +65,11 @@ export function generateAwaySummary(
     }
   }
 
-  // Determine status
+  // Determine status (order matters — more specific overrides less specific)
   let status: AwaySummary["status"] = "working";
+  if (toolCalls.size === 0 && keyActions.length === 0) status = "idle";
   if (keyActions.some(a => a.includes("failed"))) status = "blocked";
   if (keyActions.some(a => a.includes("Committed"))) status = "complete";
-  if (toolCalls.size === 0) status = "idle";
 
   return {
     duration: "", // Caller fills this

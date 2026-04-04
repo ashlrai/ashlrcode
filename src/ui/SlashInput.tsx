@@ -1,6 +1,9 @@
 /**
- * SlashInput — TextInput with slash command coloring.
+ * SlashInput — TextInput with slash command coloring and multi-line support.
  * Fork of ink-text-input that renders / commands in accent blue.
+ *
+ * Multi-line: Ctrl+J inserts a newline. Enter submits.
+ * Line count indicator shown when multi-line.
  */
 
 import React, { useState, useEffect } from "react";
@@ -8,6 +11,7 @@ import { Text, useInput } from "ink";
 import chalk from "chalk";
 
 const SLASH_COLOR = "#38BDF8"; // sky-400
+const NEWLINE_INDICATOR = chalk.grey("↵");
 
 interface Props {
   value: string;
@@ -27,6 +31,8 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
   }, [value]);
 
   const isSlash = value.startsWith("/");
+  const lineCount = value.split("\n").length;
+  const isMultiLine = lineCount > 1;
   const colorChar = (ch: string) => isSlash ? chalk.hex(SLASH_COLOR)(ch) : ch;
 
   let rendered = "";
@@ -37,17 +43,35 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
       rendered = chalk.grey(placeholder);
     }
   } else {
+    // Render each character, showing newlines as ↵ + actual newline
     for (let i = 0; i < value.length; i++) {
-      const ch = colorChar(value[i]!);
-      rendered += (i === cursorOffset) ? chalk.inverse(ch) : ch;
+      const ch = value[i]!;
+      if (ch === "\n") {
+        rendered += (i === cursorOffset) ? chalk.inverse(NEWLINE_INDICATOR) + "\n" : NEWLINE_INDICATOR + "\n";
+      } else {
+        const colored = colorChar(ch);
+        rendered += (i === cursorOffset) ? chalk.inverse(colored) : colored;
+      }
     }
     if (cursorOffset === value.length && focus) {
       rendered += chalk.inverse(" ");
     }
   }
 
+  // Line count indicator for multi-line input
+  const lineIndicator = isMultiLine ? chalk.grey(` [${lineCount} lines]`) : "";
+
   useInput((input, key) => {
     if (key.upArrow || key.downArrow || (key.ctrl && input === "c") || key.tab || (key.shift && key.tab)) return;
+
+    // Ctrl+J inserts a newline (standard terminal newline keybind)
+    if (key.ctrl && input === "j") {
+      const next = value.slice(0, cursorOffset) + "\n" + value.slice(cursorOffset);
+      setCursorOffset(cursorOffset + 1);
+      onChange(next);
+      return;
+    }
+
     if (key.return) { onSubmit(value); return; }
 
     let next = value;
@@ -71,5 +95,5 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
     if (next !== value) onChange(next);
   }, { isActive: focus });
 
-  return <Text>{rendered}</Text>;
+  return <Text>{rendered}{lineIndicator}</Text>;
 }
