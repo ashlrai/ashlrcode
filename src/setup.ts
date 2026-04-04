@@ -134,7 +134,11 @@ export async function runSetupWizard(): Promise<Settings> {
  * Check if setup is needed (no API key from env or settings).
  */
 export function needsSetup(settings: { providers: ProviderRouterConfig }): boolean {
-  return !settings.providers.primary.apiKey;
+  const key = settings.providers.primary.apiKey;
+  // __keychain__ is a placeholder — the real key was loaded from keychain
+  // in loadSettings(). If it's still __keychain__ here, the keychain lookup
+  // failed and we need setup.
+  return !key || key === KEYCHAIN_PLACEHOLDER;
 }
 
 function prompt(question: string): Promise<string> {

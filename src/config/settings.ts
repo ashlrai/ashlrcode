@@ -119,14 +119,17 @@ async function overlayKeychainKeys(settings: Settings): Promise<void> {
     }
   }
 
-  // Fallback providers
+  // Fallback providers — only attempt keychain for known providers
+  const accountMap: Record<string, string> = {
+    xai: KEYCHAIN_ACCOUNTS.xai,
+    anthropic: KEYCHAIN_ACCOUNTS.anthropic,
+  };
+
   if (settings.providers.fallbacks) {
     for (const fb of settings.providers.fallbacks) {
       if (!fb.apiKey || fb.apiKey === KEYCHAIN_PLACEHOLDER) {
-        const account =
-          fb.provider === "xai"
-            ? KEYCHAIN_ACCOUNTS.xai
-            : KEYCHAIN_ACCOUNTS.anthropic;
+        const account = accountMap[fb.provider];
+        if (!account) continue; // Skip providers without keychain support
         const keychainKey = await loadFromKeychain(SERVICE, account);
         if (keychainKey) {
           fb.apiKey = keychainKey;

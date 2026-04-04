@@ -474,11 +474,13 @@ export class MCPWebSocketClient {
 
       this.ws.onclose = () => {
         this._connected = false;
-        // Reject all pending requests on close
-        for (const [, pending] of this.pending) {
-          pending.reject(new Error("MCP WebSocket connection closed"));
+        // Reject pending requests — skip if already cleared by disconnect()
+        if (this.pending.size > 0) {
+          for (const [, pending] of this.pending) {
+            pending.reject(new Error("MCP WebSocket connection closed"));
+          }
+          this.pending.clear();
         }
-        this.pending.clear();
       };
     });
 
@@ -503,6 +505,12 @@ export class MCPWebSocketClient {
   }
 
   async disconnect(): Promise<void> {
+    this._connected = false;
+    // Reject pending before closing to avoid double-reject from onclose handler
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error("MCP WebSocket client disconnected"));
+    }
+    this.pending.clear();
     if (this.ws) {
       try {
         this.ws.close();
@@ -510,12 +518,7 @@ export class MCPWebSocketClient {
         // WebSocket may already be closed
       }
       this.ws = null;
-      this._connected = false;
     }
-    for (const [, pending] of this.pending) {
-      pending.reject(new Error("MCP WebSocket client disconnected"));
-    }
-    this.pending.clear();
   }
 
   private handleMessage(data: string): void {

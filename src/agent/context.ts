@@ -68,6 +68,8 @@ function blockCharCount(block: ContentBlock): number {
   switch (block.type) {
     case "text":
       return block.text.length;
+    case "thinking":
+      return block.thinking.length;
     case "tool_use":
       return block.name.length + JSON.stringify(block.input).length;
     case "tool_result":

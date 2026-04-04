@@ -148,7 +148,7 @@ async function _runAgentLoop(
   let finalText = "";
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
-    const { text, toolCalls, stopReason } = await streamResponse(
+    const { text, thinking, toolCalls, stopReason } = await streamResponse(
       messages,
       tools,
       config
@@ -156,8 +156,12 @@ async function _runAgentLoop(
 
     finalText = text;
 
-    // Build assistant message with content blocks
+    // Build assistant message with content blocks.
+    // Include thinking blocks so Anthropic's API sees them on subsequent turns.
     const contentBlocks: ContentBlock[] = [];
+    if (thinking) {
+      contentBlocks.push({ type: "thinking", thinking });
+    }
     if (text) {
       contentBlocks.push({ type: "text", text });
     }
@@ -379,10 +383,12 @@ async function streamResponse(
   config: AgentConfig
 ): Promise<{
   text: string;
+  thinking: string;
   toolCalls: ToolCall[];
   stopReason: string;
 }> {
   let text = "";
+  let thinking = "";
   const toolCalls: ToolCall[] = [];
   let stopReason = "end_turn";
 
@@ -407,6 +413,7 @@ async function streamResponse(
 
       case "thinking_delta":
         if (event.text) {
+          thinking += event.text;
           config.onThinking?.(event.text);
         }
         break;
@@ -429,5 +436,5 @@ async function streamResponse(
     }
   }
 
-  return { text, toolCalls, stopReason };
+  return { text, thinking, toolCalls, stopReason };
 }

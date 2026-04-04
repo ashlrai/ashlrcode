@@ -15,6 +15,8 @@ export type MCPConnectionState = "connected" | "disconnected" | "reconnecting";
 export class MCPManager {
   private clients = new Map<string, MCPClientType>();
   private configs = new Map<string, MCPServerConfig>();
+  /** Original configs (pre-OAuth) for token refresh on reconnect */
+  private originalConfigs = new Map<string, MCPServerConfig>();
   private connectionStates = new Map<string, MCPConnectionState>();
 
   /**
@@ -56,6 +58,7 @@ export class MCPManager {
           }
         }
 
+        this.originalConfigs.set(name, config);
         this.configs.set(name, effectiveConfig);
         const client = createMCPClient(name, effectiveConfig);
         try {
@@ -159,8 +162,8 @@ export class MCPManager {
    * Returns true if reconnection succeeded, false otherwise.
    */
   async reconnect(serverName: string): Promise<boolean> {
-    const config = this.configs.get(serverName);
-    if (!config) {
+    const originalConfig = this.originalConfigs.get(serverName);
+    if (!originalConfig) {
       console.log(chalk.yellow(`  MCP: ${serverName} — no config found for reconnect`));
       return false;
     }
@@ -174,8 +177,31 @@ export class MCPManager {
       this.clients.delete(serverName);
     }
 
+    // Re-do OAuth if the original config had it (token may have expired)
+    let effectiveConfig = originalConfig;
+    if (originalConfig.oauth) {
+      try {
+        const oauthConfig: OAuthConfig = {
+          ...originalConfig.oauth,
+          scopes: originalConfig.oauth.scopes ?? [],
+        };
+        const token = await authorizeOAuth(serverName, oauthConfig);
+        effectiveConfig = {
+          ...originalConfig,
+          env: {
+            ...originalConfig.env,
+            MCP_AUTH_TOKEN: token.accessToken,
+            MCP_AUTH_TYPE: token.tokenType,
+          },
+        };
+      } catch {
+        console.log(chalk.yellow(`  MCP: ${serverName} OAuth refresh failed during reconnect`));
+      }
+    }
+
     try {
-      const client = createMCPClient(serverName, config);
+      this.configs.set(serverName, effectiveConfig);
+      const client = createMCPClient(serverName, effectiveConfig);
       await client.connect();
       this.clients.set(serverName, client);
       this.connectionStates.set(serverName, "connected");
