@@ -9,6 +9,11 @@ import { homedir } from "os";
 import type { ProviderRouterConfig } from "../providers/types.ts";
 import type { HooksConfig } from "./hooks.ts";
 import type { MCPServerConfig } from "../mcp/types.ts";
+import {
+  loadFromKeychain,
+  KEYCHAIN_ACCOUNTS,
+  KEYCHAIN_PLACEHOLDER,
+} from "./keychain.ts";
 
 export interface ToolHookRule {
   /** Glob pattern for tool name (e.g. "Bash", "File*") */
@@ -66,13 +71,15 @@ export async function loadSettings(): Promise<Settings> {
   const defaults = getDefaultSettings();
   const settingsPath = getSettingsPath();
 
+  let settings: Settings;
+
   if (existsSync(settingsPath)) {
     const raw = await readFile(settingsPath, "utf-8");
     const fileSettings = JSON.parse(raw) as Partial<Settings>;
 
     // Merge file settings with defaults — file settings override but
     // providers always come from env vars / defaults if not in file
-    return {
+    settings = {
       ...defaults,
       ...fileSettings,
       providers: fileSettings.providers ?? defaults.providers,
@@ -80,9 +87,53 @@ export async function loadSettings(): Promise<Settings> {
       toolHooks: fileSettings.toolHooks ?? defaults.toolHooks,
       mcpServers: fileSettings.mcpServers ?? defaults.mcpServers,
     };
+  } else {
+    settings = defaults;
   }
 
-  return defaults;
+  // Overlay keychain credentials — if the key is a placeholder or missing,
+  // attempt to load the real key from macOS Keychain.
+  await overlayKeychainKeys(settings);
+
+  return settings;
+}
+
+/**
+ * Check macOS Keychain for API keys and overlay them onto settings.
+ * Keychain keys override file-based keys when the file value is the
+ * placeholder `__keychain__` or empty.
+ */
+async function overlayKeychainKeys(settings: Settings): Promise<void> {
+  const SERVICE = "ashlrcode";
+
+  // Primary provider
+  const primaryKey = settings.providers.primary.apiKey;
+  if (!primaryKey || primaryKey === KEYCHAIN_PLACEHOLDER) {
+    const account =
+      settings.providers.primary.provider === "anthropic"
+        ? KEYCHAIN_ACCOUNTS.anthropic
+        : KEYCHAIN_ACCOUNTS.xai;
+    const keychainKey = await loadFromKeychain(SERVICE, account);
+    if (keychainKey) {
+      settings.providers.primary.apiKey = keychainKey;
+    }
+  }
+
+  // Fallback providers
+  if (settings.providers.fallbacks) {
+    for (const fb of settings.providers.fallbacks) {
+      if (!fb.apiKey || fb.apiKey === KEYCHAIN_PLACEHOLDER) {
+        const account =
+          fb.provider === "xai"
+            ? KEYCHAIN_ACCOUNTS.xai
+            : KEYCHAIN_ACCOUNTS.anthropic;
+        const keychainKey = await loadFromKeychain(SERVICE, account);
+        if (keychainKey) {
+          fb.apiKey = keychainKey;
+        }
+      }
+    }
+  }
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {

@@ -1,8 +1,9 @@
 /**
- * MCP Client — connects to an MCP server via stdio or SSE transport.
+ * MCP Client — connects to an MCP server via stdio, SSE, or WebSocket transport.
  *
  * stdio: Spawns a child process and communicates via JSON-RPC over stdin/stdout.
  * SSE: Connects to HTTP endpoint for server→client events, POST for client→server.
+ * WebSocket: Bidirectional JSON-RPC over ws:// or wss:// connection.
  */
 
 import type {
@@ -415,9 +416,168 @@ export class MCPSSEClient {
   }
 }
 
+/**
+ * MCP WebSocket Client — connects to an MCP server via WebSocket transport.
+ *
+ * Bidirectional JSON-RPC 2.0 messages over a single WebSocket connection.
+ * Detected when the server URL starts with ws:// or wss://.
+ */
+export class MCPWebSocketClient {
+  private ws: WebSocket | null = null;
+  private nextId = 1;
+  private pending = new Map<number, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+  }>();
+  private serverInfo: MCPInitializeResult | null = null;
+  private _tools: MCPToolInfo[] = [];
+  private _connected = false;
+
+  constructor(
+    readonly name: string,
+    private config: MCPServerConfig
+  ) {}
+
+  get tools(): MCPToolInfo[] {
+    return this._tools;
+  }
+
+  get isConnected(): boolean {
+    return this._connected && this.ws !== null;
+  }
+
+  async connect(): Promise<void> {
+    const url = this.config.url;
+    if (!url) throw new Error("MCP WebSocket client requires 'url' in config");
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        reject(new Error("WebSocket connection timeout"));
+      }, 10_000);
+
+      this.ws = new WebSocket(url);
+
+      this.ws.onopen = () => {
+        clearTimeout(timeout);
+        this._connected = true;
+        resolve();
+      };
+
+      this.ws.onerror = (event: Event) => {
+        clearTimeout(timeout);
+        reject(new Error("WebSocket connection failed"));
+      };
+
+      this.ws.onmessage = (event: MessageEvent) => {
+        this.handleMessage(event.data as string);
+      };
+
+      this.ws.onclose = () => {
+        this._connected = false;
+        // Reject all pending requests on close
+        for (const [, pending] of this.pending) {
+          pending.reject(new Error("MCP WebSocket connection closed"));
+        }
+        this.pending.clear();
+      };
+    });
+
+    // Initialize
+    this.serverInfo = await this.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "ashlrcode", version: "2.0.0" },
+    }) as MCPInitializeResult;
+
+    // Send initialized notification
+    this.notify("notifications/initialized", {});
+
+    // List tools
+    const result = await this.request("tools/list", {}) as { tools: MCPToolInfo[] };
+    this._tools = result.tools ?? [];
+  }
+
+  async callTool(name: string, args: Record<string, unknown>): Promise<MCPToolResult> {
+    const result = await this.request("tools/call", { name, arguments: args });
+    return result as MCPToolResult;
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch {
+        // WebSocket may already be closed
+      }
+      this.ws = null;
+      this._connected = false;
+    }
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error("MCP WebSocket client disconnected"));
+    }
+    this.pending.clear();
+  }
+
+  private handleMessage(data: string): void {
+    try {
+      const message = JSON.parse(data) as JsonRpcResponse;
+      if ("id" in message && message.id !== undefined) {
+        const pending = this.pending.get(message.id);
+        if (pending) {
+          this.pending.delete(message.id);
+          if (message.error) {
+            pending.reject(new Error(`MCP error: ${message.error.message}`));
+          } else {
+            pending.resolve(message.result);
+          }
+        }
+      }
+      // Notifications (no id) are ignored for now
+    } catch {
+      // Malformed JSON, skip
+    }
+  }
+
+  private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const id = this.nextId++;
+    const message: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`MCP WebSocket request timeout: ${method}`));
+      }, 10_000);
+
+      this.pending.set(id, {
+        resolve: (value) => { clearTimeout(timeout); resolve(value); },
+        reject: (err) => { clearTimeout(timeout); reject(err); },
+      });
+
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        this.pending.delete(id);
+        clearTimeout(timeout);
+        reject(new Error("MCP WebSocket not connected"));
+        return;
+      }
+
+      this.ws.send(JSON.stringify(message));
+    });
+  }
+
+  private notify(method: string, params: Record<string, unknown>): void {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ jsonrpc: "2.0", method, params }));
+    }
+  }
+}
+
 /** Factory: create the right client based on config */
-export function createMCPClient(name: string, config: MCPServerConfig): MCPClient | MCPSSEClient {
+export function createMCPClient(name: string, config: MCPServerConfig): MCPClient | MCPSSEClient | MCPWebSocketClient {
   if (config.url) {
+    const url = config.url.toLowerCase();
+    if (url.startsWith("ws://") || url.startsWith("wss://")) {
+      return new MCPWebSocketClient(name, config);
+    }
     return new MCPSSEClient(name, config);
   }
   return new MCPClient(name, config);

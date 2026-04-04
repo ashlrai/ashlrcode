@@ -11,6 +11,12 @@ import chalk from "chalk";
 import { createInterface } from "readline";
 import { saveSettings, type Settings } from "./config/settings.ts";
 import type { ProviderRouterConfig } from "./providers/types.ts";
+import {
+  saveToKeychain,
+  isKeychainAvailable,
+  KEYCHAIN_ACCOUNTS,
+  KEYCHAIN_PLACEHOLDER,
+} from "./config/keychain.ts";
 
 export async function runSetupWizard(): Promise<Settings> {
   console.log("");
@@ -83,6 +89,32 @@ export async function runSetupWizard(): Promise<Settings> {
         },
         fallbacks: [],
       };
+
+  // Attempt to store API keys in macOS Keychain for secure storage.
+  // If keychain is available and save succeeds, replace the real key
+  // in settings.json with a placeholder so it's never stored in plaintext.
+  if (isKeychainAvailable()) {
+    if (xaiKey) {
+      const saved = await saveToKeychain("ashlrcode", KEYCHAIN_ACCOUNTS.xai, xaiKey);
+      if (saved) {
+        providers.primary.provider === "xai"
+          ? (providers.primary.apiKey = KEYCHAIN_PLACEHOLDER)
+          : providers.fallbacks?.forEach((fb) => {
+              if (fb.provider === "xai") fb.apiKey = KEYCHAIN_PLACEHOLDER;
+            });
+      }
+    }
+    if (anthropicKey) {
+      const saved = await saveToKeychain("ashlrcode", KEYCHAIN_ACCOUNTS.anthropic, anthropicKey);
+      if (saved) {
+        providers.primary.provider === "anthropic"
+          ? (providers.primary.apiKey = KEYCHAIN_PLACEHOLDER)
+          : providers.fallbacks?.forEach((fb) => {
+              if (fb.provider === "anthropic") fb.apiKey = KEYCHAIN_PLACEHOLDER;
+            });
+      }
+    }
+  }
 
   const settings: Settings = { providers, maxTokens: 8192 };
 

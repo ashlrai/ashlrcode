@@ -56,6 +56,7 @@ export function createOpenAICompatibleProvider(
             messages,
             tools: tools.length > 0 ? tools : undefined,
             max_tokens: request.maxTokens ?? config.maxTokens ?? 8192,
+            ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
             stream: true,
             stream_options: { include_usage: true },
           }),

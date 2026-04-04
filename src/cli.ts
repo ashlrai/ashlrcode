@@ -18,7 +18,7 @@ import { ToolRegistry, setDefaultToolTimeout } from "./tools/registry.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { loadSettings } from "./config/settings.ts";
 import { initRemoteSettings, startPolling, loadCachedSettings, stopPolling } from "./config/remote-settings.ts";
-import { Session, listSessions, resumeSession, getLastSessionForCwd, forkSession } from "./persistence/session.ts";
+import { Session, listSessions, resumeSession, getLastSessionForCwd, forkSession, importClaudeCodeSession } from "./persistence/session.ts";
 import {
   needsCompaction,
   autoCompact,
@@ -62,6 +62,7 @@ import { Spinner, getToolPhrase } from "./ui/spinner.ts";
 import { renderMarkdownDelta, flushMarkdown, resetMarkdown } from "./ui/markdown.ts";
 import { printBanner, printTurnSeparator, printInputLine, printStatusLine } from "./ui/banner.ts";
 import { getCurrentMode, setMode, cycleMode, getPromptForMode, type Mode } from "./ui/mode.ts";
+import { setEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
 import { renderContextBar } from "./ui/context-bar.ts";
 import { loadBuddy, printBuddy, saveBuddy, startSession, recordToolCallSuccess, recordThinking, recordError, getBuddyReaction, isFirstToolCall, type BuddyData } from "./ui/buddy.ts";
 import { theme, styleCost, styleTokens } from "./ui/theme.ts";
@@ -502,6 +503,21 @@ async function main() {
     process.exit(0);
   }
 
+  // --print without an inline message: read from stdin (for piped input)
+  if (printMode) {
+    const chunks: string[] = [];
+    for await (const chunk of Bun.stdin.stream()) {
+      chunks.push(new TextDecoder().decode(chunk));
+    }
+    const stdinMessage = chunks.join("").trim();
+    if (!stdinMessage) {
+      console.error("--print requires a message argument or piped stdin input");
+      process.exit(1);
+    }
+    await runTurn(stdinMessage, state, true);
+    process.exit(0);
+  }
+
   // Interactive REPL — use Ink for proper cursor positioning
   startInkRepl(state, maxCostUSD);
 }
@@ -786,19 +802,30 @@ async function handleCommand(
     }
 
     case "/effort": {
-      const levels = ["fast", "balanced", "thorough"];
+      // Map user-facing names to internal EffortLevel
+      const effortMap: Record<string, EffortLevel> = {
+        fast: "low", low: "low",
+        normal: "normal", balanced: "normal",
+        high: "high", thorough: "high",
+      };
       if (!arg) {
-        console.log(theme.primary("Effort: " + (state.router.currentProvider.config.maxTokens === 4096 ? "fast" : state.router.currentProvider.config.maxTokens === 16384 ? "thorough" : "balanced")));
-        console.log(theme.tertiary("  fast      — shorter responses, fewer tokens"));
-        console.log(theme.tertiary("  balanced  — default behavior"));
-        console.log(theme.tertiary("  thorough  — deeper analysis, more tokens"));
-        console.log(theme.tertiary("  Usage: /effort <level>"));
-      } else if (levels.includes(arg)) {
-        const tokenMap: Record<string, number> = { fast: 4096, balanced: 8192, thorough: 16384 };
-        state.router.currentProvider.config.maxTokens = tokenMap[arg]!;
-        console.log(theme.success(`  Effort set to: ${arg} (${tokenMap[arg]} max tokens)`));
+        const cfg = getEffortConfig();
+        const currentLabel = cfg.maxTokens === 2048 ? "fast" : cfg.maxTokens === 16384 ? "high" : "normal";
+        console.log(theme.primary(`Effort: ${getEffortEmoji()} ${currentLabel}`));
+        console.log(theme.tertiary("  fast      — 2K tokens, temp 0.3, fewer iterations"));
+        console.log(theme.tertiary("  normal    — 8K tokens, default temp"));
+        console.log(theme.tertiary("  high      — 16K tokens, temp 0.1, thorough analysis"));
+        console.log(theme.tertiary("  Usage: /effort <fast|normal|high>"));
+      } else if (effortMap[arg]) {
+        const level = effortMap[arg]!;
+        setEffort(level);
+        const cfg = getEffortConfig();
+        state.router.currentProvider.config.maxTokens = cfg.maxTokens;
+        state.router.currentProvider.config.temperature = cfg.temperature;
+        const tempStr = cfg.temperature !== undefined ? `, temp ${cfg.temperature}` : "";
+        console.log(theme.success(`  ${getEffortEmoji()} Effort set to: ${arg} (${cfg.maxTokens} max tokens${tempStr})`));
       } else {
-        console.log(theme.error(`  Unknown effort level. Choose: ${levels.join(", ")}`));
+        console.log(theme.error(`  Unknown effort level. Choose: fast, normal, high`));
       }
       break;
     }
@@ -824,6 +851,24 @@ async function handleCommand(
       break;
     }
 
+    case "/import-session": {
+      if (!arg) {
+        console.log(theme.tertiary("  Usage: /import-session <path-to-jsonl>"));
+        console.log(theme.tertiary("  Import a Claude Code session file into AshlrCode."));
+      } else {
+        try {
+          const importedSession = await importClaudeCodeSession(resolve(arg));
+          const importedMessages = await importedSession.loadMessages();
+          console.log(theme.success(`  Imported session: ${importedSession.id} (${importedMessages.length} messages)`));
+          console.log(theme.tertiary(`  Resume it with: ac --resume ${importedSession.id}`));
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(theme.error(`  Import failed: ${msg}`));
+        }
+      }
+      break;
+    }
+
     case "/help":
       printCommands();
       break;
@@ -836,6 +881,7 @@ async function handleCommand(
 async function runTurn(input: string, state: AppState, printMode = false): Promise<void> {
   const spinner = printMode ? null : new Spinner("Thinking");
   let firstTextReceived = false;
+  let firstThinkingReceived = false;
 
   try {
     // Ultrathink: if user includes "ultrathink" in message, use max tokens for this turn
@@ -904,9 +950,23 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
       readOnly: isPlanMode(),
       maxIterations: configMaxIterations,
       streamTimeoutMs: configStreamTimeoutMs,
+      onThinking: (text) => {
+        if (printMode) return;
+        if (!firstThinkingReceived) {
+          spinner?.stop();
+          firstThinkingReceived = true;
+          process.stdout.write(chalk.dim.italic("\n  \u{1F4AD} Thinking...\n"));
+        }
+        process.stdout.write(chalk.dim.italic(text));
+      },
       onText: (text) => {
         if (!firstTextReceived) {
           spinner?.stop();
+          // If we were showing thinking text, add a newline separator
+          if (firstThinkingReceived) {
+            process.stdout.write("\n\n");
+            firstThinkingReceived = false; // reset so we don't add extra newlines
+          }
           firstTextReceived = true;
           if (!printMode) console.log(""); // breathing room before response
         }
@@ -1136,6 +1196,7 @@ ${theme.accent("Commands:")}
   ${theme.toolName("/skills")}         ${theme.secondary("List all skills")}
   ${theme.toolName("/memory")}         ${theme.secondary("Project memories")}
   ${theme.toolName("/sessions")}       ${theme.secondary("Saved sessions")}
+  ${theme.toolName("/import-session")} ${theme.tertiary("<f>")} ${theme.secondary("Import Claude Code session")}
   ${theme.toolName("/buddy")}          ${theme.secondary("Meet your companion")}
   ${theme.toolName("/model")} ${theme.tertiary("<name>")}  ${theme.secondary("Show/switch model")}
   ${theme.toolName("/clear")}          ${theme.secondary("Clear conversation")}

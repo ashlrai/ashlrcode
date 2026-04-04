@@ -322,3 +322,106 @@ export async function compactSession(id: string): Promise<{ messagesBefore: numb
   await session.insertCompactBoundary(summary, messagesBefore);
   return { messagesBefore, summary };
 }
+
+/**
+ * Import a Claude Code JSONL session file into AshlrCode format.
+ *
+ * Claude Code sessions use JSONL with entries like:
+ *   {"type":"human","message":{"role":"user","content":"..."}}
+ *   {"type":"assistant","message":{"role":"assistant","content":[...]}}
+ *
+ * This is a best-effort parser — unparseable lines are skipped.
+ */
+export async function importClaudeCodeSession(
+  claudeSessionPath: string,
+  provider = "imported",
+  model = "claude-code"
+): Promise<Session> {
+  if (!existsSync(claudeSessionPath)) {
+    throw new Error(`Session file not found: ${claudeSessionPath}`);
+  }
+
+  const content = await readFile(claudeSessionPath, "utf-8");
+  const lines = content.trim().split("\n").filter(Boolean);
+  const messages: Message[] = [];
+
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+
+      // Claude Code format: {type: "human"|"assistant", message: {role, content}}
+      if (entry.message && entry.message.role && entry.message.content !== undefined) {
+        const role = entry.message.role;
+        if (role === "user" || role === "assistant") {
+          // Normalize content — Claude Code may use content blocks or strings
+          let normalizedContent: string;
+          if (typeof entry.message.content === "string") {
+            normalizedContent = entry.message.content;
+          } else if (Array.isArray(entry.message.content)) {
+            // Extract text from content blocks
+            const textParts: string[] = [];
+            for (const block of entry.message.content) {
+              if (block.type === "text" && block.text) {
+                textParts.push(block.text);
+              } else if (typeof block === "string") {
+                textParts.push(block);
+              }
+            }
+            normalizedContent = textParts.join("\n");
+          } else {
+            continue; // Skip entries with unrecognized content format
+          }
+
+          if (normalizedContent.trim()) {
+            messages.push({ role, content: normalizedContent });
+          }
+        }
+      }
+
+      // Alternative format: direct {role, content} entries (some Claude Code variants)
+      else if (entry.role && entry.content !== undefined && !entry.type) {
+        const role = entry.role;
+        if (role === "user" || role === "assistant") {
+          const normalizedContent = typeof entry.content === "string"
+            ? entry.content
+            : Array.isArray(entry.content)
+              ? entry.content
+                  .filter((b: Record<string, unknown>) => b.type === "text" && b.text)
+                  .map((b: Record<string, unknown>) => b.text as string)
+                  .join("\n")
+              : "";
+
+          if (normalizedContent.trim()) {
+            messages.push({ role, content: normalizedContent });
+          }
+        }
+      }
+
+      // AshlrCode's own format: {type: "message", data: {role, content}}
+      else if (entry.type === "message" && entry.data?.role) {
+        const role = entry.data.role;
+        if (role === "user" || role === "assistant") {
+          const normalizedContent = typeof entry.data.content === "string"
+            ? entry.data.content
+            : "";
+          if (normalizedContent.trim()) {
+            messages.push({ role, content: normalizedContent });
+          }
+        }
+      }
+    } catch {
+      // Skip unparseable lines
+    }
+  }
+
+  if (messages.length === 0) {
+    throw new Error("No parseable messages found in session file.");
+  }
+
+  const session = new Session();
+  await session.init(provider, model);
+  await session.appendMessages(messages);
+  await session.setTitle(`Imported from ${claudeSessionPath.split("/").pop() ?? "claude-code"}`);
+
+  return session;
+}

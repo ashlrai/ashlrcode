@@ -57,6 +57,7 @@ async function* streamAnthropicEvents(
     messages,
     tools: tools.length > 0 ? tools : undefined,
     max_tokens: request.maxTokens ?? config.maxTokens ?? 8192,
+    ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
   });
 
   for await (const event of stream) {
@@ -69,6 +70,11 @@ async function* streamAnthropicEvents(
           yield {
             type: "tool_call_delta",
             text: delta.partial_json,
+          };
+        } else if (delta.type === "thinking_delta" && "thinking" in delta) {
+          yield {
+            type: "thinking_delta",
+            text: (delta as unknown as { thinking: string }).thinking,
           };
         }
         break;

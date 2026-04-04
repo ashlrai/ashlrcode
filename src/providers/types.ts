@@ -35,7 +35,7 @@ export type ContentBlock =
 export type StopReason = "end_turn" | "tool_use" | "max_tokens";
 
 export interface StreamEvent {
-  type: "text_delta" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "message_end" | "usage";
+  type: "text_delta" | "thinking_delta" | "tool_call_start" | "tool_call_delta" | "tool_call_end" | "message_end" | "usage";
   text?: string;
   toolCall?: Partial<ToolCall>;
   stopReason?: StopReason;
@@ -56,6 +56,7 @@ export interface ProviderConfig {
   model: string;
   baseURL?: string;
   maxTokens?: number;
+  temperature?: number;
 }
 
 export interface ProviderRequest {

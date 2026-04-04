@@ -581,13 +581,23 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         }
         return true;
       case "/effort": {
-        if (arg && ["low", "normal", "high"].includes(arg)) {
-          setEffort(arg as EffortLevel);
-          addOutput(theme.success(`\n  Effort: ${getEffortEmoji()} ${arg}\n`));
+        // Also accept "fast"/"balanced"/"thorough" as aliases
+        const effortAliases: Record<string, EffortLevel> = {
+          fast: "low", low: "low",
+          normal: "normal", balanced: "normal",
+          high: "high", thorough: "high",
+        };
+        if (arg && effortAliases[arg]) {
+          setEffort(effortAliases[arg]!);
         } else {
-          const next = cycleEffort();
-          addOutput(theme.success(`\n  Effort: ${getEffortEmoji()} ${next}\n`));
+          cycleEffort();
         }
+        // Apply maxTokens and temperature to provider config
+        const effortCfg = getEffortConfig();
+        state.router.currentProvider.config.maxTokens = effortCfg.maxTokens;
+        state.router.currentProvider.config.temperature = effortCfg.temperature;
+        const tempInfo = effortCfg.temperature !== undefined ? `, temp ${effortCfg.temperature}` : "";
+        addOutput(theme.success(`\n  ${getEffortEmoji()} Effort: ${getEffort()} (${effortCfg.maxTokens} tokens${tempInfo})\n`));
         return true;
       }
       case "/autopilot": {

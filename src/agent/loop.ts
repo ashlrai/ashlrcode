@@ -42,6 +42,8 @@ export interface AgentConfig {
   agentName?: string;
   /** Callback for streaming text to the UI */
   onText?: (text: string) => void;
+  /** Callback for streaming thinking/reasoning text to the UI */
+  onThinking?: (text: string) => void;
   /** Callback when a tool is being called */
   onToolStart?: (name: string, input: Record<string, unknown>) => void;
   /** Callback when a tool completes */
@@ -60,6 +62,7 @@ export interface AgentResult {
 
 export type AgentEvent =
   | { type: "text_delta"; text: string }
+  | { type: "thinking_delta"; text: string }
   | { type: "tool_start"; name: string; input: Record<string, unknown> }
   | { type: "tool_end"; name: string; result: string; isError: boolean }
   | { type: "turn_end"; finalText: string; toolCalls: AgentResult["toolCalls"] };
@@ -267,6 +270,12 @@ export async function* streamAgentLoop(
           }
           break;
 
+        case "thinking_delta":
+          if (event.text) {
+            yield { type: "thinking_delta", text: event.text };
+          }
+          break;
+
         case "tool_call_end":
           if (event.toolCall?.id && event.toolCall?.name && event.toolCall?.input) {
             toolCalls.push(event.toolCall as ToolCall);
@@ -393,6 +402,12 @@ async function streamResponse(
         if (event.text) {
           text += event.text;
           config.onText?.(event.text);
+        }
+        break;
+
+      case "thinking_delta":
+        if (event.text) {
+          config.onThinking?.(event.text);
         }
         break;
 

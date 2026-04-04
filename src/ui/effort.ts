@@ -31,19 +31,22 @@ export function cycleEffort(): EffortLevel {
 export function getEffortConfig(): {
   maxIterations: number;
   maxTokens: number;
+  temperature: number | undefined;
   systemPromptSuffix: string;
 } {
   switch (currentEffort) {
     case "low":
       return {
         maxIterations: 10,
-        maxTokens: 4096,
+        maxTokens: 2048,
+        temperature: 0.3,
         systemPromptSuffix: "\n\nIMPORTANT: Be extremely concise. Give the shortest correct answer. Minimize tool calls. Prefer speed over thoroughness.",
       };
     case "high":
       return {
         maxIterations: 50,
         maxTokens: 16384,
+        temperature: 0.1,
         systemPromptSuffix: "\n\nIMPORTANT: Be extremely thorough. Explore all edge cases. Use multiple tools to verify. Explain your reasoning in detail. Quality over speed.",
       };
     case "normal":
@@ -51,6 +54,7 @@ export function getEffortConfig(): {
       return {
         maxIterations: 25,
         maxTokens: 8192,
+        temperature: undefined,
         systemPromptSuffix: "",
       };
   }
