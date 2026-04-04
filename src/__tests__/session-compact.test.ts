@@ -46,6 +46,7 @@ describe("Session compact boundaries", () => {
     // Messages before boundary
     await session.appendMessage({ role: "user", content: "old message 1" });
     await session.appendMessage({ role: "assistant", content: "old reply 1" });
+    await session.flush(); // Wait for fire-and-forget assistant writes before boundary
 
     // Insert boundary
     await session.insertCompactBoundary("Old context summary", 2);
@@ -53,6 +54,7 @@ describe("Session compact boundaries", () => {
     // Messages after boundary
     await session.appendMessage({ role: "user", content: "new message" });
     await session.appendMessage({ role: "assistant", content: "new reply" });
+    await session.flush(); // Wait for fire-and-forget assistant writes
 
     const messages = await session.loadMessages();
     // Should have: 1 synthetic summary + 2 new messages = 3

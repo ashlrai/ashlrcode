@@ -2,6 +2,54 @@
 
 All notable changes to AshlrCode are documented here.
 
+## [2.1.0] - 2026-04-04
+
+### Added
+- `ac --migrate` command — one-command migration from Claude Code (copies MCP servers, permissions, custom commands)
+- WebSocket MCP transport (ws:// and wss:// alongside existing stdio and SSE)
+- MCP auto-reconnect with OAuth token refresh on connection failure
+- macOS Keychain credential storage (API keys never stored in plaintext)
+- Extended thinking display for Anthropic (dim italic with thought bubble prefix, multi-turn signatures)
+- `--print` flag for single-shot non-interactive output (supports stdin piping)
+- `--no-mcp` flag to skip MCP server connections
+- `/effort fast|normal|high` wired to model temperature and token budget
+- `/import-session <path>` to import Claude Code session files
+- `/sessions prune [days]` command + auto-prune on startup (max 100 sessions)
+- Agent mailbox system with request-response messaging (SendMessage + CheckMessages tools)
+- TodoWriteTool, TaskBoard, team management tools
+- Full markdown renderer (blockquotes, emphasis, links, tables, strikethrough, horizontal rules)
+- Biome linter/formatter configuration
+- 181 new tests (367 → 548 total across 40 files)
+- E2E smoke test (CLI flags, tool registry, settings, session lifecycle)
+
+### Fixed
+- Coordinator: structured JSON extraction (replaces brittle regex), deadlock detection via topological sort, dependency-aware wave execution, per-wave progress counts
+- Grep tool: direct spawn instead of `bash -c` (eliminates command injection), `--include` as separate args
+- Tool registry: execution timeouts (120s default), permission mutex prevents parallel double-prompting
+- Verification agent: clear modified files per session
+- Session persistence: fire-and-forget writes for assistant messages (non-blocking), blocking writes for user messages (crash recovery)
+- Anthropic thinking blocks preserved in message history with signatures (fixes multi-turn extended thinking)
+- MCP errors no longer silently swallowed
+- Voice mode: checks for sox before spawning (clear install instructions)
+- Web browser: actionable Puppeteer install instructions + WebFetch fallback tip
+- Empty API keys from env vars treated as unset
+- Keychain overlay skips unknown providers (prevents wrong key injection)
+- WebSocket disconnect/onclose race condition resolved
+- Compact session guard against non-existent sessions
+- Quip index starts at 0 (prevents entry skipping in small arrays)
+
+### Improved
+- Ring buffer logger for bounded error tracking (1000 entries max, prevents memory leak)
+- Speculation cache LRU eviction (200 entry max)
+- LSP graceful degradation with per-language install instructions
+- Permission prompt color-coded with inline descriptions
+- Buddy quips externalized to JSON (customizable via ~/.ashlrcode/quips.json)
+- BuddyPanel responsive terminal height
+- System prompt updated with all 45+ tools documented
+- Configurable limits via settings.json: maxIterations, streamTimeoutMs, toolTimeoutMs, systemPromptBudget
+- CI build verification before npm publish
+- Migration docs updated with `ac --migrate` instructions
+
 ## [1.0.1] - 2026-04-03
 
 ### Fixed

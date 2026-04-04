@@ -604,7 +604,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 return files.join("\n");
               },
               grepContent: async (pattern: string, glob?: string) => {
-                const args = ["bash", "-c", `grep -rn '${pattern}' ${state.toolContext.cwd} ${glob ? `--include='${glob}'` : ""} 2>/dev/null | head -50`];
+                // Use array-based spawn to prevent shell injection
+                const args = ["grep", "-rn", pattern, state.toolContext.cwd];
+                if (glob) args.push("--include", glob);
+                args.push("--max-count=50");
                 const proc = Bun.spawn(args, { stdout: "pipe", stderr: "pipe" });
                 return await new Response(proc.stdout).text();
               },
