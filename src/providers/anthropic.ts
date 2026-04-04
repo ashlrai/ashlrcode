@@ -10,7 +10,7 @@ import type {
   ProviderRequest,
   StreamEvent,
 } from "./types.ts";
-import { withRetry } from "./retry.ts";
+import { withStreamRetry } from "./retry.ts";
 
 export function createAnthropicProvider(config: ProviderConfig): Provider {
   const client = new Anthropic({
@@ -34,108 +34,107 @@ export function createAnthropicProvider(config: ProviderConfig): Provider {
         convertMessage
       );
 
-      // Use withRetry to create the stream, then iterate it.
-      // Anthropic SDK errors can surface during both creation and iteration,
-      // so we wrap the entire stream lifecycle in a retry-able unit.
-      const createAndConsumeStream = async (): Promise<StreamEvent[]> => {
-        const events: StreamEvent[] = [];
-        const stream = client.messages.stream({
-          model: config.model,
-          system: request.systemPrompt,
-          messages,
-          tools: tools.length > 0 ? tools : undefined,
-          max_tokens: request.maxTokens ?? config.maxTokens ?? 8192,
-        });
-
-        for await (const event of stream) {
-          switch (event.type) {
-            case "content_block_delta": {
-              const delta = event.delta;
-              if (delta.type === "text_delta") {
-                events.push({ type: "text_delta", text: delta.text });
-              } else if (delta.type === "input_json_delta") {
-                events.push({
-                  type: "tool_call_delta",
-                  text: delta.partial_json,
-                });
-              }
-              break;
-            }
-
-            case "content_block_start": {
-              const block = event.content_block;
-              if (block.type === "tool_use") {
-                events.push({
-                  type: "tool_call_start",
-                  toolCall: { id: block.id, name: block.name },
-                });
-              }
-              break;
-            }
-
-            case "content_block_stop":
-              break;
-
-            case "message_delta": {
-              const delta = event.delta;
-              events.push({
-                type: "message_end",
-                stopReason:
-                  delta.stop_reason === "tool_use"
-                    ? "tool_use"
-                    : delta.stop_reason === "max_tokens"
-                      ? "max_tokens"
-                      : "end_turn",
-                usage: {
-                  inputTokens: 0,
-                  outputTokens: event.usage?.output_tokens ?? 0,
-                },
-              });
-              break;
-            }
-
-            case "message_start": {
-              if (event.message.usage) {
-                events.push({
-                  type: "usage",
-                  usage: {
-                    inputTokens: event.message.usage.input_tokens,
-                    outputTokens: event.message.usage.output_tokens,
-                  },
-                });
-              }
-              break;
-            }
-          }
-        }
-
-        // Extract completed tool calls from the final message
-        const finalMessage = await stream.finalMessage();
-        for (const block of finalMessage.content) {
-          if (block.type === "tool_use") {
-            events.push({
-              type: "tool_call_end",
-              toolCall: {
-                id: block.id,
-                name: block.name,
-                input: block.input as Record<string, unknown>,
-              },
-            });
-          }
-        }
-
-        return events;
-      };
-
-      const events = await withRetry(createAndConsumeStream, {
-        providerName: "anthropic",
-      });
-
-      for (const event of events) {
-        yield event;
-      }
+      // Use withStreamRetry to wrap the async generator — if an error
+      // surfaces mid-stream, the generator is recreated from scratch.
+      yield* withStreamRetry(
+        () => streamAnthropicEvents(client, config, request, messages, tools),
+        { providerName: "anthropic" },
+      );
     },
   };
+}
+
+async function* streamAnthropicEvents(
+  client: Anthropic,
+  config: ProviderConfig,
+  request: ProviderRequest,
+  messages: Anthropic.MessageParam[],
+  tools: Anthropic.Tool[],
+): AsyncGenerator<StreamEvent> {
+  const stream = client.messages.stream({
+    model: config.model,
+    system: request.systemPrompt,
+    messages,
+    tools: tools.length > 0 ? tools : undefined,
+    max_tokens: request.maxTokens ?? config.maxTokens ?? 8192,
+  });
+
+  for await (const event of stream) {
+    switch (event.type) {
+      case "content_block_delta": {
+        const delta = event.delta;
+        if (delta.type === "text_delta") {
+          yield { type: "text_delta", text: delta.text };
+        } else if (delta.type === "input_json_delta") {
+          yield {
+            type: "tool_call_delta",
+            text: delta.partial_json,
+          };
+        }
+        break;
+      }
+
+      case "content_block_start": {
+        const block = event.content_block;
+        if (block.type === "tool_use") {
+          yield {
+            type: "tool_call_start",
+            toolCall: { id: block.id, name: block.name },
+          };
+        }
+        break;
+      }
+
+      case "content_block_stop":
+        break;
+
+      case "message_delta": {
+        const delta = event.delta;
+        yield {
+          type: "message_end",
+          stopReason:
+            delta.stop_reason === "tool_use"
+              ? "tool_use"
+              : delta.stop_reason === "max_tokens"
+                ? "max_tokens"
+                : "end_turn",
+          usage: {
+            inputTokens: 0,
+            outputTokens: event.usage?.output_tokens ?? 0,
+          },
+        };
+        break;
+      }
+
+      case "message_start": {
+        if (event.message.usage) {
+          yield {
+            type: "usage",
+            usage: {
+              inputTokens: event.message.usage.input_tokens,
+              outputTokens: event.message.usage.output_tokens,
+            },
+          };
+        }
+        break;
+      }
+    }
+  }
+
+  // Extract completed tool calls from the final message (usage stats)
+  const finalMessage = await stream.finalMessage();
+  for (const block of finalMessage.content) {
+    if (block.type === "tool_use") {
+      yield {
+        type: "tool_call_end",
+        toolCall: {
+          id: block.id,
+          name: block.name,
+          input: block.input as Record<string, unknown>,
+        },
+      };
+    }
+  }
 }
 
 function convertMessage(

@@ -2,19 +2,19 @@
 
 **Multi-provider AI coding agent for the terminal.**
 
-[![Version](https://img.shields.io/badge/version-1.0.1-blue)]()
+[![Version](https://img.shields.io/badge/version-2.0.0-blue)]()
 [![Tests](https://img.shields.io/badge/tests-335%20passing-green)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**42 tools | 34 commands | 6 providers | 335 tests | 130 source files**
+**42+ tools | 42+ slash commands | 6 providers | 335 tests | 130 source files**
 
 ---
 
 ## What is AshlrCode?
 
-AshlrCode is an open-source AI coding agent CLI built as an alternative to Claude Code. It runs multi-provider LLM conversations with tool use in your terminal — powered by xAI Grok by default, with failover to Anthropic, OpenAI, DeepSeek, Groq, and Ollama. It ships with 42 built-in tools, an autonomous KAIROS mode, sub-agent orchestration, and a persistent buddy companion.
+AshlrCode is an open-source AI coding agent CLI built as an alternative to Claude Code. It runs multi-provider LLM conversations with tool use in your terminal — powered by xAI Grok by default, with failover to Anthropic, OpenAI, DeepSeek, Groq, and Ollama. It ships with 42+ built-in tools, an autonomous KAIROS mode, sub-agent orchestration, MCP server integration, and a persistent buddy companion.
 
 ---
 
@@ -24,7 +24,7 @@ AshlrCode is an open-source AI coding agent CLI built as an alternative to Claud
 bun install -g ashlrcode
 ```
 
-Requires [Bun](https://bun.sh) runtime.
+> **Requires [Bun](https://bun.sh) runtime.** Install Bun with `curl -fsSL https://bun.sh/install | bash`.
 
 ```bash
 export XAI_API_KEY="your-key"
@@ -55,8 +55,10 @@ bun link                    # makes 'ac' available globally
 - **3-tier context compression** — autoCompact, snipCompact, contextCollapse
 - **Speculation** — speculative tool execution for faster responses
 - **Model patches** — per-model prompt adjustments for optimal behavior
+- **Global error handling** — uncaught exceptions caught with data loss prevention (session auto-save)
+- **Autopilot mode** — fully autonomous scan → fix → test → PR → merge pipeline
 
-### Tools (42)
+### Tools (42+)
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -75,7 +77,7 @@ bun link                    # makes 'ac' available globally
 | **Infrastructure** | LSP, Workflow, Snip, Sleep | Language server, reusable workflows, context trimming, polling |
 | **MCP** | ListMcpResources, mcp__*__* | External tool servers via Model Context Protocol |
 
-### Commands (34)
+### Commands (42+)
 
 | Command | Description |
 |---------|-------------|
@@ -125,8 +127,11 @@ Plus **custom skills** loaded from `~/.ashlrcode/skills/*.md` — invoked as `/s
 
 ### UX
 
-- **Ink-based UI** — React terminal rendering with input box, context bar, and autocomplete
-- **Buddy system** — persistent ASCII pet companion with species, moods, hats, rarity, and stats
+- **Ink-based UI** — React terminal rendering with bordered input box, context bar, and autocomplete
+- **Bordered tool result blocks** — tool output framed with colored diff highlighting (green/red)
+- **Slash command coloring** — commands highlighted in blue for quick visual scanning
+- **Buddy system** — persistent ASCII pet with species, moods, animated poses, hats, rarity, and stats
+- **Buddy animations** — mood-driven pose cycling with idle, thinking, celebrating, and confused states
 - **Keybindings** — customizable shortcuts, chord bindings, Shift+Tab mode switching
 - **Effort levels** — low / normal / high controls response depth
 - **Smart paste** — large clipboard pastes auto-collapsed in context
@@ -149,6 +154,7 @@ Plus **custom skills** loaded from `~/.ashlrcode/skills/*.md` — invoked as `/s
 - **Hook system** — pre/post tool hooks can block, modify, or extend tool calls
 - **Undercover mode** — stealth prompt adjustments
 - **Input validation** — tool input schemas validated before execution
+- **Global error handling** — uncaught exceptions and SIGTERM caught; sessions saved before exit to prevent data loss
 
 ### Infrastructure
 
@@ -158,12 +164,46 @@ Plus **custom skills** loaded from `~/.ashlrcode/skills/*.md` — invoked as `/s
 - **Retry with backoff** — rate limits (3x, 1s base), network errors (2x, 2s base)
 - **Speculation** — predictive tool execution
 - **LSP integration** — Language Server Protocol for diagnostics and completions
+- **MCP with SSE transport** — stdio and URL-based SSE connections to external tool servers
 - **MCP OAuth** — OAuth flow for MCP server authentication
 - **Cron triggers** — scheduled recurring agent tasks
 - **IPC** — inter-process messaging between instances
 - **Bridge server** — HTTP API for external tool integration
 - **Remote settings** — fetch config overrides from a URL
 - **Model patches** — per-model prompt tuning
+
+---
+
+## MCP (Model Context Protocol)
+
+AshlrCode connects to external tool servers via MCP. Configure servers in `~/.ashlrcode/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "command": "npx",
+      "args": ["-y", "@my-org/mcp-server"],
+      "env": { "API_KEY": "..." }
+    },
+    "remote-server": {
+      "url": "http://localhost:3000"
+    },
+    "chrome-extension": {
+      "url": "http://localhost:12007",
+      "env": {}
+    }
+  }
+}
+```
+
+**Stdio transport** — spawns a local process and communicates over stdin/stdout. Use `command` + `args`.
+
+**SSE transport** — connects to a running HTTP server. Use `url`. Works with browser extensions like Claude-in-Chrome that expose an MCP endpoint.
+
+**OAuth** — for authenticated MCP servers, add an `oauth` block with `authorizationUrl`, `tokenUrl`, `clientId`, and `scopes`.
+
+MCP tools appear automatically as `mcp__<server>__<tool>` and are available to the agent alongside built-in tools.
 
 ---
 
@@ -284,9 +324,9 @@ src/                        # 130 source files
 ├── setup.ts                # Initialization and wiring
 ├── agent/                  # Core agent loop, sub-agents, KAIROS, teams, dreams, IPC
 ├── providers/              # xAI, Anthropic, router, retry, cost tracking
-├── tools/                  # 42 tools (32 files)
+├── tools/                  # 42+ tools (32 files)
 ├── skills/                 # Skill loader + registry
-├── mcp/                    # MCP client, manager, OAuth
+├── mcp/                    # MCP client, manager, OAuth, SSE transport
 ├── planning/               # Plan mode + plan tools
 ├── persistence/            # Sessions + memory
 ├── config/                 # Settings, hooks, permissions, features, sync, undercover

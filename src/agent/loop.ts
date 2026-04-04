@@ -19,12 +19,17 @@ import type {
   ToolDefinition,
 } from "../providers/types.ts";
 
+/** Default inactivity timeout for provider streams (5 minutes). */
+const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
+
 export interface AgentConfig {
   systemPrompt: string;
   router: ProviderRouter;
   toolRegistry: ToolRegistry;
   toolContext: ToolContext;
   maxIterations?: number;
+  /** Inactivity timeout (ms) for provider streams. Defaults to 5 minutes. */
+  streamTimeoutMs?: number;
   /** If true, only allow read-only tools (plan mode) */
   readOnly?: boolean;
   /** Callback for streaming text to the UI */
@@ -48,6 +53,36 @@ export type AgentEvent =
   | { type: "tool_start"; name: string; input: Record<string, unknown> }
   | { type: "tool_end"; name: string; result: string; isError: boolean }
   | { type: "turn_end"; finalText: string; toolCalls: AgentResult["toolCalls"] };
+
+/**
+ * Wrap an async iterable with an inactivity timeout.
+ * If no event is yielded within `ms` milliseconds, throws a timeout error.
+ * The timer resets after each successfully received event.
+ */
+async function* withStreamTimeout<T>(
+  iterable: AsyncIterable<T>,
+  ms: number
+): AsyncGenerator<T> {
+  const iterator = iterable[Symbol.asyncIterator]();
+  while (true) {
+    const result = await Promise.race([
+      iterator.next(),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Stream timeout: no response from provider for ${Math.round(ms / 1000)} seconds`
+              )
+            ),
+          ms
+        )
+      ),
+    ]);
+    if (result.done) break;
+    yield result.value;
+  }
+}
 
 /**
  * Run the agent loop for a single user turn.
@@ -173,11 +208,15 @@ export async function* streamAgentLoop(
     const toolCalls: ToolCall[] = [];
     let stopReason = "end_turn";
 
-    const stream = config.router.stream({
+    const rawStream = config.router.stream({
       systemPrompt: config.systemPrompt,
       messages,
       tools,
     });
+    const stream = withStreamTimeout(
+      rawStream,
+      config.streamTimeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS
+    );
 
     for await (const event of stream) {
       switch (event.type) {
@@ -281,11 +320,15 @@ async function streamResponse(
   const toolCalls: ToolCall[] = [];
   let stopReason = "end_turn";
 
-  const stream = config.router.stream({
+  const rawStream = config.router.stream({
     systemPrompt: config.systemPrompt,
     messages,
     tools,
   });
+  const stream = withStreamTimeout(
+    rawStream,
+    config.streamTimeoutMs ?? DEFAULT_STREAM_TIMEOUT_MS
+  );
 
   for await (const event of stream) {
     switch (event.type) {

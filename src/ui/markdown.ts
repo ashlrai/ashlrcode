@@ -14,87 +14,116 @@ interface RenderState {
   buffer: string;
 }
 
-const state: RenderState = {
-  inCodeBlock: false,
-  codeBlockLang: "",
-  codeBlockLines: [],
-  buffer: "",
-};
+function createState(): RenderState {
+  return {
+    inCodeBlock: false,
+    codeBlockLang: "",
+    codeBlockLines: [],
+    buffer: "",
+  };
+}
+
+/**
+ * Per-instance markdown renderer. Holds its own state so concurrent
+ * sub-agents don't corrupt each other's code-block / buffer tracking.
+ */
+export class MarkdownRenderer {
+  private state: RenderState = createState();
+
+  /** Process a text delta from the stream. */
+  renderDelta(delta: string): string {
+    this.state.buffer += delta;
+
+    const lastNewline = this.state.buffer.lastIndexOf("\n");
+    if (lastNewline === -1) {
+      return "";
+    }
+
+    const complete = this.state.buffer.slice(0, lastNewline);
+    this.state.buffer = this.state.buffer.slice(lastNewline + 1);
+
+    const lines = complete.split("\n");
+    const rendered = lines.map((l) => this.renderLine(l)).join("\n");
+
+    return rendered + "\n";
+  }
+
+  /** Flush any remaining buffered content. */
+  flush(): string {
+    if (this.state.buffer) {
+      const result = this.renderLine(this.state.buffer);
+      this.state.buffer = "";
+      return result;
+    }
+    return "";
+  }
+
+  /** Reset renderer state (call between turns). */
+  reset(): void {
+    this.state = createState();
+  }
+
+  private renderLine(line: string): string {
+    if (line.trimStart().startsWith("```")) {
+      if (this.state.inCodeBlock) {
+        this.state.inCodeBlock = false;
+        this.state.codeBlockLang = "";
+        this.state.codeBlockLines = [];
+        return chalk.dim("```");
+      } else {
+        this.state.inCodeBlock = true;
+        this.state.codeBlockLang = line.trim().slice(3).trim();
+        this.state.codeBlockLines = [];
+        const langLabel = this.state.codeBlockLang
+          ? chalk.dim(`\`\`\`${this.state.codeBlockLang}`)
+          : chalk.dim("```");
+        return langLabel;
+      }
+    }
+
+    if (this.state.inCodeBlock) {
+      this.state.codeBlockLines.push(line);
+      const lineNum = this.state.codeBlockLines.length;
+      const highlighted = highlightCode(line, this.state.codeBlockLang);
+      const numStr = chalk.hex("#616161")(`${String(lineNum).padStart(3)} │ `);
+      return numStr + highlighted;
+    }
+
+    return renderMarkdownLine(line);
+  }
+}
+
+/**
+ * Create an isolated markdown renderer instance.
+ * Use this for sub-agents so they don't share state with the main REPL.
+ */
+export function createMarkdownRenderer(): MarkdownRenderer {
+  return new MarkdownRenderer();
+}
+
+// Default singleton instance for backward compatibility
+const defaultRenderer = new MarkdownRenderer();
 
 /**
  * Process a text delta from the stream.
  * Buffers until complete lines, then renders with formatting.
  */
 export function renderMarkdownDelta(delta: string): string {
-  state.buffer += delta;
-
-  // Only process complete lines (wait for \n)
-  const lastNewline = state.buffer.lastIndexOf("\n");
-  if (lastNewline === -1) {
-    return ""; // Buffer until we have a complete line
-  }
-
-  // Process complete lines, keep remainder in buffer
-  const complete = state.buffer.slice(0, lastNewline);
-  state.buffer = state.buffer.slice(lastNewline + 1);
-
-  const lines = complete.split("\n");
-  const rendered = lines.map(renderLine).join("\n");
-
-  return rendered + "\n";
+  return defaultRenderer.renderDelta(delta);
 }
 
 /**
  * Flush any remaining buffered content.
  */
 export function flushMarkdown(): string {
-  if (state.buffer) {
-    const result = renderLine(state.buffer);
-    state.buffer = "";
-    return result;
-  }
-  return "";
+  return defaultRenderer.flush();
 }
 
 /**
  * Reset renderer state (call between turns).
  */
 export function resetMarkdown(): void {
-  state.inCodeBlock = false;
-  state.codeBlockLang = "";
-  state.codeBlockLines = [];
-  state.buffer = "";
-}
-
-function renderLine(line: string): string {
-  // Code block toggles
-  if (line.trimStart().startsWith("```")) {
-    if (state.inCodeBlock) {
-      state.inCodeBlock = false;
-      state.codeBlockLang = "";
-      state.codeBlockLines = [];
-      return chalk.dim("```");
-    } else {
-      state.inCodeBlock = true;
-      state.codeBlockLang = line.trim().slice(3).trim();
-      state.codeBlockLines = [];
-      const langLabel = state.codeBlockLang
-        ? chalk.dim(`\`\`\`${state.codeBlockLang}`)
-        : chalk.dim("```");
-      return langLabel;
-    }
-  }
-
-  // Inside code block — syntax highlight
-  if (state.inCodeBlock) {
-    state.codeBlockLines.push(line);
-    const lineNum = state.codeBlockLines.length;
-    const highlighted = highlightCode(line, state.codeBlockLang);
-    const numStr = chalk.hex("#616161")(`${String(lineNum).padStart(3)} │ `);
-    return numStr + highlighted;
-  }
-
-  return renderMarkdownLine(line);
+  defaultRenderer.reset();
 }
 
 /**
