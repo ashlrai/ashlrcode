@@ -15,7 +15,6 @@ import { runSubAgent, type SubAgentResult } from "./sub-agent.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
-import { getAgentContext } from "./async-context.ts";
 
 export interface VerificationConfig {
   router: ProviderRouter;
@@ -59,11 +58,7 @@ export function trackFileModification(filePath: string): void {
 }
 
 export function getModifiedFiles(): string[] {
-  // Prefer agent-context-scoped files if available
-  const ctx = getAgentContext();
-  if (ctx) {
-    // Agent context doesn't track files yet — fall through to global
-  }
+  // TODO: When agent context gains file tracking, prefer ctx-scoped files
   return Array.from(_modifiedFiles);
 }
 
