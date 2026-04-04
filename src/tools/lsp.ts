@@ -5,8 +5,8 @@
  * communicating with language servers (TypeScript, Python, etc.)
  */
 
-import { resolve } from "path";
 import { readFile } from "fs/promises";
+import { resolve } from "path";
 import type { Tool, ToolContext } from "./types.ts";
 
 // LSP server configs per language
@@ -56,10 +56,7 @@ class SimpleLSPClient {
   // conditional generics that don't resolve cleanly for stdin/stdout.
   private proc: any = null;
   private requestId = 0;
-  private pendingRequests = new Map<
-    number,
-    { resolve: (r: unknown) => void; reject: (e: Error) => void }
-  >();
+  private pendingRequests = new Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void }>();
   private buffer = "";
 
   async start(config: LSPServerConfig, cwd: string): Promise<void> {
@@ -180,7 +177,9 @@ class SimpleLSPClient {
     } catch {
       // Best-effort shutdown
     }
-    try { this.proc.kill(); } catch {}
+    try {
+      this.proc.kill();
+    } catch {}
     this.proc = null;
   }
 }
@@ -195,16 +194,13 @@ class LSPNotAvailableError extends Error {
     const install = INSTALL_INSTRUCTIONS[language] ?? "";
     const installHint = install ? ` Install with: ${install}` : "";
     super(
-      `LSP not available for ${language}. Install ${serverName} to enable go-to-definition and hover.${installHint}`
+      `LSP not available for ${language}. Install ${serverName} to enable go-to-definition and hover.${installHint}`,
     );
     this.name = "LSPNotAvailableError";
   }
 }
 
-async function getClient(
-  language: string,
-  cwd: string,
-): Promise<SimpleLSPClient> {
+async function getClient(language: string, cwd: string): Promise<SimpleLSPClient> {
   const key = `${language}:${cwd}`;
   if (clients.has(key)) return clients.get(key)!;
   if (inFlight.has(key)) return inFlight.get(key)!;
@@ -237,21 +233,15 @@ interface LSPLocation {
 }
 
 interface LSPHoverResult {
-  contents?:
-    | string
-    | { value?: string }
-    | Array<string | { value?: string }>;
+  contents?: string | { value?: string } | Array<string | { value?: string }>;
 }
 
 function formatLocations(result: unknown): string {
   if (!result) return "No results found";
-  const locations = (
-    Array.isArray(result) ? result : [result]
-  ) as LSPLocation[];
+  const locations = (Array.isArray(result) ? result : [result]) as LSPLocation[];
   return locations
     .map((loc) => {
-      const path =
-        (loc.uri ?? loc.targetUri)?.replace("file://", "") ?? "unknown";
+      const path = (loc.uri ?? loc.targetUri)?.replace("file://", "") ?? "unknown";
       const range = loc.range ?? loc.targetRange;
       const line = (range?.start?.line ?? 0) + 1;
       return `${path}:${line}`;
@@ -265,10 +255,7 @@ function formatHover(result: unknown): string {
   const contents = hover.contents;
   if (typeof contents === "string") return contents;
   if ("value" in contents && contents.value) return contents.value;
-  if (Array.isArray(contents))
-    return contents
-      .map((c) => (typeof c === "string" ? c : c.value ?? ""))
-      .join("\n");
+  if (Array.isArray(contents)) return contents.map((c) => (typeof c === "string" ? c : (c.value ?? ""))).join("\n");
   return JSON.stringify(contents);
 }
 
@@ -338,8 +325,7 @@ Requires the language server to be installed (e.g., typescript-language-server f
 
     const fullPath = resolve(context.cwd, file);
     const language = detectLanguage(fullPath);
-    if (!language)
-      return `Unsupported file type: ${file}. Supported: .ts, .tsx, .js, .jsx, .py, .rs, .go`;
+    if (!language) return `Unsupported file type: ${file}. Supported: .ts, .tsx, .js, .jsx, .py, .rs, .go`;
 
     try {
       const client = await getClient(language, context.cwd);

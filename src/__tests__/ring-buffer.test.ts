@@ -1,11 +1,5 @@
-import { test, expect, describe, beforeEach } from "bun:test";
-import {
-  RingBuffer,
-  logError,
-  getRecentErrors,
-  getErrorLog,
-  clearErrorLog,
-} from "../utils/ring-buffer.ts";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { clearErrorLog, getErrorLog, getRecentErrors, logError, RingBuffer } from "../utils/ring-buffer.ts";
 
 describe("RingBuffer", () => {
   let buf: RingBuffer<number>;

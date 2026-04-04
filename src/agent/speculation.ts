@@ -129,7 +129,7 @@ export class SpeculationCache {
       name: string;
       input: Record<string, unknown>;
       result?: string;
-    }>
+    }>,
   ): Promise<void> {
     if (recentToolCalls.length === 0) return;
 

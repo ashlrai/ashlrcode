@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 // The helper functions are not exported, so we need to test them indirectly
 // or re-import the module. Since they're private, we'll test via the module's
@@ -41,21 +41,24 @@ interface SubAgentResult {
 function extractJSON<T>(text: string): T | null {
   try {
     return JSON.parse(text) as T;
-  } catch { /* continue */ }
+  } catch {
+    /* continue */
+  }
 
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) {
     try {
       return JSON.parse(fenced[1]!.trim()) as T;
-    } catch { /* continue */ }
+    } catch {
+      /* continue */
+    }
   }
 
   let depth = 0;
   let start = -1;
   const bracketIdx = text.indexOf("[");
   const braceIdx = text.indexOf("{");
-  const opener =
-    bracketIdx >= 0 && (braceIdx < 0 || bracketIdx < braceIdx) ? "[" : "{";
+  const opener = bracketIdx >= 0 && (braceIdx < 0 || bracketIdx < braceIdx) ? "[" : "{";
   const closer = opener === "[" ? "]" : "}";
 
   for (let i = 0; i < text.length; i++) {
@@ -67,7 +70,9 @@ function extractJSON<T>(text: string): T | null {
       if (depth === 0 && start >= 0) {
         try {
           return JSON.parse(text.slice(start, i + 1)) as T;
-        } catch { /* continue looking */ }
+        } catch {
+          /* continue looking */
+        }
       }
     }
   }
@@ -157,9 +162,7 @@ function evaluateSuccess(result: SubAgentResult): { success: boolean; summary: s
   }
 
   const lines = text.split("\n");
-  const errorLines = lines.filter((l) =>
-    /^(Error:|FAIL|FATAL|Traceback|panic:)/i.test(l.trim())
-  );
+  const errorLines = lines.filter((l) => /^(Error:|FAIL|FATAL|Traceback|panic:)/i.test(l.trim()));
 
   if (errorLines.length > 0 && result.toolCalls.length === 0) {
     return { success: false, summary: errorLines[0]!.trim() };
@@ -218,7 +221,7 @@ describe("extractJSON", () => {
   });
 
   test("returns null for malformed JSON in fences", () => {
-    const text = '```json\n{broken json\n```';
+    const text = "```json\n{broken json\n```";
     // Falls through to bracket matching which also fails
     expect(extractJSON(text)).toBeNull();
   });
@@ -226,11 +229,7 @@ describe("extractJSON", () => {
 
 describe("detectCycles", () => {
   test("returns null for acyclic graph", () => {
-    const tasks = [
-      task("a"),
-      task("b", ["a"]),
-      task("c", ["b"]),
-    ];
+    const tasks = [task("a"), task("b", ["a"]), task("c", ["b"])];
     expect(detectCycles(tasks)).toBeNull();
   });
 
@@ -240,10 +239,7 @@ describe("detectCycles", () => {
   });
 
   test("detects simple cycle (A -> B -> A)", () => {
-    const tasks = [
-      task("a", ["b"]),
-      task("b", ["a"]),
-    ];
+    const tasks = [task("a", ["b"]), task("b", ["a"])];
     const cycle = detectCycles(tasks);
     expect(cycle).not.toBeNull();
     expect(cycle!.length).toBeGreaterThan(2);
@@ -253,23 +249,14 @@ describe("detectCycles", () => {
   });
 
   test("detects complex cycle (A -> B -> C -> A)", () => {
-    const tasks = [
-      task("a", ["c"]),
-      task("b", ["a"]),
-      task("c", ["b"]),
-    ];
+    const tasks = [task("a", ["c"]), task("b", ["a"]), task("c", ["b"])];
     const cycle = detectCycles(tasks);
     expect(cycle).not.toBeNull();
   });
 
   test("handles diamond dependency (no cycle)", () => {
     // A -> B, A -> C, B -> D, C -> D
-    const tasks = [
-      task("a"),
-      task("b", ["a"]),
-      task("c", ["a"]),
-      task("d", ["b", "c"]),
-    ];
+    const tasks = [task("a"), task("b", ["a"]), task("c", ["a"]), task("d", ["b", "c"])];
     expect(detectCycles(tasks)).toBeNull();
   });
 
@@ -289,11 +276,7 @@ describe("buildWaves", () => {
   });
 
   test("linear dependency chain produces one task per wave", () => {
-    const tasks = [
-      task("a"),
-      task("b", ["a"]),
-      task("c", ["b"]),
-    ];
+    const tasks = [task("a"), task("b", ["a"]), task("c", ["b"])];
     const waves = buildWaves(tasks);
     expect(waves.length).toBe(3);
     expect(waves[0]!.map((t) => t.id)).toEqual(["a"]);
@@ -302,12 +285,7 @@ describe("buildWaves", () => {
   });
 
   test("diamond dependency produces 3 waves", () => {
-    const tasks = [
-      task("a"),
-      task("b", ["a"]),
-      task("c", ["a"]),
-      task("d", ["b", "c"]),
-    ];
+    const tasks = [task("a"), task("b", ["a"]), task("c", ["a"]), task("d", ["b", "c"])];
     const waves = buildWaves(tasks);
     expect(waves.length).toBe(3);
     expect(waves[0]!.map((t) => t.id)).toEqual(["a"]);
@@ -326,10 +304,7 @@ describe("buildWaves", () => {
   });
 
   test("dependencies on non-existent tasks are ignored", () => {
-    const tasks = [
-      task("a", ["nonexistent"]),
-      task("b"),
-    ];
+    const tasks = [task("a", ["nonexistent"]), task("b")];
     const waves = buildWaves(tasks);
     // "a" depends on "nonexistent" which is not in remaining, so treated as completed
     expect(waves.length).toBe(1);
