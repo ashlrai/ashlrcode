@@ -22,8 +22,8 @@ function wrapWithBorder(bodyLines: string[], footer?: string): string[] {
 
 function truncateLines(allLines: string[], max: number = MAX_BODY_LINES): string[] {
   if (allLines.length <= max) return allLines;
-  const tail = Math.max(1, Math.floor(max / 4));
-  const head = max - tail;
+  const tail = Math.max(1, Math.floor((max - 1) / 4));
+  const head = (max - 1) - tail;
   const omitted = allLines.length - head - tail;
   return [...allLines.slice(0, head), theme.muted(`  ... ${omitted} more lines ...`), ...allLines.slice(-tail)];
 }
