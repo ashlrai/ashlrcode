@@ -76,6 +76,12 @@ async function* streamAnthropicEvents(
             type: "thinking_delta",
             text: (delta as unknown as { thinking: string }).thinking,
           };
+        } else if (delta.type === "signature_delta" && "signature" in delta) {
+          yield {
+            type: "thinking_delta",
+            text: "",
+            signature: (delta as unknown as { signature: string }).signature,
+          };
         }
         break;
       }
@@ -157,6 +163,8 @@ function convertMessage(
     switch (b.type) {
       case "text":
         return { type: "text" as const, text: b.text };
+      case "thinking":
+        return { type: "thinking" as const, thinking: b.thinking, signature: b.signature ?? "" };
       case "tool_use":
         return {
           type: "tool_use" as const,
@@ -174,7 +182,7 @@ function convertMessage(
       default:
         return { type: "text" as const, text: "" };
     }
-  }).filter(b => b.type !== "text" || b.text !== "");
+  }).filter(b => b.type !== "text" || ("text" in b && b.text !== ""));
 
   return {
     role: msg.role === "tool" ? "user" : msg.role,

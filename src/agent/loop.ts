@@ -148,7 +148,7 @@ async function _runAgentLoop(
   let finalText = "";
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
-    const { text, thinking, toolCalls, stopReason } = await streamResponse(
+    const { text, thinking, thinkingSignature, toolCalls, stopReason } = await streamResponse(
       messages,
       tools,
       config
@@ -160,7 +160,7 @@ async function _runAgentLoop(
     // Include thinking blocks so Anthropic's API sees them on subsequent turns.
     const contentBlocks: ContentBlock[] = [];
     if (thinking) {
-      contentBlocks.push({ type: "thinking", thinking });
+      contentBlocks.push({ type: "thinking", thinking, signature: thinkingSignature || undefined });
     }
     if (text) {
       contentBlocks.push({ type: "text", text });
@@ -252,6 +252,8 @@ export async function* streamAgentLoop(
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     // Stream API response, yielding text deltas as they arrive
     let text = "";
+    let thinking = "";
+    let thinkingSignature = "";
     const toolCalls: ToolCall[] = [];
     let stopReason = "end_turn";
 
@@ -276,7 +278,11 @@ export async function* streamAgentLoop(
 
         case "thinking_delta":
           if (event.text) {
+            thinking += event.text;
             yield { type: "thinking_delta", text: event.text };
+          }
+          if (event.signature) {
+            thinkingSignature = event.signature;
           }
           break;
 
@@ -302,6 +308,9 @@ export async function* streamAgentLoop(
 
     // Build assistant message with content blocks
     const contentBlocks: ContentBlock[] = [];
+    if (thinking) {
+      contentBlocks.push({ type: "thinking", thinking, signature: thinkingSignature || undefined });
+    }
     if (text) {
       contentBlocks.push({ type: "text", text });
     }
@@ -384,11 +393,13 @@ async function streamResponse(
 ): Promise<{
   text: string;
   thinking: string;
+  thinkingSignature: string;
   toolCalls: ToolCall[];
   stopReason: string;
 }> {
   let text = "";
   let thinking = "";
+  let thinkingSignature = "";
   const toolCalls: ToolCall[] = [];
   let stopReason = "end_turn";
 
@@ -416,6 +427,9 @@ async function streamResponse(
           thinking += event.text;
           config.onThinking?.(event.text);
         }
+        if (event.signature) {
+          thinkingSignature = event.signature;
+        }
         break;
 
       case "tool_call_end":
@@ -436,5 +450,5 @@ async function streamResponse(
     }
   }
 
-  return { text, thinking, toolCalls, stopReason };
+  return { text, thinking, thinkingSignature, toolCalls, stopReason };
 }
