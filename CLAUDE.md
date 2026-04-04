@@ -1,7 +1,19 @@
-# AshlrCode v1.0.1
+# AshlrCode v2.0
 
 Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
-42 tools, 15 skills, 20+ built-in commands, 6 providers, 335 tests. Ink-based terminal UI with buddy system.
+45 tools, 18 skills, 39 built-in commands, 6 providers, 335 tests. Ink-based terminal UI with buddy system.
+
+## v2.0 Additions
+- **Verification Agent** (`src/agent/verification.ts`): Auto-validates multi-file changes via read-only sub-agent. Manual `/verify` command. Auto-suggest after 2+ file edits.
+- **Coordinator Mode** (`src/agent/coordinator.ts`): Multi-agent orchestration — plans subtasks, dispatches to team members in parallel waves, auto-verifies. `/coordinate` command.
+- **LLM Dream Consolidation** (`src/agent/dream.ts`): Dreams are now LLM-summarized (not raw excerpts). Overlapping dreams auto-merged. Uses router on exit.
+- **KAIROS Push Notifications** (`src/agent/kairos.ts`): macOS notifications when autonomous work completes or errors while user is away.
+- **Provider-Aware Prompt Budget**: System prompt assembly uses 5% of provider context limit (not static 8000). xAI gets ~100K, Ollama gets ~1.6K.
+- **Cost Budgeting** (`src/providers/cost-tracker.ts`): Budget warnings at 75%/90%/100%. Set via `--max-cost`.
+- **Tool Execution Metrics** (`src/agent/tool-executor.ts`): Cumulative timing, success rates, avg duration per tool. `/stats` command.
+- **Speculation Stats**: Cache hit rate shown in turn separator (`⚡XX% cache`).
+- **12 Model Patches**: Expanded from 7 to 12 — specific patches for Llama3, CodeLlama, Mistral, DeepSeek Coder, Qwen, small models.
+- **Ollama Context Limits**: Provider-aware (32K default) + 12 free pricing entries for common local models.
 
 ## Architecture
 
@@ -50,13 +62,13 @@ bunx tsc --noEmit       # Type check
 
 ```
 src/
-├── cli.ts                 # Entry point, Ink UI, REPL, 20+ commands, global error handlers
+├── cli.ts                 # Entry point, Ink UI, REPL, 25+ commands, global error handlers
 ├── repl.tsx               # Ink REPL component, input handling
-├── agent/                 # Loop, context compression, parallel executor, sub-agents
-├── providers/             # 6 providers with retry logic
-├── tools/                 # 42 tools (file ops, search, exec, PowerShell, planning, memory, git, teams, workflows)
+├── agent/                 # Loop, context, sub-agents, verification, coordinator, KAIROS, dreams, speculation
+├── providers/             # 6 providers with retry logic, cost budgeting
+├── tools/                 # 43 tools (file ops, search, exec, PowerShell, planning, memory, git, teams, workflows, verify)
 ├── mcp/                   # MCP client + manager (stdio + SSE transport)
-├── skills/                # Skill loader + registry (15 slash commands)
+├── skills/                # Skill loader + registry (18 slash commands)
 ├── planning/              # Plan mode + tools
 ├── persistence/           # Sessions (JSONL) + memory (markdown)
 ├── config/                # Settings, hooks, permissions, git context

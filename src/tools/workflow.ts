@@ -5,6 +5,9 @@
  */
 
 import type { Tool, ToolContext } from "./types.ts";
+import type { ProviderRouter } from "../providers/router.ts";
+import type { ToolRegistry } from "../tools/registry.ts";
+import { runSubAgent } from "../agent/sub-agent.ts";
 import {
   listWorkflows,
   loadWorkflow,
@@ -14,6 +17,20 @@ import {
   markWorkflowRun,
   type WorkflowStep,
 } from "../agent/workflow.ts";
+
+let _router: ProviderRouter | null = null;
+let _registry: ToolRegistry | null = null;
+let _systemPrompt: string = "";
+
+export function initWorkflowTool(
+  router: ProviderRouter,
+  registry: ToolRegistry,
+  systemPrompt: string,
+): void {
+  _router = router;
+  _registry = registry;
+  _systemPrompt = systemPrompt;
+}
 
 export const workflowTool: Tool = {
   name: "Workflow",
@@ -131,10 +148,20 @@ Each step has a type: "prompt" (send text to the LLM), "command" (run a shell co
       if (!wf) return "Workflow not found.";
 
       const result = await executeWorkflow(wf, {
-        // Prompt execution: placeholder — real agent integration would
-        // feed the prompt into the conversation loop
-        runPrompt: async (prompt) =>
-          `[Would execute prompt: ${prompt.slice(0, 200)}]`,
+        // Prompt execution: dispatch to a sub-agent with the prompt
+        runPrompt: async (prompt) => {
+          if (!_router || !_registry) return `[Workflow not initialized — cannot execute prompts]`;
+          const agentResult = await runSubAgent({
+            name: `workflow-${wf.id}`,
+            prompt,
+            systemPrompt: _systemPrompt,
+            router: _router,
+            toolRegistry: _registry,
+            toolContext: context,
+            maxIterations: 10,
+          });
+          return agentResult.text || "(no output)";
+        },
 
         // Command execution: runs via Bun.spawn
         runCommand: async (cmd) => {
@@ -150,13 +177,10 @@ Each step has a type: "prompt" (send text to the LLM), "command" (run a shell co
           return { output, exitCode };
         },
 
-        // Tool execution: placeholder — real integration would dispatch
-        // through the ToolRegistry
+        // Tool execution: dispatch through the ToolRegistry
         runTool: async (name, toolInput) => {
-          return {
-            result: `[Would call tool: ${name} with ${JSON.stringify(toolInput).slice(0, 200)}]`,
-            isError: false,
-          };
+          if (!_registry) return { result: "[Workflow not initialized — cannot execute tools]", isError: true };
+          return _registry.execute(name, toolInput, context);
         },
 
         onStepStart: (step, i) => {

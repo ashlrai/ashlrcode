@@ -13,6 +13,7 @@ import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
 import type { Message } from "../providers/types.ts";
+import { generateAwaySummary, formatAwaySummaryForNotification } from "./away-summary.ts";
 
 /* ── Configuration ──────────────────────────────────────────────── */
 
@@ -94,6 +95,27 @@ function getAutonomyPrompt(level: AutonomyLevel): string {
   }
 }
 
+/* ── Push notifications ────────────────────────────────────────── */
+
+/**
+ * Send a macOS notification. No-op on other platforms.
+ * Uses osascript to display a native notification center alert.
+ */
+async function sendNotification(title: string, message: string): Promise<void> {
+  if (process.platform !== "darwin") return;
+  try {
+    const escaped = message.replace(/"/g, '\\"').slice(0, 200);
+    const escapedTitle = title.replace(/"/g, '\\"');
+    const proc = Bun.spawn(
+      ["osascript", "-e", `display notification "${escaped}" with title "${escapedTitle}"`],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    await proc.exited;
+  } catch {
+    // Notification failure is not critical
+  }
+}
+
 /* ── KAIROS loop ────────────────────────────────────────────────── */
 
 export class KairosLoop {
@@ -139,6 +161,14 @@ export class KairosLoop {
     if (this.timer) { clearInterval(this.timer); this.timer = null; }
     if (this.focusTimer) { clearInterval(this.focusTimer); this.focusTimer = null; }
     this.config.onOutput("  KAIROS stopped\n");
+
+    // Push notification when user is away
+    if (this._focusState === "unfocused") {
+      await sendNotification(
+        "AshlrCode — KAIROS Complete",
+        `Autonomous work finished after ${this.tickCount} ticks.`,
+      );
+    }
   }
 
   isRunning(): boolean {
@@ -157,14 +187,28 @@ export class KairosLoop {
     this.tickCount++;
 
     const level = getAutonomyLevel(this._focusState);
+
+    // Every 3rd tick, prompt the agent to scan for new work if idle
+    const scanPrompt = this.tickCount % 3 === 0
+      ? "\nIf nothing is pending, use the Bash tool to run `bun test` and check for failures. Also search for TODO/FIXME comments with Grep. Fix any issues you find."
+      : "\nIf nothing is pending, check if there are improvements to make or tests to run.";
+
     const tick = [
       `<tick count="${this.tickCount}" focus="${this._focusState}" autonomy="${level}" time="${new Date().toISOString()}">`,
       "Continue your current work. Check task list for pending items.",
-      "If nothing is pending, check if there are improvements to make or tests to run.",
+      scanPrompt,
     ].join("\n");
 
     this.config.onOutput(`  tick #${this.tickCount} [${level}]\n`);
     await this.executeTick(tick);
+
+    // Away Summary: every 5th tick when user is away, send a notification summary
+    if (this._focusState === "unfocused" && this.tickCount % 5 === 0 && this.history.length > 0) {
+      const summary = generateAwaySummary(this.history);
+      summary.duration = `${Math.round((this.tickCount * (this.config.heartbeatIntervalMs / 1000)) / 60)}m`;
+      const notifText = formatAwaySummaryForNotification(summary);
+      sendNotification("AshlrCode — Away Summary", notifText).catch(() => {});
+    }
   }
 
   private async executeTick(prompt: string): Promise<void> {
@@ -199,9 +243,13 @@ export class KairosLoop {
         await this.stop();
       }
     } catch (err) {
-      this.config.onOutput(
-        `  KAIROS error: ${err instanceof Error ? err.message : String(err)}\n`,
-      );
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.config.onOutput(`  KAIROS error: ${errMsg}\n`);
+
+      // Notify on error when user is away
+      if (this._focusState === "unfocused") {
+        sendNotification("AshlrCode — KAIROS Error", errMsg.slice(0, 100)).catch(() => {});
+      }
     }
   }
 }

@@ -10,6 +10,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
 import type { ToolCall } from "../providers/types.ts";
 import type { SpeculationCache } from "./speculation.ts";
+import { trackFileModification } from "./verification.ts";
 
 // ---------------------------------------------------------------------------
 // Module-level speculation cache (set from repl startup)
@@ -23,6 +24,81 @@ export function setSpeculationCache(cache: SpeculationCache): void {
 
 export function getSpeculationCache(): SpeculationCache | null {
   return _speculationCache;
+}
+
+// ---------------------------------------------------------------------------
+// Tool execution metrics — cumulative timing and success tracking
+// ---------------------------------------------------------------------------
+
+interface ToolMetric {
+  name: string;
+  calls: number;
+  errors: number;
+  totalDurationMs: number;
+  minDurationMs: number;
+  maxDurationMs: number;
+}
+
+const _toolMetrics = new Map<string, ToolMetric>();
+
+/** Record a tool execution for metrics tracking. */
+function recordToolMetric(name: string, durationMs: number, isError: boolean): void {
+  const existing = _toolMetrics.get(name) ?? {
+    name,
+    calls: 0,
+    errors: 0,
+    totalDurationMs: 0,
+    minDurationMs: Infinity,
+    maxDurationMs: 0,
+  };
+
+  existing.calls++;
+  if (isError) existing.errors++;
+  existing.totalDurationMs += durationMs;
+  existing.minDurationMs = Math.min(existing.minDurationMs, durationMs);
+  existing.maxDurationMs = Math.max(existing.maxDurationMs, durationMs);
+
+  _toolMetrics.set(name, existing);
+}
+
+/** Get all tool execution metrics (sorted by total calls descending). */
+export function getToolMetrics(): ToolMetric[] {
+  return Array.from(_toolMetrics.values())
+    .sort((a, b) => b.calls - a.calls);
+}
+
+/** Format tool metrics for display. */
+export function formatToolMetrics(): string {
+  const metrics = getToolMetrics();
+  if (metrics.length === 0) return "No tool calls recorded.";
+
+  const lines: string[] = ["Tool Execution Metrics:"];
+  const totalCalls = metrics.reduce((s, m) => s + m.calls, 0);
+  const totalDuration = metrics.reduce((s, m) => s + m.totalDurationMs, 0);
+
+  lines.push(`  Total: ${totalCalls} calls, ${formatMs(totalDuration)} total`);
+  lines.push("");
+
+  for (const m of metrics.slice(0, 15)) {
+    const avgMs = m.calls > 0 ? m.totalDurationMs / m.calls : 0;
+    const errorRate = m.calls > 0 ? Math.round((m.errors / m.calls) * 100) : 0;
+    lines.push(
+      `  ${m.name.padEnd(16)} ${String(m.calls).padStart(4)} calls · avg ${formatMs(avgMs)} · ${errorRate}% err`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatMs(ms: number): string {
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+
+/** Reset metrics (for testing). */
+export function resetToolMetrics(): void {
+  _toolMetrics.clear();
 }
 
 export interface ToolExecutionResult {
@@ -99,6 +175,7 @@ async function executeSingle(
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
   }
 ): Promise<ToolExecutionResult> {
+  const startTime = performance.now();
   const tool = registry.get(tc.name);
 
   // Check speculation cache for read-only tools (skip the full execute path)
@@ -107,6 +184,7 @@ async function executeSingle(
     if (cached !== null) {
       callbacks?.onToolStart?.(tc.name, tc.input);
       callbacks?.onToolEnd?.(tc.name, cached, false);
+      recordToolMetric(tc.name, performance.now() - startTime, false);
 
       // Track for speculation and trigger pre-fetch for next likely call
       trackAndSpeculate(tc.name, tc.input, cached);
@@ -126,17 +204,19 @@ async function executeSingle(
   const { result, isError } = await registry.execute(tc.name, tc.input, context);
 
   callbacks?.onToolEnd?.(tc.name, result, isError);
+  recordToolMetric(tc.name, performance.now() - startTime, isError);
 
   // Cache successful read-only results for future speculation
   if (tool?.isReadOnly() && _speculationCache && !isError) {
     _speculationCache.set(tc.name, tc.input, result);
   }
 
-  // Invalidate cache when write tools execute
-  if (!tool?.isReadOnly() && _speculationCache) {
+  // Invalidate cache and track modifications when write tools execute
+  if (!tool?.isReadOnly()) {
     const filePath = tc.input.file_path;
     if (typeof filePath === "string") {
-      _speculationCache.invalidateForFile(filePath);
+      _speculationCache?.invalidateForFile(filePath);
+      trackFileModification(filePath);
     }
   }
 

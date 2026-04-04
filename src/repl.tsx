@@ -157,6 +157,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   // KAIROS autonomous mode — lazy-initialized when /kairos is used
   let kairos: KairosLoop | null = null;
+  let productAgent: import("./agent/product-agent.ts").ProductAgent | null = null;
 
   // Cron trigger runner — background polling for due triggers
   // Uses deferred callback since runTurnInk is defined later
@@ -214,7 +215,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Idle detector — generate dream when user is idle for 2 minutes
   const idleDetector = new IdleDetector(async () => {
     if (state.history.length > 4) {
-      await generateDream(state.history, state.session.id).catch(() => {});
+      await generateDream(state.history, state.session.id, state.router).catch(() => {});
     }
   }, 120_000);
 
@@ -299,7 +300,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/model", "/compact", "/diff", "/git", "/clear", "/quit", "/bug", "/version",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
-        "/kairos", "/kairos stop", "/telemetry", "/voice",
+        "/kairos", "/kairos stop", "/ship", "/ship stop", "/verify", "/coordinate", "/stats",
+        "/trigger", "/sync", "/plan", "/patches", "/remote", "/undercover",
+        "/bridge", "/telemetry", "/voice",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
     };
@@ -433,11 +436,74 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput(`\nCommands: /plan /cost /status /effort /btw /history /undo /restore /tools /skills /buddy /memory /sessions /model /compact /diff /git /sync /features /keybindings /undercover /patches /kairos /trigger /telemetry /voice /version /clear /help /quit\n`);
+        addOutput([
+          "",
+          theme.accentBold("  Agent Intelligence"),
+          `    /ship ${theme.muted(".............")} Autonomous product-building agent (finds & fixes issues)`,
+          `    /verify ${theme.muted("............")} Run verification agent on recent changes`,
+          `    /coordinate ${theme.muted("......")} Break complex tasks into parallel sub-agents`,
+          `    /kairos ${theme.muted("...........")} Start autonomous mode (focus-aware)`,
+          `    /trigger ${theme.muted("..........")} Schedule recurring agent tasks`,
+          "",
+          theme.accentBold("  Workflow"),
+          `    /plan ${theme.muted(".............")} Enter plan mode (read-only exploration)`,
+          `    /commit ${theme.muted("...........")} Create a well-crafted git commit`,
+          `    /review ${theme.muted("...........")} Code review for bugs & security`,
+          `    /autopilot ${theme.muted(".........")} Autonomous scan → fix → test → PR`,
+          `    /btw ${theme.muted("...............")} Side question without interrupting flow`,
+          "",
+          theme.accentBold("  Session"),
+          `    /cost ${theme.muted(".............")} Show token usage and costs`,
+          `    /stats ${theme.muted("............")} Tool metrics + speculation cache stats`,
+          `    /status ${theme.muted("...........")} Current session info`,
+          `    /memory ${theme.muted("...........")} View saved project memories`,
+          `    /sessions ${theme.muted(".........")} List past sessions`,
+          `    /compact ${theme.muted("...........")} Force context compression`,
+          `    /history ${theme.muted("...........")} View conversation file history`,
+          "",
+          theme.accentBold("  Tools & Config"),
+          `    /tools ${theme.muted("............")} List all registered tools`,
+          `    /skills ${theme.muted("...........")} List available slash commands`,
+          `    /model ${theme.muted("............")} Switch provider/model`,
+          `    /effort ${theme.muted("...........")} Set model effort level`,
+          `    /patches ${theme.muted("...........")} View active model patches`,
+          `    /features ${theme.muted("..........")} Toggle feature flags`,
+          `    /keybindings ${theme.muted(".......")} View/edit keyboard shortcuts`,
+          "",
+          theme.accentBold("  Files & Git"),
+          `    /undo ${theme.muted(".............")} Undo last file change`,
+          `    /restore ${theme.muted("...........")} Restore file from history`,
+          `    /diff ${theme.muted(".............")} Show git diff`,
+          `    /git ${theme.muted("..............")} Git status summary`,
+          "",
+          theme.accentBold("  Other"),
+          `    /buddy ${theme.muted("............")} View/customize companion`,
+          `    /voice ${theme.muted("............")} Voice input mode`,
+          `    /version ${theme.muted("...........")} Show version`,
+          `    /clear ${theme.muted("............")} Clear conversation`,
+          `    /quit ${theme.muted(".............")} Exit AshlrCode`,
+          "",
+          theme.muted("  Tip: Type any slash command name for more info. Custom skills: ~/.ashlrcode/skills/"),
+          "",
+        ].join("\n"));
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
         return true;
+      case "/stats": {
+        const { formatToolMetrics } = await import("./agent/tool-executor.ts");
+        const specStats = speculationCache.getStats();
+        const specTotal = specStats.hits + specStats.misses;
+        const specRate = specTotal > 0 ? Math.round((specStats.hits / specTotal) * 100) : 0;
+        addOutput([
+          "",
+          formatToolMetrics(),
+          "",
+          `Speculation Cache: ${specStats.size} entries, ${specStats.hits} hits / ${specStats.misses} misses (${specRate}% hit rate)`,
+          "",
+        ].join("\n"));
+        return true;
+      }
       case "/clear":
         state.history.length = 0;
         addOutput(theme.secondary("\n  Conversation cleared.\n"));
@@ -907,13 +973,33 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
 
       case "/kairos": {
-        if (!arg || arg === "stop") {
+        if (arg === "stop") {
           if (kairos?.isRunning()) {
             await kairos.stop();
             kairos = null;
           } else {
             addOutput(theme.tertiary("\n  KAIROS not running\n"));
           }
+          return true;
+        }
+        if (!arg) {
+          addOutput([
+            "",
+            theme.accentBold("  KAIROS — Autonomous Agent Mode"),
+            "",
+            `  ${theme.accent("Usage:")}  /kairos <goal>`,
+            `  ${theme.accent("Stop:")}   /kairos stop`,
+            "",
+            `  ${theme.muted("Detects terminal focus to adjust behavior:")}`,
+            `    ${theme.success("Focused")}    → Collaborative (asks before big changes)`,
+            `    ${theme.warning("Unfocused")}  → Full auto (commits, pushes independently)`,
+            `    ${theme.muted("Unknown")}    → Balanced default`,
+            "",
+            `  ${theme.muted("Heartbeat every 30s · macOS notification when done · Auto-stops when idle")}`,
+            "",
+            `  ${theme.accent("Example:")} /kairos Fix all TODO comments in src/agent/`,
+            "",
+          ].join("\n"));
           return true;
         }
         if (kairos?.isRunning()) {
@@ -935,6 +1021,119 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           },
         });
         await kairos.start(arg);
+        return true;
+      }
+
+      case "/coordinate": {
+        if (!arg) {
+          addOutput(theme.warning("\n  Usage: /coordinate <goal>\n  Example: /coordinate Refactor auth module to use JWT\n"));
+          return true;
+        }
+        const { coordinate, formatCoordinatorReport } = await import("./agent/coordinator.ts");
+        addOutput(theme.accent("\n  🎯 Coordinator mode — breaking task into subtasks...\n"));
+        const coordResult = await coordinate(arg, {
+          router: state.router,
+          toolRegistry: state.registry,
+          toolContext: state.toolContext,
+          systemPrompt: state.baseSystemPrompt,
+          autoVerify: true,
+          onProgress: (event) => {
+            switch (event.type) {
+              case "planning":
+                addOutput(theme.tertiary(`  📋 ${event.message}\n`));
+                break;
+              case "dispatching":
+                addOutput(theme.accent(`  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`));
+                break;
+              case "agent_complete":
+                addOutput(event.success
+                  ? theme.success(`  ✓ ${event.agentName} completed\n`)
+                  : theme.error(`  ✗ ${event.agentName} failed\n`));
+                break;
+              case "verifying":
+                addOutput(theme.tertiary("  🔍 Running verification...\n"));
+                break;
+              case "complete":
+                addOutput(theme.success(`  ✅ ${event.summary}\n`));
+                break;
+            }
+            update();
+          },
+        });
+        addOutput("\n" + formatCoordinatorReport(coordResult) + "\n");
+        return true;
+      }
+
+      case "/ship": {
+        if (arg === "stop") {
+          if (productAgent?.isRunning()) {
+            productAgent.stop();
+            productAgent = null;
+            addOutput(theme.accent("\n  ProductAgent stopped\n"));
+          } else {
+            addOutput(theme.tertiary("\n  ProductAgent not running\n"));
+          }
+          return true;
+        }
+        if (!arg) {
+          addOutput([
+            "",
+            theme.accentBold("  🚀 ProductAgent — Autonomous Product Building"),
+            "",
+            `  ${theme.accent("Usage:")}  /ship <product-goal>`,
+            `  ${theme.accent("Stop:")}   /ship stop`,
+            "",
+            `  ${theme.muted("The agent autonomously:")}`,
+            `    1. Scans your codebase against the goal`,
+            `    2. Finds bugs, missing features, quality gaps`,
+            `    3. Prioritizes by user impact`,
+            `    4. Executes fixes with sub-agents`,
+            `    5. Verifies every change`,
+            "",
+            `  ${theme.accent("Example:")} /ship Make ashlrcode production-ready for paying users`,
+            "",
+          ].join("\n"));
+          return true;
+        }
+        if (productAgent?.isRunning()) {
+          addOutput(theme.warning("\n  ProductAgent already running. /ship stop first.\n"));
+          return true;
+        }
+        const { ProductAgent, formatProductReport } = await import("./agent/product-agent.ts");
+        productAgent = new ProductAgent({
+          router: state.router,
+          toolRegistry: state.registry,
+          toolContext: state.toolContext,
+          systemPrompt: state.baseSystemPrompt,
+          goal: arg,
+          maxItems: 20,
+          pauseBetweenMs: 3000,
+          autoCommit: false, // User should commit themselves
+          onOutput: (text) => { addOutput(text); update(); },
+          onPhaseChange: (phase) => { spinnerText = `ProductAgent: ${phase}`; update(); },
+        });
+        const shipResult = await productAgent.start();
+        addOutput("\n" + formatProductReport(shipResult) + "\n");
+        productAgent = null;
+        return true;
+      }
+
+      case "/verify": {
+        const { runVerification, formatVerificationReport, getModifiedFiles } = await import("./agent/verification.ts");
+        const modFiles = getModifiedFiles();
+        if (modFiles.length === 0 && !arg) {
+          addOutput(theme.warning("\n  No modified files to verify. Make changes first or specify: /verify <intent>\n"));
+          return true;
+        }
+        addOutput(theme.accent("\n  🔍 Running verification agent...\n"));
+        const vResult = await runVerification({
+          router: state.router,
+          toolRegistry: state.registry,
+          toolContext: state.toolContext,
+          systemPrompt: state.baseSystemPrompt,
+          onOutput: (text) => { addOutput(text); update(); },
+        }, { intent: arg || undefined });
+        addOutput("\n" + formatVerificationReport(vResult) + "\n");
         return true;
       }
 
@@ -997,28 +1196,28 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
 
       case "/btw": {
-        if (!arg) { addOutput(theme.tertiary("\n  Usage: /btw <question>\n  Ask a side question without interrupting the current task.\n")); return true; }
-        // Run the question in a sub-agent so it doesn't pollute main history
-        const { runSubAgent } = await import("./agent/sub-agent.ts");
-        addOutput(theme.accent(`\n  💬 Side question: ${arg}\n`));
-        isProcessing = true; spinnerText = "Thinking (side)"; update();
-        try {
-          const result = await runSubAgent({
-            name: "btw",
-            prompt: arg,
-            systemPrompt: state.baseSystemPrompt + "\n\nThis is a brief side question. Answer concisely (1-3 sentences). Do not modify any files.",
-            router: state.router,
-            toolRegistry: state.registry,
-            toolContext: state.toolContext,
-            readOnly: true,
-            maxIterations: 5,
-          });
-          addOutput(result.text + "\n");
-        } catch (err) {
-          addOutput(theme.error(`  Error: ${err instanceof Error ? err.message : String(err)}\n`));
-        }
-        isProcessing = false; update();
-        return true;
+        if (!arg) { addOutput(theme.tertiary("\n  Usage: /btw <question>\n  Ask a side question in the background — doesn't block your flow.\n")); return true; }
+        // Spawn async background sub-agent — doesn't block main loop
+        const { runSubAgent: spawnBtw } = await import("./agent/sub-agent.ts");
+        addOutput(theme.accent(`\n  💬 Side question (background): ${arg}\n`));
+        // Fire and forget — result shows when ready
+        spawnBtw({
+          name: "btw",
+          prompt: arg,
+          systemPrompt: state.baseSystemPrompt + "\n\nThis is a brief side question. Answer concisely (1-3 sentences). Do not modify any files.",
+          router: state.router,
+          toolRegistry: state.registry,
+          toolContext: state.toolContext,
+          readOnly: true,
+          maxIterations: 5,
+        }).then((result) => {
+          addOutput(theme.accent("\n  💬 BTW answer:\n") + result.text + "\n");
+          update();
+        }).catch((err) => {
+          addOutput(theme.error(`\n  💬 BTW error: ${err instanceof Error ? err.message : String(err)}\n`));
+          update();
+        });
+        return true; // Returns immediately — doesn't block
       }
 
       case "/voice": {
@@ -1336,7 +1535,15 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
       currentQuipType = "quip";
       const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
-      addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount));
+      addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount, speculationCache.getStats()));
+
+      // Suggest verification after multi-file changes
+      const { shouldAutoVerify, getModifiedFiles, clearModifiedFiles } = await import("./agent/verification.ts");
+      if (shouldAutoVerify()) {
+        const modCount = getModifiedFiles().length;
+        addOutput(theme.tertiary(`  💡 ${modCount} files modified — run /verify to validate changes\n`));
+      }
+      clearModifiedFiles(); // Reset for next turn
 
       // Desktop notification when terminal is not focused
       detectTerminalFocus().then(focus => {
@@ -1392,6 +1599,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     stopRemotePolling();
     stopBridgeServer();
     stopBuddyAnimation();
+
+    // Clean up orphaned worktrees (>24h old)
+    import("./agent/worktree-manager.ts")
+      .then(({ cleanupOrphanedWorktrees }) => cleanupOrphanedWorktrees())
+      .catch(() => {});
     if (kairos?.isRunning()) await kairos.stop().catch(() => {});
     const { stopRecording: stopRec, isRecording: isRec } = await import("./voice/voice-mode.ts");
     if (isRec()) await stopRec().catch(() => {});
@@ -1405,7 +1617,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     state.buddy.mood = "sleepy";
     // Generate final dream on exit
     if (state.history.length > 4) {
-      await generateDream(state.history, state.session.id).catch(() => {});
+      await generateDream(state.history, state.session.id, state.router).catch(() => {});
     }
     await saveBuddy(state.buddy).catch(() => {});
     console.log("\n" + state.router.getCostSummary());

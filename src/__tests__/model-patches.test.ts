@@ -60,7 +60,7 @@ describe("Model Patches", () => {
   describe("listPatches", () => {
     test("returns all patches", () => {
       const patches = listPatches();
-      expect(patches.length).toBeGreaterThanOrEqual(7);
+      expect(patches.length).toBeGreaterThanOrEqual(12);
 
       const names = patches.map((p) => p.name);
       expect(names).toContain("Grok verbosity control");
@@ -69,7 +69,10 @@ describe("Model Patches", () => {
       expect(names).toContain("Opus thoroughness");
       expect(names).toContain("OpenAI reasoning");
       expect(names).toContain("DeepSeek format control");
-      expect(names).toContain("Local model constraints");
+      expect(names).toContain("Llama 3 optimization");
+      expect(names).toContain("CodeLlama specialization");
+      expect(names).toContain("Mistral optimization");
+      expect(names).toContain("Small model constraints");
     });
 
     test("returns a copy (not the internal array)", () => {

@@ -4,7 +4,8 @@
 
 import { join } from "path";
 import { homedir } from "os";
-import { mkdir } from "fs/promises";
+import { mkdir, readdir, stat } from "fs/promises";
+import { existsSync } from "fs";
 
 export interface WorktreeInfo {
   path: string;
@@ -83,4 +84,52 @@ export async function listWorktrees(): Promise<WorktreeInfo[]> {
     }
   }
   return worktrees;
+}
+
+/**
+ * Clean up orphaned worktrees older than maxAgeMs (default: 24 hours).
+ * Safe to call on startup or periodically.
+ */
+export async function cleanupOrphanedWorktrees(maxAgeMs: number = 24 * 60 * 60 * 1000): Promise<number> {
+  if (!existsSync(WORKTREE_DIR)) return 0;
+
+  let cleaned = 0;
+  const now = Date.now();
+
+  try {
+    const entries = await readdir(WORKTREE_DIR);
+    for (const entry of entries) {
+      const fullPath = join(WORKTREE_DIR, entry);
+      try {
+        const stats = await stat(fullPath);
+        if (stats.isDirectory() && (now - stats.mtimeMs) > maxAgeMs) {
+          await removeWorktree(fullPath);
+          cleaned++;
+        }
+      } catch {
+        // Skip entries we can't stat
+      }
+    }
+  } catch {
+    // WORKTREE_DIR unreadable — skip
+  }
+
+  return cleaned;
+}
+
+/**
+ * Cleanup hook for process exit — remove all worktrees from this session.
+ * Register with process.on("exit") or signal handlers.
+ */
+export async function cleanupAllWorktrees(): Promise<void> {
+  try {
+    const worktrees = await listWorktrees();
+    for (const wt of worktrees) {
+      if (wt.path.startsWith(WORKTREE_DIR)) {
+        await removeWorktree(wt.path);
+      }
+    }
+  } catch {
+    // Best effort
+  }
 }

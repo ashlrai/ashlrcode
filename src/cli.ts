@@ -83,9 +83,12 @@ import { diffTool } from "./tools/diff.ts";
 import { snipTool, initSnipTool } from "./tools/snip.ts";
 import { lspTool, shutdownLSP } from "./tools/lsp.ts";
 import { webBrowserTool, shutdownBrowser } from "./tools/web-browser.ts";
+import { verifyTool, initVerifyTool } from "./tools/verify.ts";
+import { coordinateTool, initCoordinateTool } from "./tools/coordinate.ts";
+import { trackFileModification, shouldAutoVerify } from "./agent/verification.ts";
 import { feature } from "./config/features.ts";
 import { teamCreateTool, teamDeleteTool, teamListTool, teamDispatchTool, initTeamTools } from "./tools/team.ts";
-import { workflowTool } from "./tools/workflow.ts";
+import { workflowTool, initWorkflowTool } from "./tools/workflow.ts";
 import { listPeersTool } from "./tools/peers.ts";
 import { MCPManager } from "./mcp/manager.ts";
 import { createMCPTool } from "./tools/mcp-tool.ts";
@@ -164,6 +167,17 @@ async function main() {
   // Initialize provider router
   const router = new ProviderRouter(settings.providers);
 
+  // Wire up cost budget with warning callbacks
+  if (maxCostUSD < Infinity) {
+    router.costTracker.budgetUSD = maxCostUSD;
+    router.costTracker.onBudgetWarning = (warning) => {
+      const color = warning.level === "exceeded" ? chalk.red
+        : warning.level === "critical" ? chalk.yellow
+        : chalk.dim;
+      console.error(color(`\n  💰 ${warning.message}\n`));
+    };
+  }
+
   // Initialize tool registry
   const registry = new ToolRegistry();
   registry.register(bashTool);
@@ -204,6 +218,8 @@ async function main() {
   registry.register(teamDispatchTool);
   registry.register(workflowTool);
   registry.register(listPeersTool);
+  registry.register(verifyTool);
+  registry.register(coordinateTool);
   if (process.platform === "win32") {
     registry.register(powershellTool);
   }
@@ -259,12 +275,22 @@ async function main() {
   // Git context via builder method (richer than legacy formatGitPrompt)
   await promptBuilder.addGitContext(cwd);
 
-  const assembled = promptBuilder.build(8000);
+  // Use provider-aware token budget for system prompt assembly:
+  // Reserve ~5% of provider context for system prompt (rest for conversation + tools)
+  const providerContextLimit = getProviderContextLimit(router.currentProvider.name);
+  const systemPromptBudget = Math.min(
+    Math.floor(providerContextLimit * 0.05),
+    50_000, // Cap at 50K tokens even for 2M context providers
+  );
+  const assembled = promptBuilder.build(systemPromptBudget);
   let baseSystemPrompt = assembled.text;
 
   // Initialize agent tool with router/registry references
   initAgentTool(router, registry, baseSystemPrompt);
   initTeamTools(router, registry, baseSystemPrompt);
+  initVerifyTool(router, registry, baseSystemPrompt);
+  initCoordinateTool(router, registry, baseSystemPrompt);
+  initWorkflowTool(router, registry, baseSystemPrompt);
 
   // Tool context
   const toolContext: ToolContext = {
@@ -331,6 +357,21 @@ async function main() {
   const skills = await loadSkills(cwd);
   skillRegistry.registerAll(skills);
   // Skills loaded silently — use /skills to list them
+
+  // Inject recent dreams into system prompt for context recovery on session resume
+  if (resumeId || continueFlag) {
+    try {
+      const { loadRecentDreams, formatDreamsForPrompt } = await import("./agent/dream.ts");
+      const dreams = await loadRecentDreams(3);
+      if (dreams.length > 0) {
+        const dreamContext = formatDreamsForPrompt(dreams);
+        baseSystemPrompt += "\n\n" + dreamContext;
+        console.log(chalk.dim(`Loaded ${dreams.length} dream(s) for context recovery`));
+      }
+    } catch {
+      // Dream loading is best-effort
+    }
+  }
 
   // Load buddy (don't reset mood — let it carry from last session)
   const buddy = await loadBuddy();

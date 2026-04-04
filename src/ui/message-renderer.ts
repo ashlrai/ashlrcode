@@ -190,9 +190,23 @@ function formatDuration(ms: number): string {
 }
 
 /** Format a turn separator with stats */
-export function formatTurnSeparator(turnNumber: number, cost: number, buddyName: string, toolCount: number): string {
+export function formatTurnSeparator(
+  turnNumber: number,
+  cost: number,
+  buddyName: string,
+  toolCount: number,
+  speculationStats?: { hits: number; misses: number },
+): string {
   const parts = [`turn ${turnNumber}`, `$${cost.toFixed(4)}`];
   if (toolCount > 0) parts.push(`${toolCount} tools`);
+  // Show speculation cache performance when active
+  if (speculationStats) {
+    const total = speculationStats.hits + speculationStats.misses;
+    if (total > 0) {
+      const rate = Math.round((speculationStats.hits / total) * 100);
+      parts.push(`⚡${rate}% cache`);
+    }
+  }
   parts.push(buddyName);
   return theme.muted(`\n  ── ${parts.join(" · ")} ──\n`);
 }

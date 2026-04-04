@@ -29,6 +29,10 @@ const DEFAULT_CONFIG: ContextConfig = {
 const PROVIDER_CONTEXT_LIMITS: Record<string, number> = {
   xai: 2_000_000,
   anthropic: 200_000,
+  openai: 128_000,
+  ollama: 32_000,   // Conservative default; most local models are 4K-128K
+  groq: 128_000,
+  deepseek: 128_000,
 };
 
 /**

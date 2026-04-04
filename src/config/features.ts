@@ -7,14 +7,14 @@
 
 // Feature flag definitions with defaults
 const FLAGS: Record<string, boolean> = {
-  VOICE_MODE: false,
-  KAIROS: false,
-  BROWSER_TOOL: false,
-  LSP: false,
-  SPECULATION: false,
-  DREAM_TASK: true,
-  TEAM_MODE: true,
-  WORKTREE_AGENTS: true,
+  VOICE_MODE: false,    // Requires sox/rec installed — opt-in
+  KAIROS: true,         // Autonomous mode — production ready
+  BROWSER_TOOL: true,   // Puppeteer browser automation — works if puppeteer installed
+  LSP: true,            // Language server protocol — production ready
+  SPECULATION: true,    // Pre-fetch cache for read-only tools — production ready
+  DREAM_TASK: true,     // Background memory consolidation
+  TEAM_MODE: true,      // Persistent agent teams
+  WORKTREE_AGENTS: true, // Git worktree isolation per agent
   ADVANCED_PERMISSIONS: true,
   EFFORT_LEVELS: true,
 };

@@ -43,9 +43,34 @@ const PATCHES: ModelPatch[] = [
     promptSuffix: "\n\nAvoid over-commenting code. Keep code changes minimal and focused. Don't add docstrings unless asked.",
   },
   {
-    pattern: "^(llama|local)",
-    name: "Local model constraints",
-    promptSuffix: "\n\nKeep tool calls simple. Avoid deeply nested or complex operations. You have limited context — be efficient with tokens.",
+    pattern: "^llama3",
+    name: "Llama 3 optimization",
+    promptSuffix: "\n\nKeep tool calls simple. You have limited context — be efficient with tokens. Prefer single-file operations over multi-file. Always format JSON tool inputs carefully with proper quoting.",
+  },
+  {
+    pattern: "^codellama|^code-llama",
+    name: "CodeLlama specialization",
+    promptSuffix: "\n\nYou excel at code generation and analysis. Focus tool usage on file reads and edits. Keep explanations brief — let the code speak. Be precise with file paths and line numbers.",
+  },
+  {
+    pattern: "^mistral|^mixtral",
+    name: "Mistral optimization",
+    promptSuffix: "\n\nBe concise. Avoid unnecessary tool calls. You have limited context — prioritize the most relevant files. When editing, make minimal targeted changes.",
+  },
+  {
+    pattern: "^deepseek-coder",
+    name: "DeepSeek Coder optimization",
+    promptSuffix: "\n\nYou are specialized for code. Use Grep and Glob to find code patterns efficiently. Make targeted edits. Avoid over-commenting — the code should be self-explanatory.",
+  },
+  {
+    pattern: "^qwen|^qwen2",
+    name: "Qwen optimization",
+    promptSuffix: "\n\nBe efficient with context. Keep tool calls simple and direct. Avoid multi-step reasoning chains — break complex tasks into single steps.",
+  },
+  {
+    pattern: "^(phi|local|tinyllama|gemma)",
+    name: "Small model constraints",
+    promptSuffix: "\n\nYou have very limited context. Keep tool calls simple. Only read files you need. Make one change at a time. Avoid complex JSON structures in tool inputs.",
   },
 ];
 

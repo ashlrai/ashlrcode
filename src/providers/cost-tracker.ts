@@ -52,8 +52,20 @@ const PRICING: Record<string, ModelPricing> = {
   },
   // Groq (free tier, nominal costs)
   "llama-3.3-70b-versatile": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
-  // Local (Ollama)
+  // Local (Ollama) — all free
   "llama3.2": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "llama3.1": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "llama3": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "codellama": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "mistral": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "mixtral": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "deepseek-coder": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "deepseek-coder-v2": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "qwen2.5-coder": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "qwen2.5": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "phi3": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "gemma2": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
+  "starcoder2": { inputPerMillion: 0.0, outputPerMillion: 0.0 },
 };
 
 function getPricing(model: string): ModelPricing {
@@ -81,8 +93,19 @@ export interface ProviderCostEntry {
   calls: number;
 }
 
+export type BudgetWarning = {
+  level: "warning" | "critical" | "exceeded";
+  message: string;
+  percentUsed: number;
+};
+
 export class CostTracker {
   private entries = new Map<string, ProviderCostEntry>();
+  /** Maximum cost in USD. Infinity = no limit. */
+  budgetUSD: number = Infinity;
+  /** Callback fired when budget thresholds are crossed */
+  onBudgetWarning?: (warning: BudgetWarning) => void;
+  private _lastWarningLevel: BudgetWarning["level"] | null = null;
 
   /** Record token usage for a single API call */
   record(
@@ -113,6 +136,49 @@ export class CostTracker {
         (pricing.reasoningPerMillion ?? pricing.outputPerMillion);
 
     this.entries.set(key, existing);
+
+    // Check budget thresholds
+    this._checkBudget();
+  }
+
+  /** Check if budget has been exceeded */
+  isBudgetExceeded(): boolean {
+    return this.budgetUSD !== Infinity && this.totalCostUSD >= this.budgetUSD;
+  }
+
+  /** Get percentage of budget used */
+  getBudgetPercent(): number {
+    if (this.budgetUSD === Infinity) return 0;
+    return (this.totalCostUSD / this.budgetUSD) * 100;
+  }
+
+  private _checkBudget(): void {
+    if (this.budgetUSD === Infinity || !this.onBudgetWarning) return;
+
+    const percent = this.getBudgetPercent();
+
+    if (percent >= 100 && this._lastWarningLevel !== "exceeded") {
+      this._lastWarningLevel = "exceeded";
+      this.onBudgetWarning({
+        level: "exceeded",
+        message: `Budget exceeded: $${this.totalCostUSD.toFixed(4)} / $${this.budgetUSD.toFixed(2)} (${percent.toFixed(0)}%)`,
+        percentUsed: percent,
+      });
+    } else if (percent >= 90 && this._lastWarningLevel !== "critical" && this._lastWarningLevel !== "exceeded") {
+      this._lastWarningLevel = "critical";
+      this.onBudgetWarning({
+        level: "critical",
+        message: `90% of budget used: $${this.totalCostUSD.toFixed(4)} / $${this.budgetUSD.toFixed(2)}`,
+        percentUsed: percent,
+      });
+    } else if (percent >= 75 && this._lastWarningLevel === null) {
+      this._lastWarningLevel = "warning";
+      this.onBudgetWarning({
+        level: "warning",
+        message: `75% of budget used: $${this.totalCostUSD.toFixed(4)} / $${this.budgetUSD.toFixed(2)}`,
+        percentUsed: percent,
+      });
+    }
   }
 
   /** Get total cost across all providers */
@@ -147,7 +213,10 @@ export class CostTracker {
     const total = this.totalTokens;
     const entries = this.getBreakdown();
 
-    const lines: string[] = [`Cost: $${this.totalCostUSD.toFixed(4)}`];
+    const budgetStr = this.budgetUSD !== Infinity
+      ? ` / $${this.budgetUSD.toFixed(2)} budget (${this.getBudgetPercent().toFixed(0)}%)`
+      : "";
+    const lines: string[] = [`Cost: $${this.totalCostUSD.toFixed(4)}${budgetStr}`];
     lines.push(
       `Tokens: ${formatTokens(total.inputTokens)} in / ${formatTokens(total.outputTokens)} out${total.reasoningTokens > 0 ? ` / ${formatTokens(total.reasoningTokens)} reasoning` : ""}`
     );

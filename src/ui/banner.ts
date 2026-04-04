@@ -188,6 +188,8 @@ export function printTurnSeparator(info?: {
   cost?: string;
   buddyName?: string;
   buddyMood?: string;
+  speculationHits?: number;
+  speculationMisses?: number;
 }): void {
   const w = Math.min(process.stdout.columns || 80, 65);
 
@@ -199,6 +201,14 @@ export function printTurnSeparator(info?: {
   const parts: string[] = [];
   if (info.turnNumber) parts.push(`turn ${info.turnNumber}`);
   if (info.cost) parts.push(info.cost);
+  // Show speculation hit rate if there were any cache interactions
+  if (info.speculationHits !== undefined && info.speculationMisses !== undefined) {
+    const total = info.speculationHits + info.speculationMisses;
+    if (total > 0) {
+      const rate = Math.round((info.speculationHits / total) * 100);
+      parts.push(`⚡${rate}% cache`);
+    }
+  }
   if (info.buddyName) {
     parts.push(info.buddyName);
   }
