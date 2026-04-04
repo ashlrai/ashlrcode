@@ -7,7 +7,7 @@
 
 import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
-import TextInput from "ink-text-input";
+import { SlashInput } from "./SlashInput.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
 import type { BuddyData } from "../ui/buddy.ts";
 import { getAction, type InputHistory } from "./keybindings.ts";
@@ -139,7 +139,7 @@ export function App({
           <Text dimColor>waiting for response...</Text>
         ) : (
           <Box>
-            <TextInput
+            <SlashInput
               key={inputKey}
               value={input}
               onChange={setInput}

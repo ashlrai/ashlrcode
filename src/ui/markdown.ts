@@ -123,7 +123,7 @@ function renderLine(line: string): string {
  * Apply regex-based syntax highlighting to a code line.
  * Supports JS/TS, Python, Bash, Go, Rust, JSON, and diff.
  */
-function highlightCode(line: string, lang: string): string {
+export function highlightCode(line: string, lang: string): string {
   // Diff highlighting — applied by lang or line prefix
   if (lang === "diff" || (lang === "" && /^[+\-@]/.test(line))) {
     if (line.startsWith("+")) return chalk.hex("#00E676")(line);
@@ -258,6 +258,22 @@ function highlightCode(line: string, lang: string): string {
     result += line.slice(cursor);
   }
   return result;
+}
+
+/**
+ * Render a single line of markdown (headers, bold, code, lists).
+ * Stateless — does not track code block state.
+ */
+export function renderMarkdownLine(line: string): string {
+  // Headers
+  if (line.startsWith("### ")) return chalk.bold(line.slice(4));
+  if (line.startsWith("## ")) return chalk.bold.underline(line.slice(3));
+  if (line.startsWith("# ")) return chalk.bold.underline(line.slice(2));
+  // Bullet lists
+  if (line.match(/^\s*[-*]\s/)) return line.replace(/^(\s*)([-*])(\s)/, "$1" + chalk.cyan("•") + "$3");
+  // Numbered lists
+  if (line.match(/^\s*\d+\.\s/)) return line.replace(/^(\s*)(\d+\.)(\s)/, "$1" + chalk.cyan("$2") + "$3");
+  return renderInline(line);
 }
 
 function renderInline(text: string): string {

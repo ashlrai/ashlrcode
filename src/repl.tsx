@@ -13,7 +13,7 @@ import { getCurrentMode, cycleMode } from "./ui/mode.ts";
 import { getEffort, setEffort, cycleEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
 import { runWithAgentContext, type AgentContext } from "./agent/async-context.ts";
-import { resetMarkdown } from "./ui/markdown.ts";
+import { resetMarkdown, renderMarkdownLine } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
@@ -1213,7 +1213,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           const lines = responseText.split("\n");
           if (lines.length > 1) {
             for (let i = 0; i < lines.length - 1; i++) {
-              addOutput(lines[i]!);
+              addOutput("  " + renderMarkdownLine(lines[i]!));
             }
             responseText = lines[lines.length - 1]!;
           }
@@ -1244,6 +1244,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           else recordToolCallSuccess(state.buddy);
 
           // Use message renderer for formatted output
+          addOutput(""); // spacing before tool block
           const rendered = formatToolExecution(_name, currentToolInput, result, isError, durationMs);
           for (const line of rendered) addOutput(line);
 
@@ -1255,7 +1256,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }));
 
       // Flush remaining text
-      if (responseText) addOutput(responseText);
+      if (responseText) addOutput("  " + renderMarkdownLine(responseText));
 
       // Update history
       state.history.length = 0;
