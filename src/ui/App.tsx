@@ -35,6 +35,7 @@ interface AppProps {
   items: OutputItem[];
   isProcessing: boolean;
   spinnerText: string;
+  tokenStats: string;
   commands: string[];
 }
 
@@ -43,7 +44,7 @@ export function App({
   inputHistory, mode, modeColor,
   contextPercent, contextUsed, contextLimit,
   buddy, buddyQuip, buddyQuipType,
-  items, isProcessing, spinnerText, commands,
+  items, isProcessing, spinnerText, tokenStats, commands,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
@@ -128,8 +129,13 @@ export function App({
         {(item) => <Text key={item.id}>{item.text}</Text>}
       </Static>
 
-      {/* Spinner */}
-      {isProcessing && <Text dimColor>  ⠋ {spinnerText}</Text>}
+      {/* Spinner + token stats */}
+      {isProcessing && (
+        <Box>
+          <Text dimColor>  ⠋ {spinnerText}</Text>
+          {tokenStats ? <Text dimColor>{"  "}{tokenStats}</Text> : null}
+        </Box>
+      )}
 
       {/* Input box — full width */}
       <Text dimColor>{"-".repeat(w)}</Text>

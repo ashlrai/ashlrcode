@@ -38,6 +38,8 @@ export interface AgentConfig {
   onToolStart?: (name: string, input: Record<string, unknown>) => void;
   /** Callback when a tool completes */
   onToolEnd?: (name: string, result: string, isError: boolean) => void;
+  /** Callback when token usage is reported */
+  onUsage?: (usage: import("../providers/types.ts").TokenUsage) => void;
 }
 
 export interface AgentResult {
@@ -238,6 +240,10 @@ export async function* streamAgentLoop(
             stopReason = event.stopReason;
           }
           break;
+
+        case "usage":
+          if (event.usage) config.onUsage?.(event.usage);
+          break;
       }
     }
 
@@ -349,6 +355,10 @@ async function streamResponse(
         if (event.stopReason) {
           stopReason = event.stopReason;
         }
+        break;
+
+      case "usage":
+        if (event.usage) config.onUsage?.(event.usage);
         break;
     }
   }

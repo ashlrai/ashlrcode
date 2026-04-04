@@ -235,6 +235,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let aiCommentInFlight = false;
   let isProcessing = false;
   let spinnerText = "Thinking";
+  let tokenStats = "";
+  let turnStreamStart = 0;
+  let turnOutputTokens = 0;
+  let turnInputTokens = 0;
+  let turnCharCount = 0;
   const formatTk = (n: number) => n >= 1_000_000 ? `${(n/1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n/1_000).toFixed(0)}K` : `${n}`;
 
   const MAX_ITEMS = 2000;
@@ -275,6 +280,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       items,
       isProcessing,
       spinnerText,
+      tokenStats,
       commands: [
         "/help", "/cost", "/status", "/effort", "/btw", "/history", "/undo",
         "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
@@ -1156,6 +1162,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   async function runTurnInk(input: string, displayText?: string) {
     const turnStartTime = Date.now();
+    turnStreamStart = 0;
+    turnOutputTokens = 0;
+    turnInputTokens = 0;
+    turnCharCount = 0;
+    tokenStats = "";
     isProcessing = true;
     spinnerText = "Thinking";
     update();
@@ -1213,8 +1224,20 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         toolRegistry: state.registry,
         toolContext: state.toolContext,
         readOnly: isPlanMode(),
+        onUsage: (usage) => {
+          if (usage.inputTokens) turnInputTokens = usage.inputTokens;
+          if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
+          // Update token stats display
+          const elapsed = turnStreamStart ? (Date.now() - turnStreamStart) / 1000 : 0;
+          const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
+          const tokSec = elapsed > 0.5 ? Math.round(tokens / elapsed) : 0;
+          tokenStats = tokSec > 0 ? `${tokens} tokens · ${tokSec} tok/s` : "";
+          update();
+        },
         onText: (text) => {
           isProcessing = false;
+          if (!turnStreamStart) turnStreamStart = Date.now();
+          turnCharCount += text.length;
           responseText += text;
           // Use stateful markdown renderer (handles code blocks, headers, etc.)
           const rendered = renderMarkdownDelta(text);
@@ -1228,6 +1251,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           // Partial line stays in spinnerText for live display
           const allLines = responseText.split("\n");
           responseText = allLines[allLines.length - 1]!;
+          // Update token stats from char estimate if no actual usage yet
+          if (!turnOutputTokens) {
+            const elapsed = turnStreamStart ? (Date.now() - turnStreamStart) / 1000 : 0;
+            const estTokens = Math.round(turnCharCount / 4);
+            const tokSec = elapsed > 0.5 ? Math.round(estTokens / elapsed) : 0;
+            tokenStats = tokSec > 0 ? `~${estTokens} tokens · ${tokSec} tok/s` : "";
+          }
           spinnerText = responseText;
           update();
         },
@@ -1280,6 +1310,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         await state.session.appendMessages(newMessages);
         lastPersistedCount = state.history.length;
       }
+
+      // Clear token stats
+      tokenStats = "";
 
       // Turn separator
       turnCount++;
