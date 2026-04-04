@@ -1605,6 +1605,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       .then(({ cleanupOrphanedWorktrees }) => cleanupOrphanedWorktrees())
       .catch(() => {});
     if (kairos?.isRunning()) await kairos.stop().catch(() => {});
+    productAgent?.stop();
     const { stopRecording: stopRec, isRecording: isRec } = await import("./voice/voice-mode.ts");
     if (isRec()) await stopRec().catch(() => {});
 

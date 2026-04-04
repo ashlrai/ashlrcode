@@ -68,23 +68,28 @@ async function* withStreamTimeout<T>(
   const iterator = iterable[Symbol.asyncIterator]();
   while (true) {
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const result = await Promise.race([
-      iterator.next(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                `Stream timeout: no response from provider for ${Math.round(ms / 1000)} seconds`
-              )
-            ),
-          ms
-        );
-      }),
-    ]);
-    clearTimeout(timer);
-    if (result.done) break;
-    yield result.value;
+    try {
+      const result = await Promise.race([
+        iterator.next(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Stream timeout: no response from provider for ${Math.round(ms / 1000)} seconds`
+                )
+              ),
+            ms
+          );
+        }),
+      ]);
+      clearTimeout(timer);
+      if (result.done) break;
+      yield result.value;
+    } catch (err) {
+      clearTimeout(timer);
+      throw err;
+    }
   }
 }
 

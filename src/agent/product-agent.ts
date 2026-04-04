@@ -393,11 +393,19 @@ export class ProductAgent {
 
   /** Auto-commit after verified change */
   private async autoCommit(item: WorkItem): Promise<void> {
-    const proc = Bun.spawn(
-      ["bash", "-c", `git add -A && git commit -m "fix: ${item.title.replace(/"/g, '\\"')}\n\nProductAgent: ${item.category} (${item.priority})\n\nCo-Authored-By: AshlrCode <noreply@ashlr.ai>"`],
-      { cwd: this.config.toolContext.cwd, stdout: "pipe", stderr: "pipe" },
+    const cwd = this.config.toolContext.cwd;
+
+    // Stage all changes (separate spawn to avoid shell injection)
+    const addProc = Bun.spawn(["git", "add", "-A"], { cwd, stdout: "pipe", stderr: "pipe" });
+    await addProc.exited;
+
+    // Commit with message passed as argument (no shell interpolation)
+    const message = `fix: ${item.title}\n\nProductAgent: ${item.category} (${item.priority})\n\nCo-Authored-By: AshlrCode <noreply@ashlr.ai>`;
+    const commitProc = Bun.spawn(
+      ["git", "commit", "-m", message],
+      { cwd, stdout: "pipe", stderr: "pipe" },
     );
-    await proc.exited;
+    await commitProc.exited;
   }
 
   /** Display work items in a nice format */

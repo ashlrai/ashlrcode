@@ -117,9 +117,19 @@ export async function runSubAgent(config: SubAgentConfig): Promise<SubAgentResul
 
 /**
  * Run multiple sub-agents in parallel.
+ * Uses Promise.allSettled so one failing agent doesn't crash the entire wave.
  */
 export async function runSubAgentsParallel(
   configs: SubAgentConfig[]
 ): Promise<SubAgentResult[]> {
-  return Promise.all(configs.map(runSubAgent));
+  const settled = await Promise.allSettled(configs.map(runSubAgent));
+  return settled.map((r, i) => {
+    if (r.status === "fulfilled") return r.value;
+    return {
+      name: configs[i]!.name,
+      text: `[AGENT ERROR: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}]`,
+      toolCalls: [],
+      messages: [],
+    };
+  });
 }

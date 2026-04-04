@@ -22,11 +22,8 @@ export interface AwaySummary {
  */
 export function generateAwaySummary(
   messages: Message[],
-  sinceTimestamp?: number,
 ): AwaySummary {
-  const recent = sinceTimestamp
-    ? messages.filter((_, i) => i >= messages.length - 50) // Last 50 messages
-    : messages.slice(-30);
+  const recent = messages.slice(-50);
 
   const toolCalls = new Set<string>();
   const filesModified = new Set<string>();
