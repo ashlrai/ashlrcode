@@ -3,13 +3,13 @@
  */
 
 import chalk from "chalk";
-import { MCPClient } from "./client.ts";
+import { MCPClient, MCPSSEClient, createMCPClient } from "./client.ts";
 import type { MCPServerConfig, MCPToolInfo } from "./types.ts";
 import { authorizeOAuth } from "./oauth.ts";
 import type { OAuthConfig } from "./oauth.ts";
 
 export class MCPManager {
-  private clients = new Map<string, MCPClient>();
+  private clients = new Map<string, MCPClient | MCPSSEClient>();
 
   /**
    * Connect to all configured MCP servers.
@@ -50,7 +50,7 @@ export class MCPManager {
           }
         }
 
-        const client = new MCPClient(name, effectiveConfig);
+        const client = createMCPClient(name, effectiveConfig);
         try {
           await client.connect();
           this.clients.set(name, client);

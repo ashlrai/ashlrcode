@@ -278,7 +278,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       commands: [
         "/help", "/cost", "/status", "/effort", "/btw", "/history", "/undo",
         "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
-        "/model", "/compact", "/diff", "/git", "/clear", "/quit",
+        "/model", "/compact", "/diff", "/git", "/clear", "/quit", "/bug",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
         "/kairos", "/kairos stop", "/telemetry", "/voice",
@@ -429,6 +429,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       case "/q":
         addOutput("\n" + state.router.getCostSummary());
         saveBuddy(state.buddy).then(() => process.exit(0));
+        return true;
+      case "/bug":
+        addOutput(theme.accent("\n  Report issues: https://github.com/ashlrai/ashlrcode/issues\n"));
         return true;
       case "/buddy": {
         const b = state.buddy;

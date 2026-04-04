@@ -3,9 +3,12 @@
  */
 
 export interface MCPServerConfig {
-  command: string;
+  /** stdio transport: command to spawn */
+  command?: string;
   args?: string[];
   env?: Record<string, string>;
+  /** SSE transport: URL of MCP server (e.g. http://localhost:3000) */
+  url?: string;
   oauth?: {
     authorizationUrl: string;
     tokenUrl: string;

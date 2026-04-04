@@ -1,7 +1,8 @@
 /**
- * MCP Client — connects to an MCP server via stdio transport.
+ * MCP Client — connects to an MCP server via stdio or SSE transport.
  *
- * Spawns a child process and communicates via JSON-RPC over stdin/stdout.
+ * stdio: Spawns a child process and communicates via JSON-RPC over stdin/stdout.
+ * SSE: Connects to HTTP endpoint for server→client events, POST for client→server.
  */
 
 import type {
@@ -12,6 +13,14 @@ import type {
   JsonRpcRequest,
   JsonRpcResponse,
 } from "./types.ts";
+
+/** Common interface for both transport types */
+interface MCPTransport {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  request(method: string, params: Record<string, unknown>): Promise<unknown>;
+  notify(method: string, params: Record<string, unknown>): void;
+}
 
 export class MCPClient {
   private proc: any = null;
@@ -38,6 +47,7 @@ export class MCPClient {
   }
 
   async connect(): Promise<void> {
+    if (!this.config.command) throw new Error("MCP stdio client requires 'command' in config");
     const env = { ...process.env, ...this.config.env };
 
     this.proc = Bun.spawn([this.config.command, ...(this.config.args ?? [])], {
@@ -194,4 +204,224 @@ export class MCPClient {
       }
     }
   }
+}
+
+/**
+ * MCP SSE Client — connects to an MCP server via HTTP/SSE transport.
+ *
+ * Server→client: SSE stream at {url}/sse
+ * Client→server: POST to {url}/message
+ */
+export class MCPSSEClient {
+  private nextId = 1;
+  private pending = new Map<number, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+  }>();
+  private serverInfo: MCPInitializeResult | null = null;
+  private _tools: MCPToolInfo[] = [];
+  private abortController: AbortController | null = null;
+  private sessionId: string | null = null;
+  private baseUrl: string;
+
+  constructor(
+    readonly name: string,
+    private config: MCPServerConfig
+  ) {
+    this.baseUrl = (config.url ?? "").replace(/\/$/, "");
+  }
+
+  get tools(): MCPToolInfo[] {
+    return this._tools;
+  }
+
+  get isConnected(): boolean {
+    return this.abortController !== null;
+  }
+
+  async connect(): Promise<void> {
+    this.abortController = new AbortController();
+
+    // Start SSE connection to get session ID and receive responses
+    const ssePromise = this.startSSE();
+
+    // Wait for the SSE connection to establish and get session ID
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("SSE connection timeout")), 10_000);
+      const check = setInterval(() => {
+        if (this.sessionId) {
+          clearTimeout(timeout);
+          clearInterval(check);
+          resolve();
+        }
+      }, 50);
+      this.abortController!.signal.addEventListener("abort", () => {
+        clearTimeout(timeout);
+        clearInterval(check);
+        reject(new Error("SSE connection aborted"));
+      });
+    });
+
+    // Initialize
+    this.serverInfo = await this.request("initialize", {
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "ashlrcode", version: "1.0.1" },
+    }) as MCPInitializeResult;
+
+    // Send initialized notification
+    this.notify("notifications/initialized", {});
+
+    // List tools
+    const result = await this.request("tools/list", {}) as { tools: MCPToolInfo[] };
+    this._tools = result.tools ?? [];
+  }
+
+  async callTool(name: string, args: Record<string, unknown>): Promise<MCPToolResult> {
+    const result = await this.request("tools/call", { name, arguments: args });
+    return result as MCPToolResult;
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
+    this.sessionId = null;
+    for (const [, pending] of this.pending) {
+      pending.reject(new Error("MCP SSE client disconnected"));
+    }
+    this.pending.clear();
+  }
+
+  private async startSSE(): Promise<void> {
+    try {
+      const response = await fetch(`${this.baseUrl}/sse`, {
+        signal: this.abortController!.signal,
+        headers: { Accept: "text/event-stream" },
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`SSE connection failed: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // Parse SSE events
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        let eventType = "";
+        let eventData = "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            eventData = line.slice(6).trim();
+          } else if (line === "" && eventData) {
+            // End of event
+            this.handleSSEEvent(eventType, eventData);
+            eventType = "";
+            eventData = "";
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      // SSE stream ended or errored
+      for (const [, pending] of this.pending) {
+        pending.reject(new Error("MCP SSE stream ended"));
+      }
+      this.pending.clear();
+    }
+  }
+
+  private handleSSEEvent(type: string, data: string): void {
+    if (type === "endpoint") {
+      // Server sends the session endpoint URL
+      this.sessionId = data;
+      return;
+    }
+
+    if (type === "message") {
+      try {
+        const message = JSON.parse(data) as JsonRpcResponse;
+        if ("id" in message && message.id !== undefined) {
+          const pending = this.pending.get(message.id);
+          if (pending) {
+            this.pending.delete(message.id);
+            if (message.error) {
+              pending.reject(new Error(`MCP error: ${message.error.message}`));
+            } else {
+              pending.resolve(message.result);
+            }
+          }
+        }
+      } catch {
+        // Malformed JSON
+      }
+    }
+  }
+
+  private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+    const id = this.nextId++;
+    const message: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`MCP SSE request timeout: ${method}`));
+      }, 10_000);
+
+      this.pending.set(id, {
+        resolve: (value) => { clearTimeout(timeout); resolve(value); },
+        reject: (err) => { clearTimeout(timeout); reject(err); },
+      });
+
+      // POST the message to the server
+      const endpoint = this.sessionId?.startsWith("http")
+        ? this.sessionId
+        : `${this.baseUrl}${this.sessionId ?? "/message"}`;
+
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(message),
+        signal: this.abortController?.signal,
+      }).catch(err => {
+        this.pending.delete(id);
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+  }
+
+  private notify(method: string, params: Record<string, unknown>): void {
+    const endpoint = this.sessionId?.startsWith("http")
+      ? this.sessionId
+      : `${this.baseUrl}${this.sessionId ?? "/message"}`;
+
+    fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", method, params }),
+      signal: this.abortController?.signal,
+    }).catch(() => {});
+  }
+}
+
+/** Factory: create the right client based on config */
+export function createMCPClient(name: string, config: MCPServerConfig): MCPClient | MCPSSEClient {
+  if (config.url) {
+    return new MCPSSEClient(name, config);
+  }
+  return new MCPClient(name, config);
 }
