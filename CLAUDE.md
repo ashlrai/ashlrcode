@@ -1,7 +1,7 @@
-# AshlrCode v2.0
+# AshlrCode v2.1
 
 Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
-45 tools, 18 skills, 39 built-in commands, 6 providers, 335 tests. Ink-based terminal UI with buddy system.
+45+ tools, 18 skills, 39 built-in commands, 6 providers, 452 tests. Ink-based terminal UI with buddy system.
 
 ## v2.0 Additions
 - **Verification Agent** (`src/agent/verification.ts`): Auto-validates multi-file changes via read-only sub-agent. Manual `/verify` command. Auto-suggest after 2+ file edits.
@@ -48,7 +48,7 @@ Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
 ```bash
 bun run start           # Run CLI
 bun run dev             # Watch mode
-bun test                # Run 335 tests
+bun test                # Run 452 tests
 bunx tsc --noEmit       # Type check
 ```
 
@@ -75,7 +75,7 @@ src/
 ├── state/                 # File history (snapshot/undo)
 ├── ui/                    # Ink components: BuddyPanel, SlashInput, PermissionPrompt, message-renderer, theme
 ├── voice/                 # Voice mode input
-└── __tests__/             # 26 test files, 335 tests
+└── __tests__/             # 35 test files, 452 tests
 ```
 
 ## Tool Interface
@@ -147,8 +147,8 @@ Skills are auto-loaded from `prompts/skills/`, `~/.ashlrcode/skills/`, and `.ash
 ## Testing
 
 ```bash
-bun test              # All 335 tests
+bun test              # All 452 tests
 bun test --watch      # Watch mode
 ```
 
-Tests cover: tool registry, context compression, tool executor, sessions, skill registry, hooks, permissions, router costs, file history, error handler, keybindings, project config, workflows, telemetry, speculation, model patches, branded types, cron, undercover, retry, tasks, dreams, features.
+Tests cover: tool registry, context compression, tool executor, sessions, skill registry, hooks, permissions, router costs, file history, error handler, keybindings, project config, workflows, telemetry, speculation, model patches, branded types, cron, undercover, retry, tasks, dreams, features, ring buffer, mailbox, coordinator, MCP client.
