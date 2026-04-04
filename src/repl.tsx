@@ -136,9 +136,6 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   startBuddyAnimation();
 
-  // Re-render on animation frames so the buddy visibly cycles between poses
-  const buddyAnimInterval = setInterval(update, 1500);
-
   // Autopilot work queue
   const workQueue = new WorkQueue(state.toolContext.cwd);
   workQueue.load().catch(() => {});
@@ -269,10 +266,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       contextPercent: ctxPct,
       contextUsed: formatTk(ctxUsed),
       contextLimit: formatTk(ctxLimit),
-      buddyName: state.buddy.name,
+      buddy: state.buddy,
       buddyQuip: cachedQuip,
       buddyQuipType: currentQuipType,
-      buddyArt: getBuddyArt(state.buddy),
       items,
       isProcessing,
       spinnerText,
@@ -1338,7 +1334,6 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     triggerRunner.stop();
     stopRemotePolling();
     stopBridgeServer();
-    clearInterval(buddyAnimInterval);
     stopBuddyAnimation();
     if (kairos?.isRunning()) await kairos.stop().catch(() => {});
     const { stopRecording: stopRec, isRecording: isRec } = await import("./voice/voice-mode.ts");

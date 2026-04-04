@@ -9,6 +9,7 @@ import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import TextInput from "ink-text-input";
 import { BuddyPanel } from "./BuddyPanel.tsx";
+import type { BuddyData } from "../ui/buddy.ts";
 import { getAction, type InputHistory } from "./keybindings.ts";
 
 interface OutputItem { id: number; text: string; }
@@ -28,10 +29,9 @@ interface AppProps {
   contextPercent: number;
   contextUsed: string;
   contextLimit: string;
-  buddyName: string;
+  buddy: BuddyData;
   buddyQuip: string;
   buddyQuipType: "quip" | "suggestion" | "reaction";
-  buddyArt: string[];
   items: OutputItem[];
   isProcessing: boolean;
   spinnerText: string;
@@ -42,7 +42,7 @@ export function App({
   onSubmit, onExit, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle,
   inputHistory, mode, modeColor,
   contextPercent, contextUsed, contextLimit,
-  buddyName, buddyQuip, buddyQuipType, buddyArt,
+  buddy, buddyQuip, buddyQuipType,
   items, isProcessing, spinnerText, commands,
 }: AppProps) {
   const [input, setInput] = useState("");
@@ -175,7 +175,7 @@ export function App({
 
         {/* Buddy panel — fixed height, right-aligned */}
         <Box width={42} flexShrink={0}>
-          <BuddyPanel art={buddyArt} name={buddyName} quip={buddyQuip} quipType={buddyQuipType} />
+          <BuddyPanel buddy={buddy} quip={buddyQuip} quipType={buddyQuipType} />
         </Box>
       </Box>
     </Box>

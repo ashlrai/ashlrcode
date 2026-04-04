@@ -341,10 +341,10 @@ export async function saveBuddy(buddy: BuddyData): Promise<void> {
 /**
  * Get the buddy's ASCII art lines for current mood + animation frame.
  */
-export function getBuddyArt(buddy: BuddyData): string[] {
+export function getBuddyArt(buddy: BuddyData, frame?: number): string[] {
   const moodArt = ASCII_ART[buddy.species]?.[buddy.mood];
   if (!moodArt) return pad(["  (?)     "]);
-  const frameIndex = animFrame % moodArt.length;
+  const frameIndex = (frame ?? animFrame) % moodArt.length;
   const artLines = [...moodArt[frameIndex]!];
 
   // Prepend hat art if the buddy has one equipped
