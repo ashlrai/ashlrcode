@@ -3,18 +3,18 @@
 **Multi-provider AI coding agent for the terminal.**
 
 [![Version](https://img.shields.io/badge/version-2.0.0-blue)]()
-[![Tests](https://img.shields.io/badge/tests-335%20passing-green)]()
+[![Tests](https://img.shields.io/badge/tests-367%2B%20passing-green)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**42+ tools | 42+ slash commands | 6 providers | 335 tests | 130 source files**
+**45+ tools | 18 skills | 42+ slash commands | 6 providers | 367+ tests | 130 source files**
 
 ---
 
 ## What is AshlrCode?
 
-AshlrCode is an open-source AI coding agent CLI built as an alternative to Claude Code. It runs multi-provider LLM conversations with tool use in your terminal — powered by xAI Grok by default, with failover to Anthropic, OpenAI, DeepSeek, Groq, and Ollama. It ships with 42+ built-in tools, an autonomous KAIROS mode, sub-agent orchestration, MCP server integration, and a persistent buddy companion.
+AshlrCode is an open-source AI coding agent CLI built as an alternative to Claude Code. It runs multi-provider LLM conversations with tool use in your terminal — powered by xAI Grok by default, with failover to Anthropic, OpenAI, DeepSeek, Groq, and Ollama. It ships with 45+ built-in tools, 18 skills, an autonomous KAIROS mode, sub-agent orchestration, MCP server integration, and a persistent buddy companion.
 
 ---
 
@@ -33,6 +33,7 @@ ac                          # interactive REPL
 ac "fix the login bug"      # single-shot mode
 ac --continue               # resume last session
 ac --resume <id>            # resume specific session
+ac --migrate                # import MCP servers, skills, and sessions from Claude Code
 ```
 
 ### From source
@@ -56,9 +57,12 @@ bun link                    # makes 'ac' available globally
 - **Speculation** — speculative tool execution for faster responses
 - **Model patches** — per-model prompt adjustments for optimal behavior
 - **Global error handling** — uncaught exceptions caught with data loss prevention (session auto-save)
+- **Thinking display** — stream and display model reasoning/thinking tokens
+- **Effort levels** — low / normal / high controls response depth and token budget
+- **Session import** — import Claude Code sessions with `ac --migrate`
 - **Autopilot mode** — fully autonomous scan → fix → test → PR → merge pipeline
 
-### Tools (42+)
+### Tools (45+)
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -154,6 +158,7 @@ Plus **custom skills** loaded from `~/.ashlrcode/skills/*.md` — invoked as `/s
 - **Hook system** — pre/post tool hooks can block, modify, or extend tool calls
 - **Undercover mode** — stealth prompt adjustments
 - **Input validation** — tool input schemas validated before execution
+- **macOS Keychain** — credential storage via macOS Keychain for API keys
 - **Global error handling** — uncaught exceptions and SIGTERM caught; sessions saved before exit to prevent data loss
 
 ### Infrastructure
@@ -164,7 +169,7 @@ Plus **custom skills** loaded from `~/.ashlrcode/skills/*.md` — invoked as `/s
 - **Retry with backoff** — rate limits (3x, 1s base), network errors (2x, 2s base)
 - **Speculation** — predictive tool execution
 - **LSP integration** — Language Server Protocol for diagnostics and completions
-- **MCP with SSE transport** — stdio and URL-based SSE connections to external tool servers
+- **MCP with SSE/WebSocket transport** — stdio, SSE, and WebSocket connections to external tool servers
 - **MCP OAuth** — OAuth flow for MCP server authentication
 - **Cron triggers** — scheduled recurring agent tasks
 - **IPC** — inter-process messaging between instances
@@ -200,6 +205,8 @@ AshlrCode connects to external tool servers via MCP. Configure servers in `~/.as
 **Stdio transport** — spawns a local process and communicates over stdin/stdout. Use `command` + `args`.
 
 **SSE transport** — connects to a running HTTP server. Use `url`. Works with browser extensions like Claude-in-Chrome that expose an MCP endpoint.
+
+**WebSocket transport** — connects via WebSocket for bidirectional streaming. Use `url` with a `ws://` or `wss://` scheme.
 
 **OAuth** — for authenticated MCP servers, add an `oauth` block with `authorizationUrl`, `tokenUrl`, `clientId`, and `scopes`.
 
@@ -310,7 +317,7 @@ bun install
 
 bun run dev                 # watch mode
 bun run start               # run CLI
-bun test                    # 335 tests, 666 assertions, ~10s
+bun test                    # 367+ tests, ~10s
 bunx tsc --noEmit           # type check
 bun run build               # bundle to dist/
 ```
@@ -324,7 +331,7 @@ src/                        # 130 source files
 ├── setup.ts                # Initialization and wiring
 ├── agent/                  # Core agent loop, sub-agents, KAIROS, teams, dreams, IPC
 ├── providers/              # xAI, Anthropic, router, retry, cost tracking
-├── tools/                  # 42+ tools (32 files)
+├── tools/                  # 45+ tools (32 files)
 ├── skills/                 # Skill loader + registry
 ├── mcp/                    # MCP client, manager, OAuth, SSE transport
 ├── planning/               # Plan mode + plan tools

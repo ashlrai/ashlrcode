@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, writeFile, appendFile, mkdir, readdir } from "fs/promises";
+import { readFile, writeFile, appendFile, mkdir, readdir, unlink, stat } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { getConfigDir } from "../config/settings.ts";
@@ -424,4 +424,70 @@ export async function importClaudeCodeSession(
   await session.setTitle(`Imported from ${claudeSessionPath.split("/").pop() ?? "claude-code"}`);
 
   return session;
+}
+
+/**
+ * Prune old session files. Keeps at most `maxCount` sessions,
+ * deleting the oldest by modification time. Optionally deletes
+ * sessions older than `maxAgeDays`.
+ *
+ * Returns the number of files deleted.
+ */
+export async function pruneOldSessions(
+  maxCount = 100,
+  maxAgeDays?: number
+): Promise<number> {
+  const sessionsDir = getSessionsDir();
+  if (!existsSync(sessionsDir)) return 0;
+
+  const files = await readdir(sessionsDir);
+  const jsonlFiles = files.filter((f) => f.endsWith(".jsonl"));
+
+  if (jsonlFiles.length === 0) return 0;
+
+  // Get modification times for all session files
+  const fileStats = await Promise.all(
+    jsonlFiles.map(async (f) => {
+      const filePath = join(sessionsDir, f);
+      const s = await stat(filePath);
+      return { name: f, path: filePath, mtime: s.mtimeMs };
+    })
+  );
+
+  // Sort oldest first
+  fileStats.sort((a, b) => a.mtime - b.mtime);
+
+  const toDelete: string[] = [];
+
+  // Delete files older than maxAgeDays
+  if (maxAgeDays !== undefined) {
+    const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    for (const f of fileStats) {
+      if (f.mtime < cutoff) {
+        toDelete.push(f.path);
+      }
+    }
+  }
+
+  // If still over maxCount after age pruning, trim oldest
+  const remaining = fileStats.filter((f) => !toDelete.includes(f.path));
+  if (remaining.length > maxCount) {
+    const excess = remaining.length - maxCount;
+    for (let i = 0; i < excess; i++) {
+      toDelete.push(remaining[i]!.path);
+    }
+  }
+
+  // Deduplicate
+  const uniqueDeletes = [...new Set(toDelete)];
+
+  for (const filePath of uniqueDeletes) {
+    try {
+      await unlink(filePath);
+    } catch {
+      // Ignore deletion errors (file may already be gone)
+    }
+  }
+
+  return uniqueDeletes.length;
 }

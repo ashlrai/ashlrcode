@@ -36,9 +36,13 @@
     "test": "bun test",
     "build": "bun build src/cli.ts --compile --outfile dist/ac",
     "build:all": "bun build src/cli.ts --compile --outfile dist/ac-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m)",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "bunx @biomejs/biome check src/",
+    "lint:fix": "bunx @biomejs/biome check --write src/",
+    "format": "bunx @biomejs/biome format --write src/"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.4.10",
     "@types/bun": "latest",
     "@types/react": "^19.2.14"
   },

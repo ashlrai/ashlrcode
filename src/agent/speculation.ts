@@ -21,6 +21,7 @@ interface CacheEntry {
   key: string;
   result: string;
   timestamp: number;
+  lastAccessed: number;
   hitCount: number;
 }
 
@@ -34,7 +35,7 @@ export class SpeculationCache {
   private maxSize: number;
   private ttlMs: number;
 
-  constructor(maxSize = 100, ttlMs = 30_000) {
+  constructor(maxSize = 200, ttlMs = 30_000) {
     this.maxSize = maxSize;
     this.ttlMs = ttlMs;
   }
@@ -60,6 +61,12 @@ export class SpeculationCache {
     }
 
     entry.hitCount++;
+    entry.lastAccessed = Date.now();
+
+    // LRU: delete and re-insert to move to end of Map iteration order
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+
     return entry.result;
   }
 
@@ -67,23 +74,21 @@ export class SpeculationCache {
   set(toolName: string, input: Record<string, unknown>, result: string): void {
     const key = this.makeKey(toolName, input);
 
-    // Evict oldest entry if at capacity
-    if (this.cache.size >= this.maxSize && !this.cache.has(key)) {
-      let oldestKey: string | null = null;
-      let oldestTs = Infinity;
-      for (const [k, v] of this.cache) {
-        if (v.timestamp < oldestTs) {
-          oldestTs = v.timestamp;
-          oldestKey = k;
-        }
-      }
-      if (oldestKey) this.cache.delete(oldestKey);
+    // If key already exists, delete first so re-insert moves it to end (LRU)
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    } else if (this.cache.size >= this.maxSize) {
+      // Evict the least recently used entry (first key in Map iteration order)
+      const lruKey = this.cache.keys().next().value;
+      if (lruKey !== undefined) this.cache.delete(lruKey);
     }
 
+    const now = Date.now();
     this.cache.set(key, {
       key,
       result,
-      timestamp: Date.now(),
+      timestamp: now,
+      lastAccessed: now,
       hitCount: 0,
     });
   }

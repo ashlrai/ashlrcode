@@ -23,6 +23,15 @@ const SERVER_CONFIGS: Record<string, LSPServerConfig> = {
   go: { command: ["gopls", "serve"] },
 };
 
+// Install instructions for common language servers
+const INSTALL_INSTRUCTIONS: Record<string, string> = {
+  typescript: "npm install -g typescript-language-server typescript",
+  javascript: "npm install -g typescript-language-server typescript",
+  python: "pip install pyright (or: pip install python-lsp-server)",
+  rust: "rustup component add rust-analyzer (or: brew install rust-analyzer)",
+  go: "go install golang.org/x/tools/gopls@latest",
+};
+
 // Detect language from file extension
 function detectLanguage(filePath: string): string | null {
   const ext = filePath.split(".").pop()?.toLowerCase();
@@ -180,6 +189,18 @@ class SimpleLSPClient {
 const clients = new Map<string, SimpleLSPClient>();
 const inFlight = new Map<string, Promise<SimpleLSPClient>>();
 
+class LSPNotAvailableError extends Error {
+  constructor(language: string) {
+    const serverName = SERVER_CONFIGS[language]?.command[0] ?? "the language server";
+    const install = INSTALL_INSTRUCTIONS[language] ?? "";
+    const installHint = install ? ` Install with: ${install}` : "";
+    super(
+      `LSP not available for ${language}. Install ${serverName} to enable go-to-definition and hover.${installHint}`
+    );
+    this.name = "LSPNotAvailableError";
+  }
+}
+
 async function getClient(
   language: string,
   cwd: string,
@@ -189,14 +210,19 @@ async function getClient(
   if (inFlight.has(key)) return inFlight.get(key)!;
 
   const config = SERVER_CONFIGS[language];
-  if (!config) throw new Error(`No LSP server configured for ${language}`);
+  if (!config) throw new LSPNotAvailableError(language);
 
   const p = (async () => {
-    const client = new SimpleLSPClient();
-    await client.start(config, cwd);
-    clients.set(key, client);
-    inFlight.delete(key);
-    return client;
+    try {
+      const client = new SimpleLSPClient();
+      await client.start(config, cwd);
+      clients.set(key, client);
+      return client;
+    } catch {
+      throw new LSPNotAvailableError(language);
+    } finally {
+      inFlight.delete(key);
+    }
   })();
   inFlight.set(key, p);
   return p;

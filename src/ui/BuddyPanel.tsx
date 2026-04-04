@@ -17,8 +17,12 @@ interface Props {
   quipType: "quip" | "suggestion" | "reaction";
 }
 
-// Fixed height: covers most art (5 lines) + name + short bubble without excess space
-const FIXED_HEIGHT = 6;
+// Responsive height: max 6 lines, or 15% of terminal height
+function getBuddyHeight(): number {
+  const rows = process.stdout.rows;
+  if (!rows) return 6;
+  return Math.min(6, Math.floor(rows * 0.15));
+}
 
 export function BuddyPanel({ buddy, quip, quipType }: Props) {
   const [frame, setFrame] = useState(0);
@@ -28,12 +32,13 @@ export function BuddyPanel({ buddy, quip, quipType }: Props) {
     return () => clearInterval(id);
   }, []);
 
+  const height = getBuddyHeight();
   const art = getBuddyArt(buddy, frame);
   const bubbleText = quipType === "suggestion" ? `💡 ${quip}` : quip;
-  const lines = renderBuddyWithBubble(bubbleText, art, buddy.name, 1, FIXED_HEIGHT);
+  const lines = renderBuddyWithBubble(bubbleText, art, buddy.name, 1, height);
 
   return (
-    <Box flexDirection="column" alignItems="flex-end" height={FIXED_HEIGHT} flexShrink={0}>
+    <Box flexDirection="column" alignItems="flex-end" height={height} flexShrink={0}>
       {lines.map((line, i) => <Text key={i} color="cyan">{line}</Text>)}
     </Box>
   );

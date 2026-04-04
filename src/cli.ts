@@ -18,7 +18,7 @@ import { ToolRegistry, setDefaultToolTimeout } from "./tools/registry.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { loadSettings } from "./config/settings.ts";
 import { initRemoteSettings, startPolling, loadCachedSettings, stopPolling } from "./config/remote-settings.ts";
-import { Session, listSessions, resumeSession, getLastSessionForCwd, forkSession, importClaudeCodeSession } from "./persistence/session.ts";
+import { Session, listSessions, resumeSession, getLastSessionForCwd, forkSession, importClaudeCodeSession, pruneOldSessions } from "./persistence/session.ts";
 import {
   needsCompaction,
   autoCompact,
@@ -166,6 +166,7 @@ async function main() {
   const dangerouslySkipPermissions = args.includes("--dangerously-skip-permissions") || args.includes("--yolo");
   const autoAcceptEditsFlag = args.includes("--auto-accept-edits");
   const printMode = args.includes("--print");
+  const noMcp = args.includes("--no-mcp");
   const maxCostArg = getArg(args, "--max-cost");
   maxCostUSD = maxCostArg ? parseFloat(maxCostArg) : Infinity;
 
@@ -264,7 +265,9 @@ async function main() {
 
   // Connect MCP servers in background (don't block startup)
   const mcpManager = new MCPManager();
-  if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
+  if (noMcp) {
+    console.error(chalk.dim("  MCP servers skipped (--no-mcp)"));
+  } else if (settings.mcpServers && Object.keys(settings.mcpServers).length > 0) {
     setMCPManager(mcpManager);
     registry.register(listMcpResourcesTool);
     mcpManager.connectAll(settings.mcpServers).then(() => {
@@ -280,6 +283,9 @@ async function main() {
       console.error(chalk.yellow(`  ⚠ MCP connection failed: ${msg}`));
     });
   }
+
+  // Auto-prune old sessions (fire-and-forget, don't block startup)
+  pruneOldSessions(100).catch(() => {});
 
   // Load system prompt via builder (knowledge files, memory, git context)
   const rawSystemPrompt = await loadSystemPrompt();
@@ -586,20 +592,37 @@ async function handleCommand(
       break;
 
     case "/sessions": {
-      const sessions = await listSessions();
-      if (sessions.length === 0) {
-        console.log(chalk.dim("No saved sessions."));
-      } else {
-        console.log(chalk.bold("Recent sessions:"));
-        for (const s of sessions) {
-          const age = timeSince(new Date(s.updatedAt));
-          const title = s.title ?? s.cwd.split("/").pop() ?? s.id;
-          const current = s.id === state.session.id ? chalk.cyan(" (current)") : "";
-          console.log(
-            `  ${chalk.bold(s.id)}${current} — ${title} (${s.messageCount} msgs, ${age} ago)`
-          );
+      if (arg.startsWith("prune")) {
+        // /sessions prune [days]
+        const daysArg = arg.split(" ")[1];
+        const maxAgeDays = daysArg ? parseInt(daysArg, 10) : 30;
+        if (isNaN(maxAgeDays) || maxAgeDays < 1) {
+          console.log(chalk.yellow("Usage: /sessions prune [days] — default 30"));
+          break;
         }
-        console.log(chalk.dim("\nResume with: ac --resume <id>"));
+        const deleted = await pruneOldSessions(100, maxAgeDays);
+        if (deleted > 0) {
+          console.log(chalk.green(`Pruned ${deleted} session(s) older than ${maxAgeDays} days.`));
+        } else {
+          console.log(chalk.dim("No sessions to prune."));
+        }
+      } else {
+        const sessions = await listSessions();
+        if (sessions.length === 0) {
+          console.log(chalk.dim("No saved sessions."));
+        } else {
+          console.log(chalk.bold("Recent sessions:"));
+          for (const s of sessions) {
+            const age = timeSince(new Date(s.updatedAt));
+            const title = s.title ?? s.cwd.split("/").pop() ?? s.id;
+            const current = s.id === state.session.id ? chalk.cyan(" (current)") : "";
+            console.log(
+              `  ${chalk.bold(s.id)}${current} — ${title} (${s.messageCount} msgs, ${age} ago)`
+            );
+          }
+          console.log(chalk.dim("\nResume with: ac --resume <id>"));
+          console.log(chalk.dim("Prune old:   /sessions prune [days]"));
+        }
       }
       break;
     }
@@ -1229,6 +1252,7 @@ ${chalk.bold("OPTIONS")}
   --auto-accept-edits                 Auto-approve Write/Edit (Bash still asks)
   --print                             Output only text (for piping)
   --max-cost <dollars>                Stop when cost exceeds limit
+  --no-mcp                            Skip MCP server connections on startup
   --migrate                           Import MCP servers and skills from Claude Code
 
 ${chalk.bold("COMMANDS")} (in REPL)

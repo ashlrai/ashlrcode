@@ -55,49 +55,25 @@ import { checkForUpgrade } from "./config/upgrade-notice.ts";
 import { VERSION } from "./version.ts";
 import { startBridgeServer, stopBridgeServer, getBridgePort } from "./bridge/bridge-server.ts";
 import { randomBytes } from "crypto";
+import { existsSync, readFileSync } from "fs";
+import { getConfigDir } from "./config/settings.ts";
+import builtinQuips from "./ui/quips.json";
 
-// Buddy quips (imported from banner for status line)
-const QUIPS: Record<string, string[]> = {
-  happy: [
-    "ship it, yolo",
-    "lgtm, didn't read a damn thing",
-    "tests are for people with trust issues",
-    "it works on my machine, deploy it",
-    "that code is mid but whatever",
-    "we move fast and break stuff here",
-    "clean code is for nerds",
-    "have you tried turning it off and never back on",
-    "git push --force and pray",
-    "code review? I am the code review",
-    "technically it compiles",
-    "the real bugs were the friends we made",
-    "this is either genius or insanity",
-    "stack overflow told me to do this",
-    "my therapist says I should stop enabling devs",
-  ],
-  thinking: [
-    "hold on, downloading more brain...",
-    "consulting my imaginary friend",
-    "pretending to understand your code",
-    "asking chatgpt for help (jk... unless?)",
-    "processing... or napping, hard to tell",
-    "my last brain cell is working overtime",
-    "calculating the meaning of your spaghetti code",
-    "I've seen worse... actually no I haven't",
-    "trying not to hallucinate here",
-    "one sec, arguing with myself",
-  ],
-  sleepy: [
-    "*yawns in binary*",
-    "do we HAVE to code right now?",
-    "I was having a great dream about typescript",
-    "loading enthusiasm... 404 not found",
-    "five more minutes...",
-    "my motivation called in sick today",
-    "I'm not lazy, I'm energy efficient",
-    "can we just deploy yesterday's code again?",
-  ],
-};
+// Buddy quips — loaded from ~/.ashlrcode/quips.json if present, otherwise built-in
+function loadQuips(): Record<string, string[]> {
+  const userQuipsPath = join(getConfigDir(), "quips.json");
+  if (existsSync(userQuipsPath)) {
+    try {
+      const raw = readFileSync(userQuipsPath, "utf-8");
+      return JSON.parse(raw) as Record<string, string[]>;
+    } catch {
+      // Fall back to built-in on parse error
+    }
+  }
+  return { ...builtinQuips };
+}
+
+const QUIPS: Record<string, string[]> = loadQuips();
 let quipIdx = Math.floor(Math.random() * 10);
 function getQuip(mood: string): string {
   const q = QUIPS[mood] ?? QUIPS.sleepy!;
@@ -130,7 +106,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     // Show permission prompt inline in the output stream
     _addOutput(`\n  ⚡ ${theme.warning("Permission:")} ${theme.primary(toolName)}`);
     _addOutput(theme.tertiary(`    ${description}`));
-    _addOutput(theme.tertiary(`    [y] allow  [a] always  [n] deny  [d] always deny\n`));
+    _addOutput(`    ${chalk.green("[y]")}${chalk.green("es once")}  ${chalk.cyan("[a]")}${chalk.cyan("lways")}  ${chalk.yellow.bold.underline("[n]")}${chalk.yellow.bold("o once")}  ${chalk.red("[d]")}${chalk.red("eny always")}\n`);
     return requestPermissionInk(toolName, description);
   };
 
@@ -352,7 +328,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return;
       }
       // Unrecognized key — remind user of valid options
-      addOutput(theme.warning("  Type y/a/n/d to answer the permission prompt."));
+      addOutput(`  ${chalk.green("[y]")}es  ${chalk.cyan("[a]")}lways  ${chalk.yellow.bold("[n]")}o  ${chalk.red("[d]")}eny`);
       return;
     }
 

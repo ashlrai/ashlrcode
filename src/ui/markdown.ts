@@ -1,7 +1,8 @@
 /**
  * Markdown-lite renderer — transforms streaming text with chalk formatting.
  *
- * Handles: **bold**, `inline code`, ```code blocks```, # headers, - lists
+ * Handles: **bold**, *italic*, ~~strikethrough~~, `inline code`, ```code blocks```,
+ * # headers, - lists, > blockquotes, [links](url), --- horizontal rules, | tables |
  * Works with streaming text (processes complete lines).
  */
 
@@ -12,6 +13,8 @@ interface RenderState {
   codeBlockLang: string;
   codeBlockLines: string[];
   buffer: string;
+  tableRows: string[][];
+  inTable: boolean;
 }
 
 function createState(): RenderState {
@@ -20,6 +23,8 @@ function createState(): RenderState {
     codeBlockLang: "",
     codeBlockLines: [],
     buffer: "",
+    tableRows: [],
+    inTable: false,
   };
 }
 
@@ -43,19 +48,23 @@ export class MarkdownRenderer {
     this.state.buffer = this.state.buffer.slice(lastNewline + 1);
 
     const lines = complete.split("\n");
-    const rendered = lines.map((l) => this.renderLine(l)).join("\n");
+    const renderedParts = lines.map((l) => this.renderLine(l)).filter((l) => l !== "");
+    if (renderedParts.length === 0) return "";
+    const rendered = renderedParts.join("\n");
 
     return rendered + "\n";
   }
 
   /** Flush any remaining buffered content. */
   flush(): string {
+    let result = "";
     if (this.state.buffer) {
-      const result = this.renderLine(this.state.buffer);
+      result += this.renderLine(this.state.buffer);
       this.state.buffer = "";
-      return result;
     }
-    return "";
+    // Flush any pending table
+    result += this.flushTable();
+    return result;
   }
 
   /** Reset renderer state (call between turns). */
@@ -65,11 +74,13 @@ export class MarkdownRenderer {
 
   private renderLine(line: string): string {
     if (line.trimStart().startsWith("```")) {
+      // Flush any pending table before entering code block
+      const tablePre = this.flushTable();
       if (this.state.inCodeBlock) {
         this.state.inCodeBlock = false;
         this.state.codeBlockLang = "";
         this.state.codeBlockLines = [];
-        return chalk.dim("```");
+        return tablePre + chalk.dim("```");
       } else {
         this.state.inCodeBlock = true;
         this.state.codeBlockLang = line.trim().slice(3).trim();
@@ -77,7 +88,7 @@ export class MarkdownRenderer {
         const langLabel = this.state.codeBlockLang
           ? chalk.dim(`\`\`\`${this.state.codeBlockLang}`)
           : chalk.dim("```");
-        return langLabel;
+        return tablePre + langLabel;
       }
     }
 
@@ -89,7 +100,35 @@ export class MarkdownRenderer {
       return numStr + highlighted;
     }
 
-    return renderMarkdownLine(line);
+    // Table detection: lines starting with | and containing at least one more |
+    if (isTableRow(line)) {
+      // Skip separator rows (e.g., |---|---|) but use them to confirm table
+      if (isTableSeparator(line)) {
+        this.state.inTable = true;
+        return ""; // separator consumed, will be rendered as border
+      }
+      this.state.inTable = true;
+      const cells = parseTableCells(line);
+      this.state.tableRows.push(cells);
+      return ""; // buffered, will be rendered when table ends
+    }
+
+    // If we were in a table and hit a non-table line, flush the table
+    const tablePre = this.flushTable();
+    return tablePre + renderMarkdownLine(line);
+  }
+
+  /** Flush buffered table rows and render as formatted table. */
+  private flushTable(): string {
+    if (this.state.tableRows.length === 0) {
+      this.state.inTable = false;
+      return "";
+    }
+
+    const rendered = renderTable(this.state.tableRows);
+    this.state.tableRows = [];
+    this.state.inTable = false;
+    return rendered + "\n";
   }
 }
 
@@ -268,14 +307,21 @@ export function highlightCode(line: string, lang: string): string {
 }
 
 /**
- * Render a single line of markdown (headers, bold, code, lists).
+ * Render a single line of markdown (headers, bold, code, lists, blockquotes, hr, tables).
  * Stateless — does not track code block state.
  */
 export function renderMarkdownLine(line: string): string {
+  // Horizontal rules: ---, ***, ___
+  if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) return chalk.dim("─".repeat(40));
   // Headers
   if (line.startsWith("### ")) return chalk.bold(line.slice(4));
   if (line.startsWith("## ")) return chalk.bold.underline(line.slice(3));
   if (line.startsWith("# ")) return chalk.bold.underline(line.slice(2));
+  // Blockquotes
+  if (line.match(/^\s*>\s?/)) {
+    const content = line.replace(/^\s*>\s?/, "");
+    return chalk.dim("│ ") + chalk.italic(renderInline(content));
+  }
   // Bullet lists
   if (line.match(/^\s*[-*]\s/)) return line.replace(/^(\s*)([-*])(\s)/, "$1" + chalk.cyan("•") + "$3");
   // Numbered lists
@@ -284,11 +330,123 @@ export function renderMarkdownLine(line: string): string {
 }
 
 function renderInline(text: string): string {
-  // Bold: **text** — use replacer function so chalk wraps the captured group
-  text = text.replace(/\*\*([^*]+)\*\*/g, (_match, g1) => chalk.bold(g1));
-
-  // Inline code: `text`
+  // Inline code: `text` — process first to protect code from other formatting
   text = text.replace(/`([^`]+)`/g, (_match, g1) => chalk.cyan(`\`${g1}\``));
 
+  // Links: [text](url)
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, linkText, url) =>
+    chalk.underline(linkText) + chalk.dim(` (${url})`));
+
+  // Bold + italic: ***text*** or ___text___
+  text = text.replace(/\*\*\*([^*]+)\*\*\*/g, (_match, g1) => chalk.bold.italic(g1));
+
+  // Bold: **text** or __text__
+  text = text.replace(/\*\*([^*]+)\*\*/g, (_match, g1) => chalk.bold(g1));
+  text = text.replace(/__([^_]+)__/g, (_match, g1) => chalk.bold(g1));
+
+  // Italic: *text* or _text_ (but not inside words for underscore)
+  text = text.replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, (_match, g1) => chalk.italic(g1));
+  text = text.replace(/(?<!\w)_([^_]+)_(?!\w)/g, (_match, g1) => chalk.italic(g1));
+
+  // Strikethrough: ~~text~~
+  text = text.replace(/~~([^~]+)~~/g, (_match, g1) => chalk.strikethrough(g1));
+
   return text;
+}
+
+// ── Table helpers ─────────────────────────────────────────────────────────
+
+/** Check if a line looks like a pipe-delimited table row. */
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.indexOf("|", 1) > 0;
+}
+
+/** Check if a line is a table separator (e.g., |---|---|). */
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  // Must be a table row and contain only |, -, :, and spaces
+  return isTableRow(trimmed) && /^[|\-:\s]+$/.test(trimmed);
+}
+
+/** Parse a pipe-delimited row into trimmed cell values. */
+function parseTableCells(line: string): string[] {
+  const trimmed = line.trim();
+  // Remove leading and trailing pipes, then split on remaining pipes
+  const inner = trimmed.slice(1, -1);
+  return inner.split("|").map((cell) => cell.trim());
+}
+
+/** Strip ANSI escape sequences for measuring visible string width. */
+function stripAnsi(str: string): number {
+  // eslint-disable-next-line no-control-regex
+  return str.replace(/\x1B\[[0-9;]*m/g, "").length;
+}
+
+/** Render a table from parsed rows with box-drawing borders. */
+function renderTable(rows: string[][]): string {
+  if (rows.length === 0) return "";
+
+  // Determine column count from the widest row
+  const colCount = Math.max(...rows.map((r) => r.length));
+
+  // Normalize rows to have consistent column count
+  const normalized = rows.map((r) => {
+    const padded = [...r];
+    while (padded.length < colCount) padded.push("");
+    return padded;
+  });
+
+  // Apply inline formatting to each cell
+  const formatted = normalized.map((row) => row.map((cell) => renderInline(cell)));
+
+  // Calculate column widths based on visible (non-ANSI) content
+  const colWidths: number[] = [];
+  for (let c = 0; c < colCount; c++) {
+    let max = 0;
+    for (const row of formatted) {
+      const w = stripAnsi(row[c]!);
+      if (w > max) max = w;
+    }
+    colWidths.push(Math.max(max, 1));
+  }
+
+  // Build the table
+  const lines: string[] = [];
+
+  // Top border: ┌───┬───┐
+  lines.push(
+    chalk.dim("┌") +
+      colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┬")) +
+      chalk.dim("┐"),
+  );
+
+  for (let r = 0; r < formatted.length; r++) {
+    const row = formatted[r]!;
+    // Data row: │ cell │ cell │
+    const cells = row.map((cell, c) => {
+      const visible = stripAnsi(cell);
+      const pad = colWidths[c]! - visible;
+      return " " + cell + " ".repeat(pad + 1);
+    });
+    lines.push(chalk.dim("│") + cells.join(chalk.dim("│")) + chalk.dim("│"));
+
+    // After first row (header), add separator: ├───┼───┤
+    if (r === 0 && formatted.length > 1) {
+      lines.push(
+        chalk.dim("├") +
+          colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┼")) +
+          chalk.dim("┤"),
+      );
+    }
+  }
+
+  // Bottom border: └───┴───┘
+  lines.push(
+    chalk.dim("└") +
+      colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┴")) +
+      chalk.dim("┘"),
+  );
+
+  return lines.join("\n");
 }

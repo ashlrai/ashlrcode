@@ -14,3 +14,7 @@ jobs:
       - run: bun install
       - run: bunx tsc --noEmit
       - run: bun test
+      - name: Build binary
+        run: bun build src/cli.ts --compile --outfile dist/ac
+      - name: Verify binary
+        run: ./dist/ac --version
