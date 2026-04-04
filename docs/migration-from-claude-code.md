@@ -10,8 +10,8 @@ AshlrCode is designed as a drop-in replacement for Claude Code when your usage r
 | Provider | Anthropic only | xAI Grok, Anthropic, any OpenAI-compatible |
 | Cost | Max plan ($100-200/mo) | Pay-per-use (~$0.001/request on Grok) |
 | Context window | 200K tokens | 2M tokens (Grok) |
-| Tools | 40+ | 30 |
-| Skills | 80+ (built-in) | 15 + custom |
+| Tools | 40+ | 45+ |
+| Skills | 80+ (built-in) | 18 + custom |
 | MCP support | Yes | Yes |
 | Hooks | Yes | Yes |
 | Plan mode | Yes | Yes |
@@ -37,7 +37,33 @@ AshlrCode is designed as a drop-in replacement for Claude Code when your usage r
 | `/help` | `/help` | Same |
 | `/model` | `/model` | Same, with aliases (grok-fast, sonnet, etc.) |
 
-## Config Migration
+## Quick Migration (Recommended)
+
+Run the automatic migration command:
+
+```bash
+ac --migrate
+```
+
+This copies from `~/.claude/` to `~/.ashlrcode/`:
+- **MCP servers** — all servers from `settings.json` (stdio, SSE, WebSocket)
+- **Permission rules** — allow/deny lists converted to AshlrCode format
+- **Custom commands** — `~/.claude/commands/*.md` → `~/.ashlrcode/skills/*.md` (auto-converts `$ARGUMENTS` to `{{args}}`)
+
+The migration is safe to re-run — it skips items that already exist.
+
+### Import Claude Code Sessions
+
+```bash
+# Import a specific session
+ac
+/import-session ~/.claude/projects/<hash>/sessions/<id>.jsonl
+
+# Then resume it
+ac --resume <new-id>
+```
+
+## Manual Config Migration
 
 ### CLAUDE.md → ASHLR.md
 
@@ -53,6 +79,27 @@ Key differences in format:
 - Hooks use `hooks.preToolUse` and `hooks.postToolUse` arrays
 - MCP servers use same format (`mcpServers` key)
 
+### Configurable Limits
+
+AshlrCode exposes limits that Claude Code hardcodes:
+
+```json
+{
+  "maxIterations": 25,
+  "streamTimeoutMs": 300000,
+  "toolTimeoutMs": 120000,
+  "systemPromptBudget": 50000
+}
+```
+
+### API Key Security
+
+On macOS, API keys are stored in Keychain (not plaintext). The setup wizard handles this automatically. You can also manually add keys:
+
+```bash
+security add-generic-password -a xai-api-key -s ashlrcode -w "your-key-here" -U
+```
+
 ### Permissions
 
 Claude Code persists permissions in its own format.
@@ -63,10 +110,7 @@ AshlrCode uses `~/.ashlrcode/permissions.json` with `alwaysAllow` and `alwaysDen
 Claude Code skills: `~/.claude/commands/*.md`
 AshlrCode skills: `~/.ashlrcode/skills/*.md`
 
-The skill file format is similar (frontmatter + prompt). Your Claude Code skills can be copied with minor adjustments:
-- Change `trigger:` if needed
-- Replace `{{arguments}}` with `{{args}}`
-- Remove Claude Code-specific tool references
+The skill file format is similar (frontmatter + prompt). `ac --migrate` handles conversion automatically.
 
 ## What's Different
 
@@ -77,12 +121,9 @@ The skill file format is similar (frontmatter + prompt). Your Claude Code skills
 - **Transparency**: See exact cost per request with reasoning token breakdown
 
 ### Missing (compared to Claude Code)
-- **IDE extensions**: No VS Code or JetBrains integration yet
-- **Voice mode**: No voice input
-- **Extended thinking display**: Grok reasons internally but doesn't show it
+- **IDE extensions**: No VS Code or JetBrains integration (CLI only — works great with tmux)
+- **Voice mode**: Requires sox (`brew install sox`) — then works via `/voice`
 - **Web search (built-in)**: Claude Code has native web search; AshlrCode uses DuckDuckGo
-- **Some tools**: Claude Code has ~40 tools; AshlrCode has 30
-- **Some skills**: Claude Code ships 80+ skills; AshlrCode has 15 (but you can add custom ones)
 
 ### Same
 - **Core workflow**: Read → Edit → Bash → commit
