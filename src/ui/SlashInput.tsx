@@ -31,12 +31,15 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
 
   let rendered = "";
   if (value.length === 0) {
-    rendered = focus
-      ? chalk.inverse(" ") + (placeholder.length > 1 ? chalk.grey(placeholder.slice(1)) : "")
-      : chalk.grey(placeholder);
+    if (focus) {
+      rendered = chalk.inverse(" ") + chalk.grey(placeholder.slice(1));
+    } else {
+      rendered = chalk.grey(placeholder);
+    }
   } else {
     for (let i = 0; i < value.length; i++) {
-      rendered += i === cursorOffset ? chalk.inverse(colorChar(value[i]!)) : colorChar(value[i]!);
+      const ch = colorChar(value[i]!);
+      rendered += (i === cursorOffset) ? chalk.inverse(ch) : ch;
     }
     if (cursorOffset === value.length && focus) {
       rendered += chalk.inverse(" ");

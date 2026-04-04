@@ -94,29 +94,7 @@ function renderLine(line: string): string {
     return numStr + highlighted;
   }
 
-  // Headers
-  if (line.startsWith("### ")) {
-    return chalk.bold(line.slice(4));
-  }
-  if (line.startsWith("## ")) {
-    return chalk.bold.underline(line.slice(3));
-  }
-  if (line.startsWith("# ")) {
-    return chalk.bold.underline(line.slice(2));
-  }
-
-  // Bullet lists
-  if (line.match(/^\s*[-*]\s/)) {
-    return line.replace(/^(\s*)([-*])(\s)/, "$1" + chalk.cyan("•") + "$3");
-  }
-
-  // Numbered lists
-  if (line.match(/^\s*\d+\.\s/)) {
-    return line.replace(/^(\s*)(\d+\.)(\s)/, "$1" + chalk.cyan("$2") + "$3");
-  }
-
-  // Inline formatting
-  return renderInline(line);
+  return renderMarkdownLine(line);
 }
 
 /**

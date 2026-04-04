@@ -7,8 +7,6 @@ import { theme, stylePath } from "./theme.ts";
 import { highlightCode } from "./markdown.ts";
 
 const MAX_BODY_LINES = 20;
-const TRUNCATED_HEAD = 15;
-const TRUNCATED_TAIL = 5;
 
 // ── Borders ────────────────────────────────────────────────────────────────
 
@@ -17,33 +15,31 @@ function wrapWithBorder(bodyLines: string[], footer?: string): string[] {
   for (const line of bodyLines) {
     lines.push(theme.muted("  │") + `  ${line}`);
   }
-  if (footer) {
-    lines.push(theme.muted("  └") + `  ${theme.muted(footer)}`);
-  } else {
-    lines.push(theme.muted("  └"));
-  }
+  const suffix = footer ? `  ${theme.muted(footer)}` : "";
+  lines.push(theme.muted("  └") + suffix);
   return lines;
 }
 
 function truncateLines(allLines: string[], max: number = MAX_BODY_LINES): string[] {
   if (allLines.length <= max) return allLines;
-  const head = allLines.slice(0, TRUNCATED_HEAD);
-  const tail = allLines.slice(-TRUNCATED_TAIL);
-  const omitted = allLines.length - TRUNCATED_HEAD - TRUNCATED_TAIL;
-  return [...head, theme.muted(`  ... ${omitted} more lines ...`), ...tail];
+  const tail = Math.max(1, Math.floor(max / 4));
+  const head = max - tail;
+  const omitted = allLines.length - head - tail;
+  return [...allLines.slice(0, head), theme.muted(`  ... ${omitted} more lines ...`), ...allLines.slice(-tail)];
 }
 
 // ── File extension → language ──────────────────────────────────────────────
 
+const EXT_TO_LANG: Record<string, string> = {
+  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
+  py: "python", go: "go", rs: "rust", sh: "bash", bash: "bash", zsh: "bash",
+  json: "json", yaml: "json", yml: "json", toml: "json",
+  md: "", txt: "", css: "", html: "", sql: "",
+};
+
 function extToLang(filePath: string): string {
   const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-    py: "python", go: "go", rs: "rust", sh: "bash", bash: "bash", zsh: "bash",
-    json: "json", yaml: "json", yml: "json", toml: "json",
-    md: "", txt: "", css: "", html: "", sql: "",
-  };
-  return map[ext] ?? "";
+  return EXT_TO_LANG[ext] ?? "";
 }
 
 // ── Compact input for header ───────────────────────────────────────────────
@@ -51,8 +47,8 @@ function extToLang(filePath: string): string {
 function getCompactInput(name: string, input: Record<string, unknown>): string {
   switch (name) {
     case "Bash": return String(input.command ?? "").split("\n")[0]!.slice(0, 60);
-    case "Read": return shortenPath(String(input.file_path ?? ""));
-    case "Write": return shortenPath(String(input.file_path ?? ""));
+    case "Read":
+    case "Write":
     case "Edit": return shortenPath(String(input.file_path ?? ""));
     case "Glob": return String(input.pattern ?? "");
     case "Grep": return `/${String(input.pattern ?? "")}/`;
@@ -110,8 +106,8 @@ function formatReadBody(result: string, filePath: string): string[] {
 
 function formatBashBody(result: string, isError: boolean): string[] {
   const lines = result.split("\n");
-  const styled = lines.map(line => isError ? chalk.hex("#FF1744")(line) : line);
-  return truncateLines(styled);
+  if (isError) return truncateLines(lines.map(line => chalk.hex("#FF1744")(line)));
+  return truncateLines(lines);
 }
 
 function formatGrepBody(result: string): string[] {

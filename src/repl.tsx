@@ -13,7 +13,7 @@ import { getCurrentMode, cycleMode } from "./ui/mode.ts";
 import { getEffort, setEffort, cycleEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
 import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
 import { runWithAgentContext, type AgentContext } from "./agent/async-context.ts";
-import { resetMarkdown, renderMarkdownLine } from "./ui/markdown.ts";
+import { resetMarkdown, renderMarkdownDelta, flushMarkdown } from "./ui/markdown.ts";
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
@@ -1209,15 +1209,18 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         onText: (text) => {
           isProcessing = false;
           responseText += text;
-          // Only flush COMPLETE lines to Static (they can't be re-rendered)
-          const lines = responseText.split("\n");
-          if (lines.length > 1) {
-            for (let i = 0; i < lines.length - 1; i++) {
-              addOutput("  " + renderMarkdownLine(lines[i]!));
+          // Use stateful markdown renderer (handles code blocks, headers, etc.)
+          const rendered = renderMarkdownDelta(text);
+          if (rendered) {
+            // Rendered output is newline-terminated; split and indent each line
+            const lines = rendered.replace(/\n$/, "").split("\n");
+            for (const line of lines) {
+              addOutput("  " + line);
             }
-            responseText = lines[lines.length - 1]!;
           }
-          // Partial line stays in spinnerText for live display (re-renderable)
+          // Partial line stays in spinnerText for live display
+          const allLines = responseText.split("\n");
+          responseText = allLines[allLines.length - 1]!;
           spinnerText = responseText;
           update();
         },
@@ -1255,8 +1258,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         },
       }));
 
-      // Flush remaining text
-      if (responseText) addOutput("  " + renderMarkdownLine(responseText));
+      // Flush remaining markdown buffer
+      const flushed = flushMarkdown();
+      if (flushed) addOutput("  " + flushed);
+      else if (responseText) addOutput("  " + responseText);
 
       // Update history
       state.history.length = 0;
