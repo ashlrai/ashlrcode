@@ -70,11 +70,11 @@ function loadQuips(): Record<string, string[]> {
       // Fall back to built-in on parse error
     }
   }
-  return { ...builtinQuips };
+  return builtinQuips as Record<string, string[]>;
 }
 
 const QUIPS: Record<string, string[]> = loadQuips();
-let quipIdx = Math.floor(Math.random() * 10);
+let quipIdx = 0;
 function getQuip(mood: string): string {
   const q = QUIPS[mood] ?? QUIPS.sleepy!;
   quipIdx = (quipIdx + 1) % q.length;

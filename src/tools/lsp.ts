@@ -166,7 +166,7 @@ class SimpleLSPClient {
   async stop(): Promise<void> {
     if (!this.proc) return;
     // Reject all pending requests before shutting down
-    for (const [id, pending] of this.pendingRequests) {
+    for (const [, pending] of this.pendingRequests) {
       pending.reject(new Error("LSP client stopped"));
     }
     this.pendingRequests.clear();

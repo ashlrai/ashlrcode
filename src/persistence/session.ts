@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, writeFile, appendFile, mkdir, readdir, unlink, stat } from "fs/promises";
+import { readFile, appendFile, mkdir, readdir, unlink, stat } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { getConfigDir } from "../config/settings.ts";
@@ -310,6 +310,9 @@ export async function forkSession(
 export async function compactSession(id: string): Promise<{ messagesBefore: number; summary: string }> {
   const session = new Session(id);
   const allMessages = await session.loadAllMessages();
+  if (allMessages.length === 0) {
+    throw new Error(`Session ${id} not found or empty`);
+  }
   const messagesBefore = allMessages.length;
 
   // Generate summary from recent messages
@@ -450,38 +453,35 @@ export async function pruneOldSessions(
     jsonlFiles.map(async (f) => {
       const filePath = join(sessionsDir, f);
       const s = await stat(filePath);
-      return { name: f, path: filePath, mtime: s.mtimeMs };
+      return { path: filePath, mtime: s.mtimeMs };
     })
   );
 
   // Sort oldest first
   fileStats.sort((a, b) => a.mtime - b.mtime);
 
-  const toDelete: string[] = [];
+  const toDelete = new Set<string>();
 
-  // Delete files older than maxAgeDays
+  // Mark files older than maxAgeDays
   if (maxAgeDays !== undefined) {
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
     for (const f of fileStats) {
       if (f.mtime < cutoff) {
-        toDelete.push(f.path);
+        toDelete.add(f.path);
       }
     }
   }
 
   // If still over maxCount after age pruning, trim oldest
-  const remaining = fileStats.filter((f) => !toDelete.includes(f.path));
+  const remaining = fileStats.filter((f) => !toDelete.has(f.path));
   if (remaining.length > maxCount) {
     const excess = remaining.length - maxCount;
     for (let i = 0; i < excess; i++) {
-      toDelete.push(remaining[i]!.path);
+      toDelete.add(remaining[i]!.path);
     }
   }
 
-  // Deduplicate
-  const uniqueDeletes = [...new Set(toDelete)];
-
-  for (const filePath of uniqueDeletes) {
+  for (const filePath of toDelete) {
     try {
       await unlink(filePath);
     } catch {
@@ -489,5 +489,5 @@ export async function pruneOldSessions(
     }
   }
 
-  return uniqueDeletes.length;
+  return toDelete.size;
 }
