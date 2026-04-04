@@ -68,7 +68,7 @@ export function renderBuddyWithBubble(
   const tailPos = Math.min(10, bubbleWidth - 3);
   const rightSide = bubbleWidth - tailPos - 3;
   bubbleLines.push(" ╰" + "─".repeat(tailPos) + "╮" + " ".repeat(rightSide) + "│");
-  bubbleLines.push(" ".repeat(tailPos + 2) + "╰" + "─".repeat(rightSide + 1) + "╯");
+  bubbleLines.push(" ".repeat(tailPos + 2) + "╰" + "─".repeat(rightSide) + "╯");
 
   // Now compose: bubble on left, buddy art on right
   // The buddy should start at the same height as the bottom of the bubble
