@@ -9,6 +9,7 @@ import React, { useState, useCallback } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import { SlashInput } from "./SlashInput.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
+import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
 import type { BuddyData } from "../ui/buddy.ts";
 import { getAction, type InputHistory } from "./keybindings.ts";
 
@@ -129,13 +130,8 @@ export function App({
         {(item) => <Text key={item.id}>{item.text}</Text>}
       </Static>
 
-      {/* Spinner + token stats */}
-      {isProcessing && (
-        <Box>
-          <Text dimColor>  ⠋ {spinnerText}</Text>
-          {tokenStats ? <Text dimColor>{"  "}{tokenStats}</Text> : null}
-        </Box>
-      )}
+      {/* Animated spinner with rotating phrases + token stats */}
+      {isProcessing && <AnimatedSpinner text={spinnerText} tokenStats={tokenStats} />}
 
       {/* Input box — full width */}
       <Text dimColor>{"-".repeat(w)}</Text>
