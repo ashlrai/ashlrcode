@@ -61,12 +61,13 @@ export const grepTool: Tool = {
     const globFilter = input.glob as string | undefined;
     const outputMode = (input.output_mode as string) ?? "files_with_matches";
 
-    // Try ripgrep first (use bash -c to resolve shell functions/aliases)
+    // Try ripgrep first (direct spawn, no shell)
     try {
       const result = await runRipgrep(pattern, searchPath, globFilter, outputMode, context);
       if (result !== null) return result;
     } catch {
-      // ripgrep not available, fall through to grep
+      // ripgrep not available — fall through to system grep
+      console.error("[grep] ripgrep (rg) not found, using system grep (slower)");
     }
 
     // Fallback to system grep

@@ -14,7 +14,7 @@ import chalk from "chalk";
 import { createInterface } from "readline";
 
 import { ProviderRouter } from "./providers/router.ts";
-import { ToolRegistry } from "./tools/registry.ts";
+import { ToolRegistry, setDefaultToolTimeout } from "./tools/registry.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { loadSettings } from "./config/settings.ts";
 import { initRemoteSettings, startPolling, loadCachedSettings, stopPolling } from "./config/remote-settings.ts";
@@ -103,6 +103,9 @@ import { loadProjectConfig } from "./config/project-config.ts";
 import { startInkRepl } from "./repl.tsx";
 import { VERSION } from "./version.ts";
 let maxCostUSD = Infinity;
+let configMaxIterations = 25;
+let configStreamTimeoutMs = 300_000;
+let configToolTimeoutMs = 120_000;
 
 interface AppState {
   router: ProviderRouter;
@@ -135,6 +138,12 @@ async function main() {
     process.exit(0);
   }
 
+  if (args.includes("--migrate")) {
+    const { runMigration } = await import("./migrate.ts");
+    await runMigration();
+    process.exit(0);
+  }
+
   // Load settings and permissions
   let settings = await loadSettings();
   await loadPermissions();
@@ -164,6 +173,14 @@ async function main() {
   }
   if (autoAcceptEditsFlag) {
     setAutoAcceptEdits(true);
+  }
+
+  // Apply configurable limits from settings
+  if (settings.maxIterations) configMaxIterations = settings.maxIterations;
+  if (settings.streamTimeoutMs) configStreamTimeoutMs = settings.streamTimeoutMs;
+  if (settings.toolTimeoutMs) {
+    configToolTimeoutMs = settings.toolTimeoutMs;
+    setDefaultToolTimeout(configToolTimeoutMs);
   }
 
   if (needsSetup(settings)) {
@@ -250,10 +267,17 @@ async function main() {
     setMCPManager(mcpManager);
     registry.register(listMcpResourcesTool);
     mcpManager.connectAll(settings.mcpServers).then(() => {
-      for (const { serverName, tool } of mcpManager.getAllTools()) {
+      const tools = mcpManager.getAllTools();
+      for (const { serverName, tool } of tools) {
         registry.register(createMCPTool(serverName, tool, mcpManager));
       }
-    }).catch(() => {});
+      if (tools.length > 0) {
+        console.error(chalk.dim(`  ✓ ${tools.length} MCP tools loaded from ${Object.keys(settings.mcpServers!).length} server(s)`));
+      }
+    }).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(chalk.yellow(`  ⚠ MCP connection failed: ${msg}`));
+    });
   }
 
   // Load system prompt via builder (knowledge files, memory, git context)
@@ -878,6 +902,8 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
       toolRegistry: state.registry,
       toolContext: state.toolContext,
       readOnly: isPlanMode(),
+      maxIterations: configMaxIterations,
+      streamTimeoutMs: configStreamTimeoutMs,
       onText: (text) => {
         if (!firstTextReceived) {
           spinner?.stop();
@@ -1142,6 +1168,7 @@ ${chalk.bold("OPTIONS")}
   --auto-accept-edits                 Auto-approve Write/Edit (Bash still asks)
   --print                             Output only text (for piping)
   --max-cost <dollars>                Stop when cost exceeds limit
+  --migrate                           Import MCP servers and skills from Claude Code
 
 ${chalk.bold("COMMANDS")} (in REPL)
   /plan                     Show plan mode status

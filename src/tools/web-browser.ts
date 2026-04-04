@@ -19,12 +19,10 @@ interface BrowserResult {
 async function getPuppeteer(): Promise<any | null> {
   try {
     // Dynamic import — puppeteer may not be installed
-    // @ts-expect-error — optional peer dependency
-    return await import("puppeteer");
+    return await import("puppeteer" as string);
   } catch {
     try {
-      // @ts-expect-error — optional peer dependency
-      return await import("puppeteer-core");
+      return await import("puppeteer-core" as string);
     } catch {
       return null;
     }
@@ -60,7 +58,12 @@ async function getBrowser(): Promise<any> {
 
   const puppeteer = await getPuppeteer();
   if (!puppeteer) {
-    throw new Error("Puppeteer not installed. Run: bun add puppeteer");
+    throw new Error(
+      "Browser automation requires Puppeteer.\n" +
+      "Install: bun add puppeteer\n" +
+      "Or for smaller install: bun add puppeteer-core\n" +
+      "Tip: Use WebFetch tool for simple page reading without a browser."
+    );
   }
 
   const chromePath = await findChromePath();

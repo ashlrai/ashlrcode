@@ -12,8 +12,13 @@ import { toolToDefinition } from "./types.ts";
 import { runPreToolHooks, runPostToolHooks, type HooksConfig } from "../config/hooks.ts";
 import { checkRules } from "../config/permissions.ts";
 
-/** Default timeout for tool execution (2 minutes). */
-const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+/** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
+let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+
+/** Override the default tool timeout (called from settings). */
+export function setDefaultToolTimeout(ms: number): void {
+  DEFAULT_TOOL_TIMEOUT_MS = ms;
+}
 
 /**
  * Simple async mutex for serializing permission prompts.

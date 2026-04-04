@@ -3,7 +3,6 @@
   "version": "2.0.0",
   "description": "Multi-provider AI coding agent CLI — 45 tools, 40 commands, autonomous mode, verification agent, multi-agent coordination",
   "type": "module",
-  "type": "module",
   "private": false,
   "license": "MIT",
   "repository": {

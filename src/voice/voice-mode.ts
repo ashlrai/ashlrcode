@@ -39,8 +39,19 @@ export async function startRecording(): Promise<void> {
   _recordingPath = join(dir, `recording-${Date.now()}.wav`);
 
   // Use sox/rec for cross-platform recording
-  // macOS: brew install sox
-  // Linux: apt install sox
+  // Check if rec (sox) is installed first
+  const check = spawn(["which", "rec"], { stdout: "pipe", stderr: "pipe" });
+  await check.exited;
+  if (check.exitCode !== 0) {
+    _recordingPath = null;
+    throw new Error(
+      "Voice mode requires sox. Install it:\n" +
+      "  macOS:  brew install sox\n" +
+      "  Linux:  apt install sox\n" +
+      "  Windows: not supported (use WSL)"
+    );
+  }
+
   _recording = spawn(["rec", "-q", "-r", "16000", "-c", "1", "-b", "16", _recordingPath], {
     stdout: "pipe",
     stderr: "pipe",

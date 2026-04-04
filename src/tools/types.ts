@@ -11,6 +11,8 @@ export interface ToolContext {
   requestPermission: (tool: string, description: string) => Promise<boolean>;
   /** Current turn number (for file history tracking) */
   turnNumber?: number;
+  /** Session ID (for task board, persistence) */
+  sessionId?: string;
 }
 
 export interface Tool {

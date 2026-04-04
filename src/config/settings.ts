@@ -40,6 +40,16 @@ export interface Settings {
   mcpServers?: Record<string, MCPServerConfig>;
   permissionRules?: Array<{ tool: string; inputPattern?: string; action: "allow" | "deny" | "ask" }>;
   remoteSettingsUrl?: string;
+
+  // ── Configurable limits (all optional, sensible defaults) ───
+  /** Max agent loop iterations per turn (default: 25) */
+  maxIterations?: number;
+  /** Stream inactivity timeout in ms (default: 300000 = 5 min) */
+  streamTimeoutMs?: number;
+  /** Tool execution timeout in ms (default: 120000 = 2 min) */
+  toolTimeoutMs?: number;
+  /** System prompt token budget cap (default: 50000) */
+  systemPromptBudget?: number;
 }
 
 let configDirOverride: string | null = null;
@@ -82,19 +92,23 @@ export async function saveSettings(settings: Settings): Promise<void> {
 }
 
 function getDefaultSettings(): Settings {
+  // Filter out empty strings from env vars — treat "" as unset
+  const xaiKey = process.env.XAI_API_KEY?.trim() || "";
+  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() || "";
+
   return {
     providers: {
       primary: {
         provider: "xai",
-        apiKey: process.env.XAI_API_KEY ?? "",
+        apiKey: xaiKey,
         model: process.env.AC_MODEL ?? "grok-4-1-fast-reasoning",
         baseURL: "https://api.x.ai/v1",
       },
-      fallbacks: process.env.ANTHROPIC_API_KEY
+      fallbacks: anthropicKey
         ? [
             {
               provider: "anthropic",
-              apiKey: process.env.ANTHROPIC_API_KEY,
+              apiKey: anthropicKey,
               model: "claude-sonnet-4-6-20250514",
             },
           ]
