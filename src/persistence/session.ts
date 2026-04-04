@@ -178,8 +178,13 @@ export class Session {
   }
 
   private async appendEntry(entry: SessionEntry): Promise<void> {
-    await mkdir(getSessionsDir(), { recursive: true });
-    await appendFile(this.filePath, JSON.stringify(entry) + "\n", "utf-8");
+    try {
+      await mkdir(getSessionsDir(), { recursive: true });
+      await appendFile(this.filePath, JSON.stringify(entry) + "\n", "utf-8");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("[session] Failed to persist entry:", msg);
+    }
   }
 }
 

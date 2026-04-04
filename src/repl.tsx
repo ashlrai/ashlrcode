@@ -136,6 +136,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   startBuddyAnimation();
 
+  // Track how many messages have been persisted to avoid data loss on exit
+  let lastPersistedCount = state.history.length;
+
   // Autopilot work queue
   const workQueue = new WorkQueue(state.toolContext.cwd);
   workQueue.load().catch(() => {});
@@ -401,6 +404,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       state.history.length = 0; state.history.push(...result.messages);
       const newMsgs = result.messages.slice(preTurn);
       if (newMsgs.length > 0) await state.session.appendMessages(newMsgs);
+      lastPersistedCount = state.history.length;
     } catch (err) { addOutput(theme.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`)); }
     isProcessing = false; update();
   }
@@ -1271,6 +1275,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       const newMessages = result.messages.slice(preTurnMessageCount);
       if (newMessages.length > 0) {
         await state.session.appendMessages(newMessages);
+        lastPersistedCount = state.history.length;
       }
 
       // Turn separator
@@ -1344,16 +1349,28 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     if (kairos?.isRunning()) await kairos.stop().catch(() => {});
     const { stopRecording: stopRec, isRecording: isRec } = await import("./voice/voice-mode.ts");
     if (isRec()) await stopRec().catch(() => {});
+
+    // Save any unsaved messages from the current turn to prevent data loss
+    const unsaved = state.history.slice(lastPersistedCount);
+    if (unsaved.length > 0) {
+      await state.session.appendMessages(unsaved).catch(() => {});
+    }
+
     state.buddy.mood = "sleepy";
     // Generate final dream on exit
     if (state.history.length > 4) {
       await generateDream(state.history, state.session.id).catch(() => {});
     }
     await saveBuddy(state.buddy).catch(() => {});
-    await stopIPCServer().catch(() => {});
-    await shutdownLSP().catch(() => {});
-    await shutdownBrowser().catch(() => {});
     console.log("\n" + state.router.getCostSummary());
+    // Await all cleanup with a 3-second timeout to avoid orphaned processes
+    const cleanup = Promise.all([
+      stopIPCServer().catch(() => {}),
+      shutdownLSP().catch(() => {}),
+      shutdownBrowser().catch(() => {}),
+    ]);
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    await Promise.race([cleanup, timeout]);
     process.exit(0);
   }
 

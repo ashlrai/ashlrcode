@@ -305,8 +305,9 @@ export async function loadBuddy(): Promise<BuddyData> {
       if (!buddy.level) buddy.level = Math.floor(buddy.totalSessions / 5) + 1;
 
       return buddy;
-    } catch {
-      // Corrupted file — regenerate below
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.error("[buddy] Corrupted buddy file, regenerating:", msg);
     }
   }
 

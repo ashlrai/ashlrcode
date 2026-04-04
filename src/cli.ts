@@ -383,7 +383,7 @@ async function main() {
   if (isNonInteractive) process.on("SIGINT", async () => {
     try {
       if (state.history.length > 0) {
-        await state.session.appendMessages(state.history.slice(-2));
+        await state.session.appendMessages(state.history);
       }
       state.buddy.mood = "sleepy";
       await saveBuddy(state.buddy);
@@ -391,10 +391,15 @@ async function main() {
     if (!printMode) {
       console.log(chalk.dim(`\n${router.getCostSummary()}`));
     }
-    mcpManager.disconnectAll().catch(() => {});
-    shutdownLSP().catch(() => {});
-    shutdownBrowser().catch(() => {});
     stopPolling();
+    // Await all cleanup with a 3-second timeout to avoid orphaned processes
+    const cleanup = Promise.all([
+      mcpManager.disconnectAll().catch(() => {}),
+      shutdownLSP().catch(() => {}),
+      shutdownBrowser().catch(() => {}),
+    ]);
+    const timeout = new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    await Promise.race([cleanup, timeout]);
     process.exit(0);
   });
 
@@ -1112,6 +1117,17 @@ ${chalk.bold("CONFIG")}
   ./CLAUDE.md                   Also supported for compatibility
 `);
 }
+
+// Global error handlers
+process.on("unhandledRejection", (reason) => {
+  console.error(chalk.red(`\nUnhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}`));
+  // Don't exit — let the REPL continue if possible
+});
+
+process.on("uncaughtException", (error) => {
+  console.error(chalk.red(`\nUncaught exception: ${error.message}`));
+  process.exit(1);
+});
 
 // Run
 main().catch((err) => {

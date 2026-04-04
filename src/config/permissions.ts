@@ -71,8 +71,9 @@ export async function loadPermissions(): Promise<void> {
     const data = JSON.parse(raw) as PersistedPermissions;
     state.alwaysAllow = new Set(data.alwaysAllow ?? []);
     state.alwaysDeny = new Set(data.alwaysDeny ?? []);
-  } catch {
-    // Corrupted file, start fresh
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("[permissions] Corrupted permissions file, starting fresh:", msg);
   }
 }
 
