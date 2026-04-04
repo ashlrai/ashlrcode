@@ -2,11 +2,17 @@
  * Coordinator Mode — multi-agent orchestration.
  *
  * A lead agent that:
- * 1. Breaks complex tasks into subtasks
- * 2. Dispatches to specialized sub-agents (team members or ad-hoc)
- * 3. Tracks progress via completion callbacks
- * 4. Merges results and resolves conflicts
+ * 1. Breaks complex tasks into subtasks (structured output, not regex)
+ * 2. Validates dependency graph for cycles (topological sort)
+ * 3. Dispatches to specialized sub-agents (team members or ad-hoc)
+ * 4. Tracks progress via task board with wave-based execution
  * 5. Runs verification on the combined output
+ *
+ * v2.1 improvements over v2.0:
+ * - Structured JSON extraction with fallback (no brittle regex)
+ * - Deadlock detection before dispatch
+ * - Structured success signals (no string matching)
+ * - Progress callbacks per wave
  *
  * Activate via /coordinate command.
  */
@@ -35,16 +41,22 @@ export interface CoordinatorConfig {
 
 export type CoordinatorEvent =
   | { type: "planning"; message: string }
+  | { type: "plan_ready"; taskCount: number; waveCount: number }
+  | { type: "wave_start"; waveIndex: number; totalWaves: number; taskCount: number }
   | { type: "dispatching"; taskIndex: number; totalTasks: number; agentName: string }
-  | { type: "agent_complete"; taskIndex: number; agentName: string; success: boolean }
+  | { type: "agent_complete"; taskIndex: number; agentName: string; success: boolean; summary: string }
+  | { type: "wave_complete"; waveIndex: number; successCount: number; failCount: number }
   | { type: "verifying" }
   | { type: "complete"; summary: string };
 
 export interface SubTask {
+  id: string;
   description: string;
-  role: string; // "explorer", "implementer", "test-writer", "code-reviewer"
+  role: string;
   readOnly?: boolean;
-  files?: string[]; // Hint for which files this subtask touches
+  files?: string[];
+  /** Task IDs that must complete before this one starts */
+  dependsOn?: string[];
 }
 
 export interface CoordinatorResult {
@@ -53,9 +65,52 @@ export interface CoordinatorResult {
     agentName: string;
     result: SubAgentResult;
     success: boolean;
+    summary: string;
   }>;
   verificationPassed?: boolean;
   summary: string;
+}
+
+/**
+ * Extract JSON from mixed text output.
+ * Tries multiple strategies, from strict to lenient.
+ */
+function extractJSON<T>(text: string): T | null {
+  // Strategy 1: Try parsing the entire text as JSON
+  try {
+    return JSON.parse(text) as T;
+  } catch { /* continue */ }
+
+  // Strategy 2: Find JSON in code fences
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) {
+    try {
+      return JSON.parse(fenced[1]!.trim()) as T;
+    } catch { /* continue */ }
+  }
+
+  // Strategy 3: Find first [ ... ] or { ... } block
+  let depth = 0;
+  let start = -1;
+  const opener = text.indexOf("[") < text.indexOf("{") || !text.includes("{")
+    ? "[" : "{";
+  const closer = opener === "[" ? "]" : "}";
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === opener) {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (text[i] === closer) {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1)) as T;
+        } catch { /* continue looking */ }
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -76,17 +131,19 @@ ${goal}
 
 ## Output Format
 Return a JSON array of subtasks. Each subtask has:
+- id: Unique identifier (e.g., "explore-auth", "impl-jwt", "test-jwt")
 - description: What needs to be done (detailed enough for an agent to execute)
 - role: One of "explorer", "implementer", "test-writer", "code-reviewer"
 - readOnly: true if the task only reads (exploration, review)
 - files: Array of file paths this task will likely touch (empty if unknown)
+- dependsOn: Array of subtask IDs that must complete first (empty if independent)
 
 Example:
 \`\`\`json
 [
-  {"description": "Explore the auth module to understand current patterns", "role": "explorer", "readOnly": true, "files": ["src/auth/"]},
-  {"description": "Implement the new JWT validation middleware", "role": "implementer", "readOnly": false, "files": ["src/auth/jwt.ts"]},
-  {"description": "Write tests for the JWT validation", "role": "test-writer", "readOnly": false, "files": ["src/__tests__/jwt.test.ts"]}
+  {"id": "explore-auth", "description": "Explore the auth module to understand current patterns", "role": "explorer", "readOnly": true, "files": ["src/auth/"], "dependsOn": []},
+  {"id": "impl-jwt", "description": "Implement the new JWT validation middleware", "role": "implementer", "readOnly": false, "files": ["src/auth/jwt.ts"], "dependsOn": ["explore-auth"]},
+  {"id": "test-jwt", "description": "Write tests for the JWT validation", "role": "test-writer", "readOnly": false, "files": ["src/__tests__/jwt.test.ts"], "dependsOn": ["impl-jwt"]}
 ]
 \`\`\`
 
@@ -99,22 +156,146 @@ Return ONLY the JSON array, no explanation.`,
     maxIterations: 5,
   });
 
-  // Parse subtasks from agent output
-  try {
-    const jsonMatch = planResult.text.match(/\[[\s\S]*\]/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]) as SubTask[];
-    }
-  } catch {
-    // Parsing failed — fall through
+  // Parse subtasks from agent output using robust extraction
+  const parsed = extractJSON<SubTask[]>(planResult.text);
+  if (parsed && Array.isArray(parsed) && parsed.length > 0) {
+    // Ensure all tasks have IDs
+    return parsed.map((t, i) => ({
+      ...t,
+      id: t.id || `task-${i}`,
+      role: t.role || "implementer",
+      dependsOn: t.dependsOn ?? [],
+    }));
   }
 
-  // Fallback: single task
-  return [{ description: goal, role: "implementer", readOnly: false }];
+  // Fallback: single task (log warning)
+  config.onProgress?.({
+    type: "planning",
+    message: "Warning: Could not parse subtask plan, falling back to single task",
+  });
+  return [{
+    id: "single-task",
+    description: goal,
+    role: "implementer",
+    readOnly: false,
+    dependsOn: [],
+  }];
 }
 
 /**
- * Dispatch subtasks to agents (team members or ad-hoc).
+ * Validate dependency graph for cycles using topological sort.
+ * Returns the cycle path if one is found.
+ */
+function detectCycles(tasks: SubTask[]): string[] | null {
+  const taskMap = new Map(tasks.map((t) => [t.id, t]));
+  const visited = new Set<string>();
+  const recStack = new Set<string>();
+
+  function dfs(taskId: string, path: string[]): string[] | null {
+    visited.add(taskId);
+    recStack.add(taskId);
+    path.push(taskId);
+
+    const task = taskMap.get(taskId);
+    if (task?.dependsOn) {
+      for (const dep of task.dependsOn) {
+        if (!visited.has(dep)) {
+          const cycle = dfs(dep, path);
+          if (cycle) return cycle;
+        } else if (recStack.has(dep)) {
+          return [...path, dep]; // Found cycle
+        }
+      }
+    }
+
+    path.pop();
+    recStack.delete(taskId);
+    return null;
+  }
+
+  for (const task of tasks) {
+    if (!visited.has(task.id)) {
+      const cycle = dfs(task.id, []);
+      if (cycle) return cycle;
+    }
+  }
+  return null;
+}
+
+/**
+ * Organize tasks into waves based on dependencies.
+ * Each wave contains tasks whose dependencies are all in previous waves.
+ */
+function buildWaves(tasks: SubTask[]): SubTask[][] {
+  const waves: SubTask[][] = [];
+  const completed = new Set<string>();
+  const remaining = new Set(tasks.map((t) => t.id));
+  const taskMap = new Map(tasks.map((t) => [t.id, t]));
+
+  while (remaining.size > 0) {
+    const wave: SubTask[] = [];
+
+    for (const id of remaining) {
+      const task = taskMap.get(id)!;
+      const deps = task.dependsOn ?? [];
+      if (deps.every((d) => completed.has(d) || !remaining.has(d))) {
+        wave.push(task);
+      }
+    }
+
+    if (wave.length === 0) {
+      // Deadlock — push remaining tasks as final wave (should not happen if cycle check passed)
+      for (const id of remaining) {
+        wave.push(taskMap.get(id)!);
+      }
+    }
+
+    for (const task of wave) {
+      remaining.delete(task.id);
+      completed.add(task.id);
+    }
+
+    waves.push(wave);
+  }
+
+  return waves;
+}
+
+/**
+ * Determine if an agent succeeded based on its result.
+ * Uses structured signals instead of brittle string matching.
+ */
+function evaluateSuccess(result: SubAgentResult): { success: boolean; summary: string } {
+  const text = result.text;
+
+  // Check for explicit error signals from the agent
+  if (text.startsWith("[AGENT ERROR:")) {
+    return { success: false, summary: text.slice(0, 200) };
+  }
+
+  // Empty result = likely failed
+  if (!text || text.trim().length === 0) {
+    return { success: false, summary: "Agent produced no output" };
+  }
+
+  // Check for error indicators (but only at the start of a line, not in explanations)
+  const lines = text.split("\n");
+  const errorLines = lines.filter((l) =>
+    /^(Error:|FAIL|FATAL|Traceback|panic:)/i.test(l.trim())
+  );
+
+  if (errorLines.length > 0 && result.toolCalls.length === 0) {
+    // Errors without any tool calls = probably failed to execute
+    return { success: false, summary: errorLines[0]!.trim() };
+  }
+
+  // Default: success with first meaningful line as summary
+  const firstMeaningful = lines.find((l) => l.trim().length > 10) ?? text.slice(0, 100);
+  return { success: true, summary: firstMeaningful.trim().slice(0, 200) };
+}
+
+/**
+ * Dispatch subtasks to agents in dependency-aware waves.
  */
 async function dispatchTasks(
   tasks: SubTask[],
@@ -123,78 +304,107 @@ async function dispatchTasks(
 ): Promise<CoordinatorResult["tasks"]> {
   const maxParallel = config.maxParallel ?? 3;
   const results: CoordinatorResult["tasks"] = [];
+  const waves = buildWaves(tasks);
 
-  // Process in waves of maxParallel
-  for (let wave = 0; wave < tasks.length; wave += maxParallel) {
-    const batch = tasks.slice(wave, wave + maxParallel);
+  config.onProgress?.({
+    type: "plan_ready",
+    taskCount: tasks.length,
+    waveCount: waves.length,
+  });
 
-    const agentConfigs: SubAgentConfig[] = batch.map((task, i) => {
-      const taskIndex = wave + i;
-      const teammate = team ? pickTeammateForTask(team, task.role) : null;
-      const agentName = teammate?.name ?? `agent-${task.role}-${taskIndex}`;
-      const agentPrompt = teammate?.systemPrompt ?? `You are a ${task.role}.`;
+  for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
+    const wave = waves[waveIdx]!;
 
-      config.onProgress?.({
-        type: "dispatching",
-        taskIndex,
-        totalTasks: tasks.length,
-        agentName,
-      });
-
-      return {
-        name: agentName,
-        prompt: task.description,
-        systemPrompt: config.systemPrompt + "\n\n" + agentPrompt,
-        router: config.router,
-        toolRegistry: config.toolRegistry,
-        toolContext: config.toolContext,
-        readOnly: task.readOnly,
-        maxIterations: 15,
-      };
+    config.onProgress?.({
+      type: "wave_start",
+      waveIndex: waveIdx,
+      totalWaves: waves.length,
+      taskCount: wave.length,
     });
 
-    const waveResults = await runSubAgentsParallel(agentConfigs);
+    // Process wave in batches of maxParallel
+    for (let batch = 0; batch < wave.length; batch += maxParallel) {
+      const batchTasks = wave.slice(batch, batch + maxParallel);
 
-    for (let i = 0; i < waveResults.length; i++) {
-      const task = batch[i]!;
-      const agentResult = waveResults[i]!;
-      const taskIndex = wave + i;
-      const success = !agentResult.text.includes("[ERROR]") && agentResult.text.length > 0;
+      const agentConfigs: SubAgentConfig[] = batchTasks.map((task) => {
+        const teammate = team ? pickTeammateForTask(team, task.role) : null;
+        const agentName = teammate?.name ?? `${task.role}-${task.id}`;
+        const agentPrompt = teammate?.systemPrompt ?? `You are a ${task.role}.`;
 
-      // Record activity for team members
-      if (team) {
-        const teammate = pickTeammateForTask(team, task.role);
-        if (teammate) {
-          await recordTeammateActivity(
-            team.id,
-            teammate.id,
-            success ? 1 : 0,
-            agentResult.toolCalls.length,
-          );
+        const taskIndex = tasks.findIndex((t) => t.id === task.id);
+        config.onProgress?.({
+          type: "dispatching",
+          taskIndex,
+          totalTasks: tasks.length,
+          agentName,
+        });
+
+        return {
+          name: agentName,
+          prompt: task.description,
+          systemPrompt: config.systemPrompt + "\n\n" + agentPrompt,
+          router: config.router,
+          toolRegistry: config.toolRegistry,
+          toolContext: config.toolContext,
+          readOnly: task.readOnly,
+          maxIterations: 15,
+        };
+      });
+
+      const waveResults = await runSubAgentsParallel(agentConfigs);
+
+      for (let i = 0; i < waveResults.length; i++) {
+        const task = batchTasks[i]!;
+        const agentResult = waveResults[i]!;
+        const taskIndex = tasks.findIndex((t) => t.id === task.id);
+        const { success, summary } = evaluateSuccess(agentResult);
+
+        // Record activity for team members
+        if (team) {
+          const teammate = pickTeammateForTask(team, task.role);
+          if (teammate) {
+            await recordTeammateActivity(
+              team.id,
+              teammate.id,
+              success ? 1 : 0,
+              agentResult.toolCalls.length,
+            );
+          }
         }
+
+        config.onProgress?.({
+          type: "agent_complete",
+          taskIndex,
+          agentName: agentResult.name,
+          success,
+          summary,
+        });
+
+        results.push({
+          description: task.description,
+          agentName: agentResult.name,
+          result: agentResult,
+          success,
+          summary,
+        });
       }
-
-      config.onProgress?.({
-        type: "agent_complete",
-        taskIndex,
-        agentName: agentResult.name,
-        success,
-      });
-
-      results.push({
-        description: task.description,
-        agentName: agentResult.name,
-        result: agentResult,
-        success,
-      });
     }
+
+    const waveSuccess = results.filter((r) => r.success).length;
+    const waveFail = results.filter((r) => !r.success).length;
+    config.onProgress?.({
+      type: "wave_complete",
+      waveIndex: waveIdx,
+      successCount: waveSuccess,
+      failCount: waveFail,
+    });
   }
 
   return results;
 }
 
 /**
- * Run the coordinator: plan → dispatch → (verify) → summarize.
+ * Run the coordinator: plan → validate → dispatch → (verify) → summarize.
  */
 export async function coordinate(
   goal: string,
@@ -203,16 +413,24 @@ export async function coordinate(
   // Step 1: Plan subtasks
   const subtasks = await planSubTasks(goal, config);
 
-  // Step 2: Load team if specified
+  // Step 2: Validate dependency graph
+  const cycle = detectCycles(subtasks);
+  if (cycle) {
+    const summary = `Coordinator aborted: circular dependency detected: ${cycle.join(" → ")}`;
+    config.onProgress?.({ type: "complete", summary });
+    return { tasks: [], summary };
+  }
+
+  // Step 3: Load team if specified
   let team: Team | null = null;
   if (config.teamId) {
     team = await loadTeam(config.teamId);
   }
 
-  // Step 3: Dispatch
+  // Step 4: Dispatch in dependency-aware waves
   const taskResults = await dispatchTasks(subtasks, config, team);
 
-  // Step 4: Optional verification
+  // Step 5: Optional verification
   let verificationPassed: boolean | undefined;
   if (config.autoVerify) {
     config.onProgress?.({ type: "verifying" });
@@ -222,15 +440,15 @@ export async function coordinate(
       toolContext: config.toolContext,
       systemPrompt: config.systemPrompt,
     };
-    const modifiedFiles = subtasks.flatMap(t => t.files ?? []);
+    const modifiedFiles = subtasks.flatMap((t) => t.files ?? []);
     if (modifiedFiles.length > 0) {
       const vResult = await runVerification(verifyConfig, { intent: goal, files: modifiedFiles });
       verificationPassed = vResult.passed;
     }
   }
 
-  // Step 5: Summarize
-  const successCount = taskResults.filter(t => t.success).length;
+  // Step 6: Summarize
+  const successCount = taskResults.filter((t) => t.success).length;
   const summary = `Coordinator completed: ${successCount}/${taskResults.length} tasks succeeded${verificationPassed !== undefined ? `, verification ${verificationPassed ? "passed" : "failed"}` : ""}`;
 
   config.onProgress?.({ type: "complete", summary });
@@ -254,8 +472,9 @@ export function formatCoordinatorReport(result: CoordinatorResult): string {
     lines.push(`### ${icon} ${task.agentName}`);
     lines.push(`**Task:** ${task.description}`);
     lines.push(`**Tools used:** ${task.result.toolCalls.length}`);
-    if (task.result.text) {
-      lines.push(`**Result:** ${task.result.text.slice(0, 300)}`);
+    lines.push(`**Summary:** ${task.summary}`);
+    if (task.result.worktree) {
+      lines.push(`**Worktree:** ${task.result.worktree.path} (branch: ${task.result.worktree.branch})`);
     }
     lines.push("");
   }

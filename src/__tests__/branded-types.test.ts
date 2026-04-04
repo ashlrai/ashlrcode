@@ -9,25 +9,25 @@ import {
 describe("Branded Types", () => {
   test("asSystemPrompt returns the string", () => {
     const result = asSystemPrompt("You are a helpful assistant.");
-    expect(result).toBe("You are a helpful assistant.");
+    expect(result as string).toBe("You are a helpful assistant.");
     expect(typeof result).toBe("string");
   });
 
   test("asSessionId returns the string", () => {
     const result = asSessionId("sess-abc-123");
-    expect(result).toBe("sess-abc-123");
+    expect(result as string).toBe("sess-abc-123");
     expect(typeof result).toBe("string");
   });
 
   test("asAgentId returns the string", () => {
     const result = asAgentId("agent-007");
-    expect(result).toBe("agent-007");
+    expect(result as string).toBe("agent-007");
     expect(typeof result).toBe("string");
   });
 
   test("asToolName returns the string", () => {
     const result = asToolName("Bash");
-    expect(result).toBe("Bash");
+    expect(result as string).toBe("Bash");
     expect(typeof result).toBe("string");
   });
 

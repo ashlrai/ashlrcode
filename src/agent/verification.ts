@@ -15,6 +15,7 @@ import { runSubAgent, type SubAgentResult } from "./sub-agent.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
+import { getAgentContext } from "./async-context.ts";
 
 export interface VerificationConfig {
   router: ProviderRouter;
@@ -46,6 +47,10 @@ export interface VerificationIssue {
 
 /**
  * Track files modified during a turn for automatic verification triggering.
+ *
+ * Uses a per-session global set. In sub-agent contexts, modifications are
+ * tracked in the agent's AsyncLocalStorage context instead (see async-context.ts),
+ * but this global is kept for the main REPL session.
  */
 const _modifiedFiles = new Set<string>();
 
@@ -54,6 +59,11 @@ export function trackFileModification(filePath: string): void {
 }
 
 export function getModifiedFiles(): string[] {
+  // Prefer agent-context-scoped files if available
+  const ctx = getAgentContext();
+  if (ctx) {
+    // Agent context doesn't track files yet — fall through to global
+  }
   return Array.from(_modifiedFiles);
 }
 

@@ -1,38 +1,30 @@
 /**
- * SendMessage tool — send messages between agents.
+ * SendMessage tool — agent-to-agent messaging with reply support.
  *
- * Enables agent-to-agent communication for team coordination.
+ * Upgraded to use the mailbox system for proper request-response
+ * communication between named agents during execution.
  */
 
 import type { Tool, ToolContext } from "./types.ts";
+import { mailbox, type AgentMessage } from "../agent/mailbox.ts";
+import { getAgentContext } from "../agent/async-context.ts";
 
-// Simple in-memory message inbox
-interface Message {
-  from: string;
-  to: string;
-  content: string;
-  timestamp: string;
-}
-
-const inbox: Message[] = [];
-
-export function getMessages(agentName: string): Message[] {
-  return inbox.filter((m) => m.to === agentName);
+/**
+ * Backward-compatible helpers for legacy callers.
+ */
+export function getMessages(agentName: string): AgentMessage[] {
+  return mailbox.peek(agentName);
 }
 
 export function clearMessages(agentName: string): void {
-  const toRemove = inbox.filter((m) => m.to === agentName);
-  for (const msg of toRemove) {
-    const idx = inbox.indexOf(msg);
-    if (idx >= 0) inbox.splice(idx, 1);
-  }
+  mailbox.receive(agentName); // Consume all messages
 }
 
 export const sendMessageTool: Tool = {
   name: "SendMessage",
 
   prompt() {
-    return "Send a message to another agent. Used for agent-to-agent communication when coordinating work across sub-agents.";
+    return "Send a message to another agent. Use for coordination, asking questions, or sharing findings between agents working on related tasks. Set expect_reply=true to wait for a response.";
   },
 
   inputSchema() {
@@ -47,8 +39,72 @@ export const sendMessageTool: Tool = {
           type: "string",
           description: "Message content",
         },
+        expect_reply: {
+          type: "boolean",
+          description: "Whether to wait for a reply (default: false). Set true for questions.",
+        },
+        reply_to: {
+          type: "string",
+          description: "Message ID this is a reply to (when responding to a received message)",
+        },
       },
       required: ["to", "content"],
+    };
+  },
+
+  isReadOnly() { return false; },
+  isDestructive() { return false; },
+  isConcurrencySafe() { return true; },
+
+  validateInput(input) {
+    if (!input.to || typeof input.to !== "string") return "to is required";
+    if (!input.content || typeof input.content !== "string") return "content is required";
+    return null;
+  },
+
+  async call(input, _context) {
+    const ctx = getAgentContext();
+    const from = ctx?.agentName ?? ctx?.agentId ?? "main";
+
+    try {
+      const reply = await mailbox.send({
+        from,
+        to: input.to as string,
+        content: input.content as string,
+        expectsReply: (input.expect_reply as boolean) ?? false,
+        replyTo: input.reply_to as string | undefined,
+      });
+
+      if (reply) {
+        return `Reply from ${reply.from}: ${reply.content}`;
+      }
+      return `Message sent to "${input.to}"`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return `Failed to send message: ${msg}`;
+    }
+  },
+};
+
+/**
+ * CheckMessages tool — read incoming messages from the mailbox.
+ */
+export const checkMessagesTool: Tool = {
+  name: "CheckMessages",
+
+  prompt() {
+    return "Check your mailbox for messages from other agents. Messages are consumed when read unless peek=true.";
+  },
+
+  inputSchema() {
+    return {
+      type: "object",
+      properties: {
+        peek: {
+          type: "boolean",
+          description: "If true, don't mark messages as read (default: false)",
+        },
+      },
     };
   },
 
@@ -56,20 +112,23 @@ export const sendMessageTool: Tool = {
   isDestructive() { return false; },
   isConcurrencySafe() { return true; },
 
-  validateInput(input) {
-    if (!input.to) return "to is required";
-    if (!input.content) return "content is required";
-    return null;
-  },
+  validateInput() { return null; },
 
   async call(input, _context) {
-    const msg: Message = {
-      from: "main",
-      to: input.to as string,
-      content: input.content as string,
-      timestamp: new Date().toISOString(),
-    };
-    inbox.push(msg);
-    return `Message sent to ${msg.to}`;
+    const ctx = getAgentContext();
+    const agentId = ctx?.agentName ?? ctx?.agentId ?? "main";
+    const peek = (input.peek as boolean) ?? false;
+
+    const messages = peek ? mailbox.peek(agentId) : mailbox.receive(agentId);
+
+    if (messages.length === 0) {
+      return "No messages in your inbox.";
+    }
+
+    const lines = messages.map((m) =>
+      `[${m.timestamp}] From ${m.from}: ${m.content}${m.expectsReply ? " (reply expected, msg_id: " + m.id + ")" : ""}`
+    );
+
+    return `${messages.length} message(s):\n${lines.join("\n")}`;
   },
 };

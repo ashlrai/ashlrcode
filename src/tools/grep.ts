@@ -100,11 +100,12 @@ async function runRipgrep(
   }
 
   rgArgs.push("--max-count", "250", "--no-heading");
-  rgArgs.push(pattern, searchPath);
+  rgArgs.push("--", pattern, searchPath);
 
-  // Use bash -c to resolve shell functions/aliases for rg
-  const cmd = `rg ${rgArgs.map(shellEscape).join(" ")}`;
-  const proc = Bun.spawn(["bash", "-c", cmd], {
+  // Spawn rg directly (no shell) to eliminate command injection risk.
+  // Previous approach used bash -c with shell escaping, but direct
+  // argv-style invocation is inherently safe.
+  const proc = Bun.spawn(["rg", ...rgArgs], {
     cwd: context.cwd,
     stdout: "pipe",
     stderr: "pipe",

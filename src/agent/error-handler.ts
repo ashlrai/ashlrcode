@@ -1,11 +1,16 @@
 /**
- * Error handler — categorized errors.
+ * Error handler — categorized errors with ring-buffer logging.
  *
  * This module provides error categorization. For retry logic, use
  * withRetry/withStreamRetry from ../providers/retry.ts instead.
  * The retryWithBackoff function here is kept for backward compatibility
  * but delegates to the shared sleep utility.
+ *
+ * All categorized errors are automatically logged to a bounded ring buffer
+ * (1000 entries max) so long sessions don't accumulate unbounded error state.
  */
+
+import { logError } from "../utils/ring-buffer.ts";
 
 export type ErrorCategory = "rate_limit" | "network" | "auth" | "validation" | "tool_failure" | "server" | "unknown";
 
@@ -34,58 +39,57 @@ export function extractRetryAfter(message: string): number | null {
  * Categorize an error for appropriate handling.
  * Used by both this module and providers/retry.ts.
  */
-export function categorizeError(error: Error | string): CategorizedError {
+export function categorizeError(error: Error | string, context?: string): CategorizedError {
   const message = typeof error === "string" ? error : error.message;
   const msg = message.toLowerCase();
 
+  let result: CategorizedError;
+
   if (msg.includes("429") || msg.includes("rate_limit") || msg.includes("quota") || msg.includes("too many requests")) {
-    return {
+    result = {
       category: "rate_limit",
       message: "Rate limited by provider",
       retryable: true,
       retryAfterMs: extractRetryAfter(message) ?? 5000,
     };
-  }
-
-  if (msg.includes("401") || msg.includes("403") || msg.includes("unauthorized") || msg.includes("forbidden") || msg.includes("invalid api key")) {
-    return {
+  } else if (msg.includes("401") || msg.includes("403") || msg.includes("unauthorized") || msg.includes("forbidden") || msg.includes("invalid api key")) {
+    result = {
       category: "auth",
       message: "Authentication failed — check your API key",
       retryable: false,
     };
-  }
-
-  if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("timeout") || msg.includes("network") || msg.includes("fetch failed") || msg.includes("socket")) {
-    return {
+  } else if (msg.includes("econnrefused") || msg.includes("enotfound") || msg.includes("timeout") || msg.includes("network") || msg.includes("fetch failed") || msg.includes("socket")) {
+    result = {
       category: "network",
       message: "Network error — check your connection",
       retryable: true,
       retryAfterMs: 2000,
     };
-  }
-
-  if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("529") || msg.includes("internal server error") || msg.includes("bad gateway") || msg.includes("service unavailable") || msg.includes("overloaded")) {
-    return {
+  } else if (msg.includes("500") || msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("529") || msg.includes("internal server error") || msg.includes("bad gateway") || msg.includes("service unavailable") || msg.includes("overloaded")) {
+    result = {
       category: "server",
       message: "Server error — provider may be experiencing issues",
       retryable: true,
       retryAfterMs: 3000,
     };
-  }
-
-  if (msg.includes("validation") || msg.includes("invalid") || msg.includes("schema")) {
-    return {
+  } else if (msg.includes("validation") || msg.includes("invalid") || msg.includes("schema")) {
+    result = {
       category: "validation",
+      message,
+      retryable: false,
+    };
+  } else {
+    result = {
+      category: "unknown",
       message,
       retryable: false,
     };
   }
 
-  return {
-    category: "unknown",
-    message,
-    retryable: false,
-  };
+  // Log to ring buffer for bounded error tracking
+  logError(result.category, result.message, context);
+
+  return result;
 }
 
 /**

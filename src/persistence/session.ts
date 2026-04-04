@@ -13,6 +13,7 @@ import { join } from "path";
 import { randomUUID } from "crypto";
 import { getConfigDir } from "../config/settings.ts";
 import type { Message } from "../providers/types.ts";
+import type { SessionId } from "../types/branded.ts";
 
 export interface SessionMetadata {
   id: string;
@@ -39,6 +40,12 @@ export class Session {
   readonly id: string;
   private filePath: string;
   private metadata: SessionMetadata;
+  /**
+   * Fire-and-forget write queue. Assistant messages are appended via this
+   * queue for low latency — writes are ordered but non-blocking. User messages
+   * bypass this queue and await directly (crash recovery requires durability).
+   */
+  private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(id?: string) {
     this.id = id ?? randomUUID().slice(0, 8);
@@ -65,20 +72,43 @@ export class Session {
     });
   }
 
+  /**
+   * Append a message to the session log.
+   * User messages are written with blocking I/O (crash recovery).
+   * Assistant messages use fire-and-forget with ordering guarantees.
+   */
   async appendMessage(message: Message): Promise<void> {
     this.metadata.messageCount++;
     this.metadata.updatedAt = new Date().toISOString();
-    await this.appendEntry({
+    const entry: SessionEntry = {
       type: "message",
       timestamp: new Date().toISOString(),
       data: message,
-    });
+    };
+
+    if (message.role === "user") {
+      // Blocking write — if we crash, user input is preserved
+      await this.appendEntry(entry);
+    } else {
+      // Fire-and-forget with ordering — chain onto write queue
+      this.writeQueue = this.writeQueue.then(() =>
+        this.appendEntry(entry)
+      ).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[session] Fire-and-forget write failed:", msg);
+      });
+    }
   }
 
   async appendMessages(messages: Message[]): Promise<void> {
     for (const msg of messages) {
       await this.appendMessage(msg);
     }
+  }
+
+  /** Wait for all queued writes to complete (call before exit). */
+  async flush(): Promise<void> {
+    await this.writeQueue;
   }
 
   async insertCompactBoundary(summary: string, messageCountBefore: number): Promise<void> {

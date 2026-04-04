@@ -120,6 +120,7 @@ describe("Session compact boundaries", () => {
     await session.appendMessage({ role: "assistant", content: "answer 1" });
     await session.appendMessage({ role: "user", content: "question 2" });
     await session.appendMessage({ role: "assistant", content: "answer 2" });
+    await session.flush(); // Wait for fire-and-forget writes
 
     const result = await compactSession("compact-session-test");
     expect(result.messagesBefore).toBe(4);

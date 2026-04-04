@@ -64,6 +64,7 @@ describe("Session", () => {
       role: "assistant",
       content: "Hi there!",
     });
+    await session.flush(); // Wait for fire-and-forget writes
 
     const path = join(sessionsDir, `${id}.jsonl`);
     const lines = (await Bun.file(path).text()).trim().split("\n");
@@ -81,6 +82,7 @@ describe("Session", () => {
       role: "assistant",
       content: "answer",
     });
+    await session.flush(); // Wait for fire-and-forget writes
 
     const messages = await session.loadMessages();
     expect(messages).toHaveLength(2);

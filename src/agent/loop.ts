@@ -18,12 +18,14 @@ import type {
   ToolCall,
   ToolDefinition,
 } from "../providers/types.ts";
+import type { SystemPrompt, AgentId } from "../types/branded.ts";
+import { runWithAgentContext, createChildContext, getAgentContext } from "./async-context.ts";
 
 /** Default inactivity timeout for provider streams (5 minutes). */
 const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
 
 export interface AgentConfig {
-  systemPrompt: string;
+  systemPrompt: string | SystemPrompt;
   router: ProviderRouter;
   toolRegistry: ToolRegistry;
   toolContext: ToolContext;
@@ -32,6 +34,12 @@ export interface AgentConfig {
   streamTimeoutMs?: number;
   /** If true, only allow read-only tools (plan mode) */
   readOnly?: boolean;
+  /** Agent identity — used for context isolation in multi-agent scenarios */
+  agentId?: string;
+  /** Parent agent ID — set when this is a sub-agent */
+  parentAgentId?: string;
+  /** Human-readable agent name/role */
+  agentName?: string;
   /** Callback for streaming text to the UI */
   onText?: (text: string) => void;
   /** Callback when a tool is being called */
@@ -96,8 +104,29 @@ async function* withStreamTimeout<T>(
 /**
  * Run the agent loop for a single user turn.
  * Streams responses, executes tools, and loops until the model stops.
+ * When agentId/agentName are provided, runs inside an isolated AsyncLocalStorage
+ * context so parallel sub-agents don't share state.
  */
 export async function runAgentLoop(
+  userMessage: string,
+  history: Message[],
+  config: AgentConfig
+): Promise<AgentResult> {
+  // Wrap in agent context isolation if agent identity is specified
+  if (config.agentId || config.agentName) {
+    const parentCtx = getAgentContext();
+    const childCtx = createChildContext(
+      parentCtx,
+      config.agentName ?? config.agentId ?? "agent",
+      config.toolContext.cwd,
+      config.readOnly ?? false,
+    );
+    return runWithAgentContext(childCtx, () => _runAgentLoop(userMessage, history, config));
+  }
+  return _runAgentLoop(userMessage, history, config);
+}
+
+async function _runAgentLoop(
   userMessage: string,
   history: Message[],
   config: AgentConfig
@@ -190,14 +219,24 @@ export async function runAgentLoop(
  * this lets callers react to each event as it arrives (text deltas, tool
  * invocations, etc.). Useful for streaming UIs and programmatic consumers.
  *
- * The existing runAgentLoop() is intentionally left unchanged so current
- * callers keep working — this is an additive, opt-in API.
+ * Supports agent context isolation via config.agentId/agentName.
  */
 export async function* streamAgentLoop(
   userMessage: string,
   history: Message[],
   config: AgentConfig
 ): AsyncGenerator<AgentEvent> {
+  // Note: AsyncGenerator + AsyncLocalStorage requires the generator body
+  // to run within the context. We set it up here and it propagates to
+  // all awaited calls within the generator.
+  const agentCtx = config.agentId || config.agentName ? {
+    agentId: config.agentId,
+    cwd: config.toolContext.cwd,
+    parentId: config.parentAgentId,
+    name: config.agentName,
+  } : undefined;
+
+  // AsyncLocalStorage context is set up per-iteration below
   const messages: Message[] = [
     ...history,
     { role: "user", content: userMessage },

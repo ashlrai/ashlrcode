@@ -76,7 +76,7 @@ import { loadHooksFromSettings } from "./config/hooks.ts";
 import { fileHistory } from "./state/file-history.ts";
 import { memorySaveTool, memoryListTool, memoryDeleteTool } from "./tools/memory.ts";
 import { notebookEditTool } from "./tools/notebook-edit.ts";
-import { sendMessageTool } from "./tools/send-message.ts";
+import { sendMessageTool, checkMessagesTool } from "./tools/send-message.ts";
 import { sleepTool } from "./tools/sleep.ts";
 import { todoWriteTool } from "./tools/todo-write.ts";
 import { diffTool } from "./tools/diff.ts";
@@ -214,6 +214,7 @@ async function main() {
   registry.register(memoryDeleteTool);
   registry.register(notebookEditTool);
   registry.register(sendMessageTool);
+  registry.register(checkMessagesTool);
   registry.register(sleepTool);
   registry.register(todoWriteTool);
   registry.register(diffTool);
