@@ -52,7 +52,7 @@ import type { Message } from "./providers/types.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import { FileHistoryStore, getFileHistory, setFileHistory } from "./state/file-history.ts";
 import { formatEvents, initTelemetry, logEvent, readRecentEvents } from "./telemetry/event-log.ts";
-import { answerPendingQuestion, hasPendingQuestion } from "./tools/ask-user.ts";
+import { answerPendingQuestion, getPendingOptions, hasPendingQuestion } from "./tools/ask-user.ts";
 import { shutdownLSP } from "./tools/lsp.ts";
 import type { ToolRegistry } from "./tools/registry.ts";
 import type { ToolContext } from "./tools/types.ts";
@@ -283,6 +283,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let currentAbortController: AbortController | null = null;
   const messageQueue: string[] = [];
   let spinnerText = "Thinking";
+  let isUltrathinkTurn = false;
 
   // Unified autopilot state
   let autopilotLoop: AutopilotLoop | null = null;
@@ -324,6 +325,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   const MAX_ITEMS = 2000;
 
   function addOutput(text: string) {
+    // Prevent consecutive empty lines from stacking up (ghost separators)
+    if (text === "" && items.length > 0 && items[items.length - 1]!.text === "") return;
     items = [...items.slice(-MAX_ITEMS), { id: nextId++, text }];
     update();
   }
@@ -434,6 +437,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         ...state.skillRegistry.getAll().map((s) => s.trigger),
       ],
       cwd: state.toolContext.cwd,
+      pendingQuestionOptionCount: hasPendingQuestion() ? getPendingOptions().length : 0,
     };
   }
 
@@ -2231,8 +2235,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     turnCharCount = 0;
     tokenStats = "";
     isProcessing = true;
-    spinnerText = "Thinking";
+    isUltrathinkTurn = input.toLowerCase().includes("ultrathink");
+    spinnerText = isUltrathinkTurn ? "Deep reasoning" : "Thinking";
     update();
+
+    // Ultrathink banner
+    if (isUltrathinkTurn) {
+      const banner = chalk.bold.magentaBright("  ⚡ ULTRATHINK ") + chalk.magenta("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      addOutput(banner);
+      addOutput(chalk.magentaBright("  Deep reasoning enabled — extended thinking budget\n"));
+    }
 
     // Echo — use displayText for smart paste collapse
     const echo = displayText ?? input;
@@ -2425,6 +2437,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         budgetUSD: state.router.costTracker.budgetUSD,
         percentUsed: state.router.costTracker.getBudgetPercent(),
       };
+      const turnDurationMs = Date.now() - turnStartTime;
       addOutput(
         formatTurnSeparator(
           tc,
@@ -2433,6 +2446,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           turnToolCount,
           speculationCache.getStats(),
           budgetInfo,
+          { ultrathink: isUltrathinkTurn, durationMs: turnDurationMs },
         ),
       );
 

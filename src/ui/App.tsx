@@ -105,6 +105,8 @@ interface AppProps {
   tokenStats: string;
   commands: string[];
   cwd: string;
+  /** Number of options in the currently pending AskUser question (0 = no pending question). */
+  pendingQuestionOptionCount?: number;
 }
 
 export function App({
@@ -133,6 +135,7 @@ export function App({
   tokenStats,
   commands,
   cwd,
+  pendingQuestionOptionCount = 0,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
@@ -192,6 +195,18 @@ export function App({
         else if (key.return) keyName = "return";
         else if (key.backspace) keyName = "backspace";
         else if (key.delete) keyName = "delete";
+
+        // When AskUser question is pending, number keys instantly select an option
+        // (without pressing Enter). Only for valid option numbers 1-N, not "Other".
+        if (pendingQuestionOptionCount > 0 && !key.ctrl && !key.shift && !key.meta) {
+          const num = parseInt(ch, 10);
+          if (num >= 1 && num <= pendingQuestionOptionCount) {
+            setInput("");
+            setInputKey((k) => k + 1);
+            onSubmit(String(num));
+            return;
+          }
+        }
 
         const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
 
@@ -275,6 +290,7 @@ export function App({
         onCompact,
         onClearScreen,
         onVoiceToggle,
+        pendingQuestionOptionCount,
       ],
     ),
   );

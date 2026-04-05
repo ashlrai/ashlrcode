@@ -908,7 +908,7 @@ async function handleCommand(
 }
 
 async function runTurn(input: string, state: AppState, printMode = false): Promise<void> {
-  const spinner = printMode ? null : new Spinner("Thinking");
+  const spinner = printMode ? null : new Spinner(input.toLowerCase().includes("ultrathink") ? "Deep reasoning" : "Thinking");
   let firstTextReceived = false;
   let firstThinkingReceived = false;
 
@@ -918,7 +918,10 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     const savedMaxTokens = state.router.currentProvider.config.maxTokens;
     if (isUltrathink) {
       state.router.currentProvider.config.maxTokens = 32768;
-      if (!printMode) console.log(theme.accent("  ⚡ Ultrathink mode — deep reasoning enabled\n"));
+      if (!printMode) {
+        console.log(chalk.bold.magentaBright("  ⚡ ULTRATHINK ") + chalk.magenta("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"));
+        console.log(chalk.magentaBright("  Deep reasoning enabled — extended thinking budget\n"));
+      }
     }
 
     // Check cost budget
@@ -984,9 +987,18 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
         if (!firstThinkingReceived) {
           spinner?.stop();
           firstThinkingReceived = true;
-          process.stdout.write(chalk.dim.italic("\n  \u{1F4AD} Thinking...\n"));
+          if (isUltrathink) {
+            process.stdout.write(chalk.magentaBright.italic("\n  \u{1F4AD} Deep reasoning...\n"));
+          } else {
+            process.stdout.write(chalk.dim.italic("\n  \u{1F4AD} Thinking...\n"));
+          }
         }
-        process.stdout.write(chalk.dim.italic(text));
+        // Ultrathink thinking text is slightly brighter for better visibility
+        if (isUltrathink) {
+          process.stdout.write(chalk.hex("#B0B0B0").italic(text));
+        } else {
+          process.stdout.write(chalk.dim.italic(text));
+        }
       },
       onText: (text) => {
         if (!firstTextReceived) {

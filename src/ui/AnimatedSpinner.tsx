@@ -250,7 +250,8 @@ export function AnimatedSpinner({ text, tokenStats }: Props) {
   const [phraseIdx, setPhraseIdx] = useState(() => Math.floor(Math.random() * THINKING_PHRASES.length));
   const startTimeRef = useRef(Date.now());
   const lastPhraseChangeRef = useRef(Date.now());
-  const isThinking = text === "Thinking" || text === "";
+  const isUltrathink = text === "Deep reasoning";
+  const isThinking = text === "Thinking" || text === "" || isUltrathink;
 
   // Reset elapsed timer when the spinner text changes (new tool, back to thinking)
   useEffect(() => {
@@ -276,7 +277,9 @@ export function AnimatedSpinner({ text, tokenStats }: Props) {
 
   // Pick display text
   let displayText: string;
-  if (isThinking) {
+  if (isUltrathink) {
+    displayText = "Deep reasoning...";
+  } else if (isThinking) {
     displayText = THINKING_PHRASES[phraseIdx % THINKING_PHRASES.length]!;
   } else {
     // Check for tool-specific phrase
@@ -291,10 +294,14 @@ export function AnimatedSpinner({ text, tokenStats }: Props) {
     }
   }
 
+  // Ultrathink mode uses magenta spinner
+  const spinnerColor = isUltrathink ? "magenta" : "cyan";
+  const textColor = isUltrathink ? "#FF80FF" : "#94A3B8";
+
   return (
     <Box>
-      <Text color="cyan" bold>  {spinner}</Text>
-      <Text color="#94A3B8"> {displayText}</Text>
+      <Text color={spinnerColor} bold>  {spinner}</Text>
+      <Text color={textColor}> {displayText}</Text>
       <Text dimColor> {elapsed}s</Text>
       {tokenStats ? <Text dimColor>{"  ·  "}{tokenStats}</Text> : null}
     </Box>

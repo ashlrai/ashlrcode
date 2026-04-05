@@ -31,7 +31,9 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
   }, [value]);
 
   const isSlash = value.startsWith("/");
-  const colorChar = (ch: string) => (isSlash ? chalk.hex(SLASH_COLOR)(ch) : ch);
+  // Only color the slash command name (first word), not arguments after the space
+  const slashCommandEnd = isSlash ? (value.indexOf(" ") === -1 ? value.length : value.indexOf(" ")) : 0;
+  const colorChar = (ch: string, idx: number) => (isSlash && idx < slashCommandEnd ? chalk.hex(SLASH_COLOR)(ch) : ch);
 
   const CONTINUATION_PREFIX = chalk.dim("│ ");
   const hintText = focus && value.length === 0 ? chalk.dim("  Ctrl+J newline · Enter send") : "";
@@ -53,7 +55,7 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
             ? chalk.inverse(NEWLINE_INDICATOR) + "\n" + CONTINUATION_PREFIX
             : NEWLINE_INDICATOR + "\n" + CONTINUATION_PREFIX;
       } else {
-        const colored = colorChar(ch);
+        const colored = colorChar(ch, i);
         rendered += i === cursorOffset ? chalk.inverse(colored) : colored;
       }
     }

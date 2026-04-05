@@ -171,6 +171,9 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   const otherStr = `${options.length + 1} → Other (type your own answer)`;
   lines.push(padLine(chalk.hex("#64748B")(otherStr), otherStr.length));
   lines.push(emptyLine);
+  const hintStr = "Press 1-" + options.length + " to select instantly";
+  lines.push(padLine(chalk.hex("#475569")(hintStr), hintStr.length));
+  lines.push(emptyLine);
   lines.push(bottom, "");
 
   console.log(lines.join("\n"));
@@ -184,7 +187,11 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   const choiceNum = parseInt(answer.trim(), 10);
   if (choiceNum >= 1 && choiceNum <= options.length) {
     const selected = options[choiceNum - 1]!;
+    console.log(chalk.hex("#34D399")(`  ✓ ${selected.label}`) + chalk.hex("#94A3B8")(` — ${selected.description}`));
     return `User selected: "${selected.label}" — ${selected.description}`;
+  }
+  if (!isNaN(choiceNum) && choiceNum === options.length + 1) {
+    console.log(chalk.hex("#94A3B8")(`  ✎ Custom answer requested`));
   }
   return `User's custom answer: "${answer.trim()}"`;
 }

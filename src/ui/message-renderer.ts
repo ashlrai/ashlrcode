@@ -173,8 +173,39 @@ function formatGrepBody(result: string): string[] {
   );
 }
 
+function formatAgentBody(result: string): string[] {
+  const lines = result.split("\n");
+  return truncateLines(
+    lines.map((line) => {
+      // Highlight markdown headers
+      if (line.startsWith("## ")) return chalk.bold(line);
+      if (line.startsWith("### ")) return chalk.bold.dim(line);
+      // Highlight file paths
+      if (line.match(/^\s*[-*]\s+`/)) return theme.tertiary(line);
+      return line;
+    }),
+    25,
+  );
+}
+
 function formatDefaultBody(result: string): string[] {
   return truncateLines(result.split("\n"), 10);
+}
+
+/** Collapse repeated tool names: "Read, Read, Grep, Read" → "Read x3, Grep x1" */
+function collapseToolNames(toolLine: string): string {
+  const prefix = "Tools used: ";
+  const idx = toolLine.indexOf(prefix);
+  if (idx < 0) return toolLine;
+  const names = toolLine.slice(idx + prefix.length).split(",").map((s) => s.trim()).filter(Boolean);
+  const counts = new Map<string, number>();
+  for (const name of names) {
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const collapsed = Array.from(counts.entries())
+    .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
+    .join(", ");
+  return toolLine.slice(0, idx) + prefix + collapsed;
 }
 
 // ── Main formatter ─────────────────────────────────────────────────────────
@@ -211,6 +242,12 @@ export function formatToolExecution(
     case "Grep":
       bodyLines = formatGrepBody(result);
       break;
+    case "Agent": {
+      // Collapse "Tools used:" line in agent results
+      const agentResult = result.replace(/^Tools used: .+$/m, (match) => collapseToolNames(match));
+      bodyLines = formatAgentBody(agentResult);
+      break;
+    }
     default:
       bodyLines = formatDefaultBody(result);
   }
@@ -257,6 +294,7 @@ export function formatTurnSeparator(
   toolCount: number,
   speculationStats?: { hits: number; misses: number },
   budgetInfo?: { budgetUSD: number; percentUsed: number },
+  options?: { ultrathink?: boolean; durationMs?: number },
 ): string {
   // Cost display: show budget % if set, otherwise just cost
   let costStr = `$${cost.toFixed(4)}`;
@@ -266,7 +304,16 @@ export function formatTurnSeparator(
     costStr += ` / $${budgetInfo.budgetUSD.toFixed(2)} ${indicator}${pct}%`;
   }
 
-  const parts = [`turn ${turnNumber}`, costStr];
+  const parts: string[] = [];
+  if (options?.ultrathink) {
+    parts.push("ultrathink");
+  }
+  parts.push(`turn ${turnNumber}`);
+  // Show duration if provided
+  if (options?.durationMs) {
+    parts.push(formatDuration(options.durationMs));
+  }
+  parts.push(costStr);
   if (toolCount > 0) parts.push(`${toolCount} tools`);
   // Show speculation cache performance when active
   if (speculationStats) {
@@ -277,5 +324,11 @@ export function formatTurnSeparator(
     }
   }
   parts.push(buddyName);
+
+  if (options?.ultrathink) {
+    // Ultrathink turns get a magenta-accented separator
+    const inner = parts.join(" · ");
+    return "\n" + chalk.magenta("  ══ ") + chalk.bold.magenta(inner) + chalk.magenta(" ══") + "\n";
+  }
   return theme.muted(`\n  ── ${parts.join(" · ")} ──\n`);
 }

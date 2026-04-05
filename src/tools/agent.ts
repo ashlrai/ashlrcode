@@ -118,9 +118,18 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
       },
     });
 
-    const toolSummary = result.toolCalls.length > 0
-      ? `\n\nTools used: ${result.toolCalls.map((t) => t.name).join(", ")}`
-      : "";
+    // Collapse repeated tool names: "Read, Read, Grep" → "Read x2, Grep x1"
+    let toolSummary = "";
+    if (result.toolCalls.length > 0) {
+      const counts = new Map<string, number>();
+      for (const t of result.toolCalls) {
+        counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
+      }
+      const collapsed = Array.from(counts.entries())
+        .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
+        .join(", ");
+      toolSummary = `\n\nTools used: ${collapsed}`;
+    }
 
     const worktreeInfo = result.worktree
       ? `\n\nWorktree branch: \`${result.worktree.branch}\` at ${result.worktree.path}`
