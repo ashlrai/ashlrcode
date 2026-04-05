@@ -444,6 +444,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       ].filter((cmd, i, arr) => arr.indexOf(cmd) === i),
       cwd: state.toolContext.cwd,
       pendingQuestionOptionCount: hasPendingQuestion() ? getPendingOptions().length : 0,
+      pendingQuestionLabels: hasPendingQuestion() ? getPendingOptions().map(o => o.label) : [],
     };
   }
 

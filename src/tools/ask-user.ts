@@ -153,7 +153,7 @@ The user can always type a custom answer beyond the provided options.`;
 // ---------------------------------------------------------------------------
 
 async function askInInkMode(question: string, options: QuestionOption[]): Promise<string> {
-  const cols = Math.min(process.stdout.columns || 80, 72);
+  const cols = Math.min(process.stdout.columns || 80, Math.max(80, (process.stdout.columns || 80) - 10));
   const BORDER = chalk.hex("#A78BFA"); // violet-400 for questions
   const BORDER_BOLD = chalk.hex("#A78BFA").bold;
   const innerWidth = cols - 4; // 2 for borders, 2 for padding

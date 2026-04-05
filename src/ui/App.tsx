@@ -5,6 +5,7 @@
  * Full-width input box. Status line below.
  */
 
+import chalk from "chalk";
 import { readdirSync } from "fs";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import { basename, dirname, join, resolve } from "path";
@@ -107,6 +108,8 @@ interface AppProps {
   cwd: string;
   /** Number of options in the currently pending AskUser question (0 = no pending question). */
   pendingQuestionOptionCount?: number;
+  /** Labels for the pending question options (for arrow-key selection UI). */
+  pendingQuestionLabels?: string[];
 }
 
 export function App({
@@ -136,10 +139,12 @@ export function App({
   commands,
   cwd,
   pendingQuestionOptionCount = 0,
+  pendingQuestionLabels = [],
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
   const [lastCtrlC, setLastCtrlC] = useState(0); // Track double Ctrl+C for force exit
+  const [selectedOption, setSelectedOption] = useState(0); // Arrow-key selection for questions
   const [termWidth, setTermWidth] = useState(process.stdout.columns || 80);
   const { exit } = useApp();
 
@@ -196,16 +201,33 @@ export function App({
         else if (key.backspace) keyName = "backspace";
         else if (key.delete) keyName = "delete";
 
-        // When AskUser question is pending, number keys instantly select an option
-        // (without pressing Enter). Only for valid option numbers 1-N, not "Other".
-        if (pendingQuestionOptionCount > 0 && !key.ctrl && !key.shift && !key.meta) {
-          const num = parseInt(ch, 10);
-          if (num >= 1 && num <= pendingQuestionOptionCount) {
-            setInput("");
-            setInputKey((k) => k + 1);
-            onSubmit(String(num));
+        // When AskUser question is pending, handle arrow-key selection and number keys
+        if (pendingQuestionOptionCount > 0) {
+          const totalOpts = pendingQuestionOptionCount + 1; // +1 for "Other"
+          if (key.upArrow) {
+            setSelectedOption((s) => (s - 1 + totalOpts) % totalOpts);
             return;
           }
+          if (key.downArrow) {
+            setSelectedOption((s) => (s + 1) % totalOpts);
+            return;
+          }
+          if (key.return) {
+            // Enter selects the currently highlighted option
+            onSubmit(String(selectedOption + 1));
+            setSelectedOption(0);
+            return;
+          }
+          // Number keys for instant selection
+          if (!key.ctrl && !key.shift && !key.meta) {
+            const num = parseInt(ch, 10);
+            if (num >= 1 && num <= totalOpts) {
+              onSubmit(String(num));
+              setSelectedOption(0);
+              return;
+            }
+          }
+          return; // Swallow all other keys when question is pending
         }
 
         const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
@@ -309,28 +331,47 @@ export function App({
       {isProcessing && <AnimatedSpinner text={spinnerText} tokenStats={tokenStats} />}
 
       {/* Input box — full width */}
-      <Text dimColor>{"-".repeat(termWidth)}</Text>
-      <Box>
-        <Text color={modeColor} bold>
-          ❯{" "}
-        </Text>
-        {isProcessing ? (
-          <Text dimColor>waiting for response...</Text>
-        ) : (
-          <Box>
-            <SlashInput
-              key={inputKey}
-              value={input}
-              onChange={setInput}
-              onSubmit={handleSubmit}
-              placeholder="Type a message..."
-            />
-            {suggestion && <Text dimColor>{suggestion.slice(input.length)}</Text>}
-          </Box>
-        )}
-      </Box>
-      {/* Autocomplete hints — only shown when typing a slash command */}
-      {input.startsWith("/") && input.length > 1 && !isProcessing && (
+      <Text dimColor>{"─".repeat(termWidth)}</Text>
+      {pendingQuestionOptionCount > 0 ? (
+        /* Question selection UI — replaces input when a question is pending */
+        <Box flexDirection="column">
+          <Text dimColor>  Use ↑↓ arrows + Enter to select, or press 1-{pendingQuestionOptionCount + 1}:</Text>
+          {pendingQuestionLabels.map((label, i) => (
+            <Text key={i}>
+              {i === selectedOption
+                ? `  ${chalk.cyan.bold("❯")} ${chalk.cyan.bold(`${i + 1}`)} ${chalk.cyan.bold(label)}`
+                : `    ${chalk.dim(`${i + 1}`)} ${label}`}
+            </Text>
+          ))}
+          <Text>
+            {pendingQuestionOptionCount === selectedOption
+              ? `  ${chalk.cyan.bold("❯")} ${chalk.cyan.bold(`${pendingQuestionOptionCount + 1}`)} ${chalk.cyan.bold("Other (type your own)")}`
+              : `    ${chalk.dim(`${pendingQuestionOptionCount + 1}`)} ${chalk.dim("Other (type your own)")}`}
+          </Text>
+        </Box>
+      ) : (
+        <Box>
+          <Text color={modeColor} bold>
+            ❯{" "}
+          </Text>
+          {isProcessing ? (
+            <Text dimColor>waiting for response...</Text>
+          ) : (
+            <Box>
+              <SlashInput
+                key={inputKey}
+                value={input}
+                onChange={setInput}
+                onSubmit={handleSubmit}
+                placeholder="Type a message..."
+              />
+              {suggestion && <Text dimColor>{suggestion.slice(input.length)}</Text>}
+            </Box>
+          )}
+        </Box>
+      )}
+      {/* Autocomplete hints — only shown when typing a slash command and no question pending */}
+      {!pendingQuestionOptionCount && input.startsWith("/") && input.length > 1 && !isProcessing && (
         <Box marginLeft={2}>
           <Text dimColor>
             {commands
@@ -346,7 +387,7 @@ export function App({
           )}
         </Box>
       )}
-      <Text dimColor>{"-".repeat(termWidth)}</Text>
+      <Text dimColor>{"─".repeat(termWidth)}</Text>
 
       {/* Bottom: status left, buddy right */}
       <Box>
