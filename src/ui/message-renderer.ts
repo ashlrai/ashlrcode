@@ -17,8 +17,9 @@ function wrapWithBorder(bodyLines: string[], header?: string, footer?: string): 
   // Top border: ┌─ Header ─────────────────────────────┐
   if (header) {
     const label = ` ${header} `;
-    const remaining = Math.max(0, BOX_WIDTH - label.length - 1);
-    lines.push(theme.border("  ┌─") + theme.borderBright(label) + theme.border("─".repeat(remaining)));
+    const prefixWidth = 4; // "  ┌─"
+    const remaining = Math.max(0, BOX_WIDTH - prefixWidth - label.length - 1); // -1 for ┐
+    lines.push(theme.border("  ┌─") + theme.borderBright(label) + theme.border("─".repeat(remaining) + "┐"));
   }
 
   for (const line of bodyLines) {
@@ -27,7 +28,7 @@ function wrapWithBorder(bodyLines: string[], header?: string, footer?: string): 
 
   // Bottom border: └────────────────────────────────────┘
   const footerSuffix = footer ? `  ${theme.muted(footer)}` : "";
-  lines.push(theme.border("  └" + "─".repeat(Math.max(0, BOX_WIDTH - 1))) + footerSuffix);
+  lines.push(theme.border("  └" + "─".repeat(Math.max(0, BOX_WIDTH - 2)) + "┘") + footerSuffix);
   return lines;
 }
 
@@ -154,13 +155,7 @@ function formatReadBody(result: string, filePath: string): string[] {
 function formatBashBody(result: string, isError: boolean): string[] {
   const lines = result.split("\n");
   if (isError) return truncateLines(lines.map((line) => chalk.hex("#FF1744")(line)));
-  // Apply dim styling to empty lines and subtle highlighting otherwise
-  return truncateLines(
-    lines.map((line) => {
-      if (line.trim() === "") return "";
-      return line;
-    }),
-  );
+  return truncateLines(lines);
 }
 
 function formatGrepBody(result: string): string[] {

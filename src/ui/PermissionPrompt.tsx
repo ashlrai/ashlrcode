@@ -35,47 +35,63 @@ export function PermissionPrompt({ toolName, description }: Props) {
 import chalk from "chalk";
 
 const BORDER_COLOR = chalk.hex("#FBBF24"); // amber-400 (warning/yellow)
-const DIM_BORDER = chalk.hex("#D97706"); // amber-500 (dimmer)
+
+// ── Shared helpers for boxed permission output ──
+
+function permissionCols(): number {
+  return Math.min(process.stdout.columns || 80, 72);
+}
+
+function padLine(cols: number, content: string, rawLen: number): string {
+  const pad = Math.max(0, cols - 2 - 2 - rawLen);
+  return BORDER_COLOR("│") + "  " + content + " ".repeat(pad) + BORDER_COLOR("│");
+}
+
+function emptyLine(cols: number): string {
+  return BORDER_COLOR("│") + " ".repeat(cols - 2) + BORDER_COLOR("│");
+}
+
+function optionLabels(): { allowOnce: string; allowAlways: string; denyOnce: string; denyAlways: string } {
+  return {
+    allowOnce: chalk.green.bold("[Y]") + chalk.green(" Allow once"),
+    allowAlways: chalk.cyan.bold("[A]") + chalk.cyan(" Allow always"),
+    denyOnce: chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once"),
+    denyAlways: chalk.red.bold("[D]") + chalk.red(" Deny always"),
+  };
+}
 
 /**
  * Build a boxed permission prompt string for console output.
  * Adapts width to terminal columns.
  */
 export function formatPermissionBox(toolName: string, description: string): string {
-  const cols = Math.min(process.stdout.columns || 80, 72);
+  const cols = permissionCols();
   const innerW = cols - 4; // account for "│  " + " │"
 
   const titleText = " ⚡ Permission Required ";
+  // +1 because ⚡ is a 2-column wide emoji but .length counts it as 1
+  const titleVisualWidth = titleText.length + 1;
   const topBar =
     BORDER_COLOR("┌─") +
-    chalk.hex("#FBBF24").bold(titleText) +
-    BORDER_COLOR("─".repeat(Math.max(0, cols - 2 - titleText.length - 2)) + "┐");
-  const emptyLine = BORDER_COLOR("│") + " ".repeat(cols - 2) + BORDER_COLOR("│");
+    BORDER_COLOR.bold(titleText) +
+    BORDER_COLOR("─".repeat(Math.max(0, cols - 2 - titleVisualWidth - 2)) + "┐");
+  const empty = emptyLine(cols);
   const bottom = BORDER_COLOR("└" + "─".repeat(cols - 2) + "┘");
-
-  function padLine(content: string, rawLen: number): string {
-    const pad = Math.max(0, cols - 2 - 2 - rawLen);
-    return BORDER_COLOR("│") + "  " + content + " ".repeat(pad) + BORDER_COLOR("│");
-  }
 
   const toolLabel = chalk.hex("#94A3B8")("Tool:   ") + chalk.hex("#F1F5F9").bold(toolName);
   const actionLabel = chalk.hex("#94A3B8")("Action: ") + chalk.hex("#CBD5E1")(truncate(description, innerW - 10));
-
-  const allowOnce = chalk.green.bold("[Y]") + chalk.green(" Allow once");
-  const allowAlways = chalk.cyan.bold("[A]") + chalk.cyan(" Allow always");
-  const denyOnce = chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once");
-  const denyAlways = chalk.red.bold("[D]") + chalk.red(" Deny always");
+  const { allowOnce, allowAlways, denyOnce, denyAlways } = optionLabels();
 
   const lines = [
     "",
     topBar,
-    emptyLine,
-    padLine(toolLabel, 8 + toolName.length),
-    padLine(actionLabel, 8 + Math.min(description.length, innerW - 10)),
-    emptyLine,
-    padLine(allowOnce + "    " + allowAlways, 28),
-    padLine(denyOnce + "     " + denyAlways, 28),
-    emptyLine,
+    empty,
+    padLine(cols, toolLabel, 8 + toolName.length),
+    padLine(cols, actionLabel, 8 + Math.min(description.length, innerW - 10)),
+    empty,
+    padLine(cols, allowOnce + "    " + allowAlways, 28),
+    padLine(cols, denyOnce + "     " + denyAlways, 28),
+    empty,
     bottom,
     "",
   ];
@@ -87,26 +103,17 @@ export function formatPermissionBox(toolName: string, description: string): stri
  * Build a compact options-only reminder for invalid key presses.
  */
 export function formatPermissionOptions(): string {
-  const cols = Math.min(process.stdout.columns || 80, 72);
-  const emptyLine = BORDER_COLOR("│") + " ".repeat(cols - 2) + BORDER_COLOR("│");
-
-  const allowOnce = chalk.green.bold("[Y]") + chalk.green(" Allow once");
-  const allowAlways = chalk.cyan.bold("[A]") + chalk.cyan(" Allow always");
-  const denyOnce = chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once");
-  const denyAlways = chalk.red.bold("[D]") + chalk.red(" Deny always");
-
-  function padLine(content: string, rawLen: number): string {
-    const pad = Math.max(0, cols - 2 - 2 - rawLen);
-    return BORDER_COLOR("│") + "  " + content + " ".repeat(pad) + BORDER_COLOR("│");
-  }
+  const cols = permissionCols();
+  const empty = emptyLine(cols);
+  const { allowOnce, allowAlways, denyOnce, denyAlways } = optionLabels();
 
   const lines = [
     BORDER_COLOR("├" + "─".repeat(cols - 2) + "┤"),
-    padLine(chalk.hex("#FBBF24").bold("  Invalid key. Choose:"), 22),
-    emptyLine,
-    padLine(allowOnce + "    " + allowAlways, 28),
-    padLine(denyOnce + "     " + denyAlways, 28),
-    emptyLine,
+    padLine(cols, BORDER_COLOR.bold("  Invalid key. Choose:"), 22),
+    empty,
+    padLine(cols, allowOnce + "    " + allowAlways, 28),
+    padLine(cols, denyOnce + "     " + denyAlways, 28),
+    empty,
     BORDER_COLOR("└" + "─".repeat(cols - 2) + "┘"),
   ];
 

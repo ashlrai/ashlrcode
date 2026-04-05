@@ -8,6 +8,7 @@
  *      the pending promise via `answerPendingQuestion()`.
  */
 
+import chalk from "chalk";
 import { createInterface } from "readline";
 import { isBypassMode } from "../config/permissions.ts";
 import { theme } from "../ui/theme.ts";
@@ -117,10 +118,13 @@ The user can always type a custom answer beyond the provided options.`;
     const options = input.options as QuestionOption[];
 
     if (isBypassMode()) {
-      return await askInInkMode(question, options);
+      // Auto-accept first option in bypass/automated mode
+      return `Auto-selected: ${options[0]?.label ?? "yes"} (bypass mode)`;
     }
 
-    return await askInCliMode(question, options);
+    // Use Ink-mode rendering if pendingQuestionResolve is wired (REPL active),
+    // otherwise fall back to CLI readline prompt
+    return await askInInkMode(question, options);
   },
 };
 
@@ -129,7 +133,6 @@ The user can always type a custom answer beyond the provided options.`;
 // ---------------------------------------------------------------------------
 
 async function askInInkMode(question: string, options: QuestionOption[]): Promise<string> {
-  const chalk = (await import("chalk")).default;
   const cols = Math.min(process.stdout.columns || 80, 72);
   const BORDER = chalk.hex("#A78BFA"); // violet-400 for questions
   const BORDER_BOLD = chalk.hex("#A78BFA").bold;

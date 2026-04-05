@@ -216,7 +216,7 @@ export function highlightCode(line: string, lang: string): string {
     // Only add if not overlapping with a string token
     const s = match.index;
     const e = match.index + match[0].length;
-    if (!tokens.some((t) => s >= t.start && s < t.end)) {
+    if (!tokens.some((t) => s < t.end && e > t.start)) {
       tokens.push({ start: s, end: e, styled: chalk.hex("#546E7A")(match[0]) });
     }
   }
@@ -251,7 +251,7 @@ export function highlightCode(line: string, lang: string): string {
     while ((match = keywordPattern.exec(line)) !== null) {
       const s = match.index;
       const e = match.index + match[0].length;
-      if (!tokens.some((t) => s >= t.start && s < t.end)) {
+      if (!tokens.some((t) => s < t.end && e > t.start)) {
         tokens.push({
           start: s,
           end: e,
@@ -266,7 +266,7 @@ export function highlightCode(line: string, lang: string): string {
   while ((match = typePattern.exec(line)) !== null) {
     const s = match.index;
     const e = match.index + match[0].length;
-    if (!tokens.some((t) => s >= t.start && s < t.end)) {
+    if (!tokens.some((t) => s < t.end && e > t.start)) {
       tokens.push({
         start: s,
         end: e,
@@ -280,7 +280,7 @@ export function highlightCode(line: string, lang: string): string {
   while ((match = numbers.exec(line)) !== null) {
     const s = match.index;
     const e = match.index + match[0].length;
-    if (!tokens.some((t) => s >= t.start && s < t.end)) {
+    if (!tokens.some((t) => s < t.end && e > t.start)) {
       tokens.push({
         start: s,
         end: e,
