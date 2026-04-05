@@ -31,6 +31,8 @@ import { setSpeculationCache } from "./agent/tool-executor.ts";
 import { WorkQueue } from "./autopilot/queue.ts";
 import { scanCodebase } from "./autopilot/scanner.ts";
 import { DEFAULT_CONFIG } from "./autopilot/types.ts";
+import { createAutopilotLoop, AutopilotLoop } from "./agent/autopilot-loop.ts";
+import { createVision, loadVision, saveVision, type Vision } from "./agent/vision.ts";
 import { getBridgePort, startBridgeServer, stopBridgeServer } from "./bridge/bridge-server.ts";
 import { feature, listFeatures } from "./config/features.ts";
 import {
@@ -281,6 +283,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let currentAbortController: AbortController | null = null;
   const messageQueue: string[] = [];
   let spinnerText = "Thinking";
+
+  // Unified autopilot state
+  let autopilotLoop: AutopilotLoop | null = null;
+  let autopilotRunning = false;
   let tokenStats = "";
   let turnStreamStart = 0;
   let turnOutputTokens = 0;
@@ -396,6 +402,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/autopilot auto",
         "/autopilot approve all",
         "/autopilot run",
+        "/autopilot stop",
+        "/autopilot wrap",
+        "/autopilot resume",
+        "/autopilot reset",
+        "/autopilot focus",
+        "/autopilot vision",
+        "/autopilot history",
         "/features",
         "/keybindings",
         "/kairos",
@@ -445,6 +458,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
       // Unrecognized key — remind user of valid options with boxed display
       addOutput(formatPermissionOptions());
+      return;
+    }
+
+    // Route messages to autopilot if running and not a slash command
+    if (autopilotRunning && autopilotLoop && !input.startsWith("/")) {
+      autopilotLoop.queueUserMessage(input);
+      addOutput(chalk.dim(`  ⏳ Message sent to autopilot: "${input.length > 60 ? input.slice(0, 57) + "..." : input}"`));
+      update();
       return;
     }
 
@@ -635,9 +656,17 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
             `    /plan ${theme.muted(".............")} Enter plan mode (read-only exploration)`,
             `    /commit ${theme.muted("...........")} Create a well-crafted git commit`,
             `    /review ${theme.muted("...........")} Code review for bugs & security`,
-            `    /autopilot ${theme.muted(".........")} Autonomous scan → fix → test → PR`,
+            `    /autopilot ${theme.muted(".........")} Autonomous mode — scan/fix or goal-driven`,
             `    /btw ${theme.muted("...............")} Side question without interrupting flow`,
             `    /cancel ${theme.muted("...........")} List or cancel background operations`,
+            "",
+            theme.accentBold("  Autonomous"),
+            `    /autopilot <vision> ${theme.muted(".")} Start autonomous mode toward a goal`,
+            `    /autopilot stop ${theme.muted(".....")} Graceful stop`,
+            `    /autopilot wrap ${theme.muted(".....")} Finish current, create PR, stop`,
+            `    /autopilot resume ${theme.muted("...")} Resume from existing vision`,
+            `    /autopilot vision ${theme.muted("...")} Show current vision`,
+            `    /autopilot focus X ${theme.muted("...")} Update focus areas`,
             "",
             theme.accentBold("  Session"),
             `    /cost ${theme.muted(".............")} Show token usage and costs`,
@@ -1170,15 +1199,246 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           return true;
         }
 
-        // Help
-        addOutput(theme.accent("\n  🤖 Autopilot — autonomous work discovery\n"));
-        addOutput(theme.secondary("  /autopilot scan         — scan codebase for issues"));
-        addOutput(theme.secondary("  /autopilot queue        — show work queue"));
-        addOutput(theme.secondary("  /autopilot approve all  — approve all discovered items"));
-        addOutput(theme.secondary("  /autopilot run          — execute next approved item"));
-        addOutput(theme.secondary("  /autopilot auto         — FULL AUTO: scan → fix → test → PR → merge"));
-        addOutput(theme.tertiary("\n  Manual: scan → queue → approve → run"));
-        addOutput(theme.tertiary("  Auto:   /autopilot auto (does everything)\n"));
+        // --- Unified autopilot subcommands ---
+
+        if (subCmd === "stop") {
+          if (!autopilotLoop || !autopilotRunning) {
+            addOutput(theme.tertiary("\n  No autopilot running.\n"));
+            return true;
+          }
+          addOutput(theme.warning("\n  ⏹ Stopping autopilot gracefully...\n"));
+          autopilotLoop.stop();
+          autopilotRunning = false;
+          addOutput(theme.success("  Autopilot stopped.\n"));
+          return true;
+        }
+
+        if (subCmd === "wrap") {
+          if (!autopilotLoop || !autopilotRunning) {
+            addOutput(theme.tertiary("\n  No autopilot running.\n"));
+            return true;
+          }
+          addOutput(theme.warning("\n  🎁 Wrapping up autopilot (finishing current item, then PR)...\n"));
+          autopilotLoop.requestWrapUp();
+          return true;
+        }
+
+        if (subCmd === "resume") {
+          const cwd = state.toolContext.cwd;
+          const vPath = join(cwd, ".ashlrcode", "vision.md");
+          if (!existsSync(vPath)) {
+            addOutput(theme.error("\n  No existing vision found. Start with /autopilot <your goal>\n"));
+            return true;
+          }
+          const vision = await loadVision(cwd);
+          if (!vision) {
+            addOutput(theme.error("\n  Failed to load vision file.\n"));
+            return true;
+          }
+          addOutput(theme.accent(`\n  🚀 Resuming autopilot: ${vision.goal}\n`));
+          autopilotLoop = createAutopilotLoop();
+          autopilotRunning = true;
+          autopilotLoop.start(vision, {
+            router: state.router,
+            toolRegistry: state.registry,
+            toolContext: state.toolContext,
+            systemPrompt: state.baseSystemPrompt,
+            onProgress: (event) => {
+              switch (event.type) {
+                case "started": addOutput(theme.accent(`  🚀 Started: ${event.goal}`)); break;
+                case "tick": addOutput(theme.tertiary(`  ⏱ Tick ${event.tickNumber} [${event.phase}]`)); break;
+                case "scanning": addOutput(theme.secondary(`  🔍 ${event.message}`)); break;
+                case "scan_complete": addOutput(theme.success(`  ✓ Scan: ${event.newItems} new, ${event.totalItems} total`)); break;
+                case "executing": addOutput(theme.accent(`  ⚡ ${event.itemDescription}`)); break;
+                case "item_complete": addOutput(event.success ? theme.success(`  ✓ ${event.description}`) : theme.error(`  ✗ ${event.description}: ${event.summary}`)); break;
+                case "wrapping_up": addOutput(theme.warning("  🎁 Wrapping up...")); break;
+                case "stopped": addOutput(theme.accent(`  ═══ ${event.summary}`)); break;
+                case "user_message": addOutput(theme.tertiary(`  📩 ${event.message} → ${event.action}`)); break;
+                case "assessing": addOutput(theme.secondary(`  🔮 ${event.message}`)); break;
+                case "assessment": addOutput(theme.secondary(`  📊 ${event.assessment}`)); break;
+                case "committing": addOutput(theme.tertiary(`  📝 ${event.message}`)); break;
+                case "notification": addOutput(theme.warning(`  🔔 ${event.title}: ${event.body}`)); break;
+              }
+              update();
+            },
+          }).then(() => {
+            autopilotRunning = false;
+            addOutput(theme.success("\n  Autopilot finished.\n"));
+            update();
+          }).catch((err: unknown) => {
+            autopilotRunning = false;
+            addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
+            update();
+          });
+          return true;
+        }
+
+        if (subCmd === "reset") {
+          const cwd = state.toolContext.cwd;
+          const vPath = join(cwd, ".ashlrcode", "vision.md");
+          if (autopilotLoop && autopilotRunning) {
+            autopilotLoop.stop();
+            autopilotRunning = false;
+          }
+          autopilotLoop = null;
+          if (existsSync(vPath)) {
+            const { unlinkSync } = await import("fs");
+            unlinkSync(vPath);
+          }
+          workQueue.cleanup();
+          await workQueue.save();
+          addOutput(theme.success("\n  ✓ Vision and queue cleared.\n"));
+          return true;
+        }
+
+        if (subCmd === "focus") {
+          const focusArea = arg?.split(" ").slice(1).join(" ");
+          if (!focusArea) {
+            addOutput(theme.tertiary("\n  Usage: /autopilot focus <area>\n"));
+            return true;
+          }
+          if (!autopilotLoop || !autopilotRunning) {
+            addOutput(theme.tertiary("\n  No autopilot running. Start with /autopilot <goal>\n"));
+            return true;
+          }
+          // Send focus change as a user message — the loop's drainUserMessages() handles "focus on X"
+          autopilotLoop.queueUserMessage(`focus on ${focusArea}`);
+          addOutput(theme.success(`\n  ✓ Focus update queued: ${focusArea}\n`));
+          return true;
+        }
+
+        if (subCmd === "vision") {
+          const cwd = state.toolContext.cwd;
+          const vPath = join(cwd, ".ashlrcode", "vision.md");
+          if (!existsSync(vPath)) {
+            addOutput(theme.tertiary("\n  No vision set. Start with /autopilot <goal>\n"));
+            return true;
+          }
+          const vision = await loadVision(cwd);
+          if (!vision) {
+            addOutput(theme.error("\n  Failed to load vision.\n"));
+            return true;
+          }
+          addOutput(theme.accent("\n  📋 Autopilot Vision\n"));
+          addOutput(theme.primary(`  Goal: ${vision.goal}`));
+          if (vision.focusAreas && vision.focusAreas.length > 0) {
+            addOutput(theme.secondary(`  Focus: ${vision.focusAreas.join(", ")}`));
+          }
+          if (vision.progress && vision.progress.length > 0) {
+            addOutput(theme.secondary(`\n  Progress (${vision.progress.length} entries):`));
+            for (const entry of vision.progress.slice(-10)) {
+              const date = entry.timestamp.split("T")[0];
+              addOutput(theme.tertiary(`    [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`));
+            }
+          }
+          if (autopilotRunning && autopilotLoop) {
+            const status = autopilotLoop.getStatus();
+            addOutput(theme.success(`\n  Status: RUNNING (tick ${status.tickNumber}, ${status.itemsCompleted} done, ${status.itemsFailed} failed, ${status.duration})`));
+          } else {
+            addOutput(theme.tertiary(`\n  Status: Stopped. /autopilot resume to continue`));
+          }
+          addOutput("");
+          return true;
+        }
+
+        if (subCmd === "history") {
+          const cwd = state.toolContext.cwd;
+          const vPath = join(cwd, ".ashlrcode", "vision.md");
+          if (!existsSync(vPath)) {
+            addOutput(theme.tertiary("\n  No vision history. Start with /autopilot <goal>\n"));
+            return true;
+          }
+          const vision = await loadVision(cwd);
+          if (!vision || !vision.progress || vision.progress.length === 0) {
+            addOutput(theme.tertiary("\n  No progress history yet.\n"));
+            return true;
+          }
+          addOutput(theme.accent("\n  📜 Autopilot History\n"));
+          for (const entry of vision.progress) {
+            const date = entry.timestamp.split("T")[0];
+            addOutput(theme.secondary(`  [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`));
+          }
+          addOutput("");
+          return true;
+        }
+
+        // If arg doesn't match a known subcommand, treat it as a vision goal
+        if (subCmd && !["scan", "queue", "status", "approve", "run", "auto", "stop", "wrap", "resume", "reset", "focus", "vision", "history"].includes(subCmd)) {
+          const visionText = arg!;
+          const cwd = state.toolContext.cwd;
+          const vision = await createVision(cwd, visionText);
+          addOutput(theme.accent(`\n  🚀 Autopilot started: ${vision.goal}\n`));
+          autopilotLoop = createAutopilotLoop();
+          autopilotRunning = true;
+          autopilotLoop.start(vision, {
+            router: state.router,
+            toolRegistry: state.registry,
+            toolContext: state.toolContext,
+            systemPrompt: state.baseSystemPrompt,
+            onProgress: (event) => {
+              switch (event.type) {
+                case "started": addOutput(theme.accent(`  🚀 Started: ${event.goal}`)); break;
+                case "tick": addOutput(theme.tertiary(`  ⏱ Tick ${event.tickNumber} [${event.phase}]`)); break;
+                case "scanning": addOutput(theme.secondary(`  🔍 ${event.message}`)); break;
+                case "scan_complete": addOutput(theme.success(`  ✓ Scan: ${event.newItems} new, ${event.totalItems} total`)); break;
+                case "executing": addOutput(theme.accent(`  ⚡ ${event.itemDescription}`)); break;
+                case "item_complete": addOutput(event.success ? theme.success(`  ✓ ${event.description}`) : theme.error(`  ✗ ${event.description}: ${event.summary}`)); break;
+                case "wrapping_up": addOutput(theme.warning("  🎁 Wrapping up...")); break;
+                case "stopped": addOutput(theme.accent(`  ═══ ${event.summary}`)); break;
+                case "user_message": addOutput(theme.tertiary(`  📩 ${event.message} → ${event.action}`)); break;
+                case "assessing": addOutput(theme.secondary(`  🔮 ${event.message}`)); break;
+                case "assessment": addOutput(theme.secondary(`  📊 ${event.assessment}`)); break;
+                case "committing": addOutput(theme.tertiary(`  📝 ${event.message}`)); break;
+                case "notification": addOutput(theme.warning(`  🔔 ${event.title}: ${event.body}`)); break;
+              }
+              update();
+            },
+          }).then(() => {
+            autopilotRunning = false;
+            addOutput(theme.success("\n  Autopilot finished.\n"));
+            update();
+          }).catch((err: unknown) => {
+            autopilotRunning = false;
+            addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
+            update();
+          });
+          return true;
+        }
+
+        // Help (no args and no autopilot running)
+        if (!autopilotRunning || !autopilotLoop) {
+          addOutput(theme.accent("\n  🤖 Autopilot — autonomous work discovery\n"));
+          addOutput(theme.accentBold("  Unified (goal-driven):"));
+          addOutput(theme.secondary("  /autopilot <vision>     — start autonomous mode toward a goal"));
+          addOutput(theme.secondary("  /autopilot stop         — graceful stop"));
+          addOutput(theme.secondary("  /autopilot wrap         — finish current, create PR, stop"));
+          addOutput(theme.secondary("  /autopilot resume       — resume from existing vision"));
+          addOutput(theme.secondary("  /autopilot vision       — show current vision"));
+          addOutput(theme.secondary("  /autopilot focus <area> — update focus areas mid-run"));
+          addOutput(theme.secondary("  /autopilot history      — show progress log"));
+          addOutput(theme.secondary("  /autopilot reset        — delete vision and clear queue"));
+          addOutput(theme.accentBold("\n  Legacy (scan-based):"));
+          addOutput(theme.secondary("  /autopilot scan         — scan codebase for issues"));
+          addOutput(theme.secondary("  /autopilot queue        — show work queue"));
+          addOutput(theme.secondary("  /autopilot approve all  — approve all discovered items"));
+          addOutput(theme.secondary("  /autopilot run          — execute next approved item"));
+          addOutput(theme.secondary("  /autopilot auto         — FULL AUTO: scan → fix → test → PR → merge"));
+          addOutput("");
+          return true;
+        }
+
+        // No args but autopilot is running — show status
+        const status = autopilotLoop.getStatus();
+        addOutput(theme.accent("\n  🤖 Autopilot Status\n"));
+        addOutput(theme.primary(`  Running: ${status.running ? "yes" : "no"}`));
+        addOutput(theme.secondary(`  Tick: ${status.tickNumber}`));
+        addOutput(theme.secondary(`  Completed: ${status.itemsCompleted} | Failed: ${status.itemsFailed} | Pending: ${status.queuePending}`));
+        addOutput(theme.secondary(`  Duration: ${status.duration}`));
+        addOutput(theme.secondary(`  Focus: ${status.focusState}`));
+        if (status.wrapUpRequested) {
+          addOutput(theme.warning(`  Wrap-up requested`));
+        }
+        addOutput(theme.tertiary(`\n  /autopilot stop — stop | /autopilot wrap — finish & PR\n`));
         return true;
       }
 

@@ -467,6 +467,12 @@ async function main() {
     } else {
       console.log(theme.tertiary(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to interrupt/exit.\n`));
     }
+
+    // Check for existing vision
+    const visionPath = join(cwd, ".ashlrcode", "vision.md");
+    if (existsSync(visionPath)) {
+      console.log(chalk.cyan(`  📋 Vision detected. Resume with /autopilot resume\n`));
+    }
   }
 
   // Graceful Ctrl+C — only for non-interactive paths (--print, single-shot)
