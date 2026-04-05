@@ -5,7 +5,7 @@
  * Full-width input box. Status line below.
  */
 
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
 import { SlashInput } from "./SlashInput.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
@@ -32,6 +32,7 @@ interface AppProps {
   contextPercent: number;
   contextUsed: string;
   contextLimit: string;
+  modelName: string;
   buddy: BuddyData;
   buddyQuip: string;
   buddyQuipType: "quip" | "suggestion" | "reaction";
@@ -45,15 +46,21 @@ interface AppProps {
 export function App({
   onSubmit, onExit, onInterrupt, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle,
   inputHistory, mode, modeColor,
-  contextPercent, contextUsed, contextLimit,
+  contextPercent, contextUsed, contextLimit, modelName,
   buddy, buddyQuip, buddyQuipType,
   items, isProcessing, spinnerText, tokenStats, commands,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
   const [lastCtrlC, setLastCtrlC] = useState(0); // Track double Ctrl+C for force exit
+  const [termWidth, setTermWidth] = useState(process.stdout.columns || 80);
   const { exit } = useApp();
-  const w = process.stdout.columns || 80;
+
+  useEffect(() => {
+    const handler = () => setTermWidth(process.stdout.columns || 80);
+    process.stdout.on('resize', handler);
+    return () => { process.stdout.off('resize', handler); };
+  }, []);
 
   const suggestion = input.startsWith("/") && input.length > 1
     ? commands.find(c => c.startsWith(input) && c !== input)
@@ -150,7 +157,7 @@ export function App({
       {isProcessing && <AnimatedSpinner text={spinnerText} tokenStats={tokenStats} />}
 
       {/* Input box — full width */}
-      <Text dimColor>{"-".repeat(w)}</Text>
+      <Text dimColor>{"-".repeat(termWidth)}</Text>
       <Box>
         <Text color={modeColor} bold>❯ </Text>
         {isProcessing ? (
@@ -175,7 +182,7 @@ export function App({
           {suggestion && <Text dimColor italic>  tab ↹</Text>}
         </Box>
       )}
-      <Text dimColor>{"-".repeat(w)}</Text>
+      <Text dimColor>{"-".repeat(termWidth)}</Text>
 
       {/* Bottom: status left, buddy right */}
       <Box>
@@ -183,7 +190,9 @@ export function App({
           <Text color={modeColor} bold>❯❯ </Text>
           <Text color={modeColor}>{mode}</Text>
           <Text dimColor> (shift+tab)</Text>
-          <Text dimColor>{"      ·      "}</Text>
+          <Text dimColor>{"  ·  "}</Text>
+          <Text dimColor>{modelName}</Text>
+          <Text dimColor>{"  ·  "}</Text>
           <Text color={ctxColor}>{"█".repeat(filled)}</Text>
           <Text dimColor>{"░".repeat(empty)}</Text>
           <Text> </Text>

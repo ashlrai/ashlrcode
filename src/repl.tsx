@@ -17,7 +17,7 @@ import { resetMarkdown, renderMarkdownDelta, flushMarkdown } from "./ui/markdown
 import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
-import { categorizeError } from "./agent/error-handler.ts";
+import { categorizeError, type ErrorCategory } from "./agent/error-handler.ts";
 import { theme } from "./ui/theme.ts";
 import { getRemoteSettings, stopPolling as stopRemotePolling } from "./config/remote-settings.ts";
 import { exportSettings, importSettings, getSyncStatus } from "./config/settings-sync.ts";
@@ -92,6 +92,17 @@ interface ReplState {
   buddy: BuddyData;
 }
 
+/** Recovery hints shown below error messages to help users recover. */
+const ERROR_RECOVERY_HINTS: Record<ErrorCategory, string> = {
+  rate_limit: "Hint: Wait a moment or switch providers with /model",
+  auth: "Hint: Check your API key. Run the setup wizard with /config or set XAI_API_KEY",
+  network: "Hint: Check your internet connection. The agent will auto-retry.",
+  tool_failure: "Hint: Try /undo to revert the last change",
+  server: "Hint: Provider may be down. Try /model to switch providers",
+  validation: "Hint: Check the input format and try again",
+  unknown: "",
+};
+
 export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // We need addOutput before overriding requestPermission, but addOutput is
   // defined later. Use a deferred wrapper that gets patched after addOutput exists.
@@ -158,6 +169,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // KAIROS autonomous mode — lazy-initialized when /kairos is used
   let kairos: KairosLoop | null = null;
   let productAgent: import("./agent/product-agent.ts").ProductAgent | null = null;
+
+  // Background operation tracking — allows /cancel to list and stop active ops
+  const backgroundOps = new Map<string, { name: string; startedAt: number; cancel: () => void }>();
 
   // Cron trigger runner — background polling for due triggers
   // Uses deferred callback since runTurnInk is defined later
@@ -228,6 +242,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let cachedQuip = getQuip(state.buddy.mood); // Cache quip — don't regenerate on every render
   let lastToolName = "";
   let lastToolResult = "";
+  let lastFullToolOutput: string | null = null;
   let lastHadError = false;
   let toolStartTime = 0;
   let turnToolCount = 0;
@@ -304,6 +319,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       contextPercent: ctxPct,
       contextUsed: formatTk(ctxUsed),
       contextLimit: formatTk(ctxLimit),
+      modelName: state.router.currentProvider.config.model.replace(/^(models\/|accounts\/[^/]+\/models\/)/, ""),
       buddy: state.buddy,
       buddyQuip: cachedQuip,
       buddyQuipType: currentQuipType,
@@ -312,7 +328,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       spinnerText,
       tokenStats,
       commands: [
-        "/help", "/cost", "/status", "/effort", "/btw", "/history", "/undo",
+        "/help", "/cost", "/status", "/effort", "/btw", "/cancel", "/history", "/undo", "/expand",
         "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
         "/model", "/compact", "/diff", "/git", "/clear", "/quit", "/bug", "/version",
         "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
@@ -481,6 +497,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           `    /review ${theme.muted("...........")} Code review for bugs & security`,
           `    /autopilot ${theme.muted(".........")} Autonomous scan → fix → test → PR`,
           `    /btw ${theme.muted("...............")} Side question without interrupting flow`,
+          `    /cancel ${theme.muted("...........")} List or cancel background operations`,
           "",
           theme.accentBold("  Session"),
           `    /cost ${theme.muted(".............")} Show token usage and costs`,
@@ -489,6 +506,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           `    /memory ${theme.muted("...........")} View saved project memories`,
           `    /sessions ${theme.muted(".........")} List past sessions`,
           `    /compact ${theme.muted("...........")} Force context compression`,
+          `    /expand ${theme.muted("............")} View full untruncated last tool output`,
           `    /history ${theme.muted("...........")} View conversation file history`,
           "",
           theme.accentBold("  Tools & Config"),
@@ -1311,6 +1329,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         // Spawn async background sub-agent — doesn't block main loop
         const { runSubAgent: spawnBtw } = await import("./agent/sub-agent.ts");
         addOutput(theme.accent(`\n  💬 Side question (background): ${arg}\n`));
+        // Track this background operation for /cancel
+        const btwOpId = `bg-${Date.now()}`;
+        const btwController = new AbortController();
+        backgroundOps.set(btwOpId, {
+          name: `btw: ${arg.slice(0, 60)}${arg.length > 60 ? "..." : ""}`,
+          startedAt: Date.now(),
+          cancel: () => btwController.abort(),
+        });
         // Fire and forget — result shows when ready
         spawnBtw({
           name: "btw",
@@ -1322,13 +1348,81 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           readOnly: true,
           maxIterations: 5,
         }).then((result) => {
+          if (btwController.signal.aborted) return; // Cancelled before result arrived
           addOutput(theme.accent("\n  💬 BTW answer:\n") + result.text + "\n");
           update();
         }).catch((err) => {
-          addOutput(theme.error(`\n  💬 BTW error: ${err instanceof Error ? err.message : String(err)}\n`));
+          if (btwController.signal.aborted) {
+            addOutput(theme.tertiary(`\n  💬 BTW cancelled: ${arg.slice(0, 60)}\n`));
+          } else {
+            addOutput(theme.error(`\n  💬 BTW error: ${err instanceof Error ? err.message : String(err)}\n`));
+          }
           update();
+        }).finally(() => {
+          backgroundOps.delete(btwOpId);
         });
         return true; // Returns immediately — doesn't block
+      }
+
+      case "/cancel": {
+        // Include KAIROS and ProductAgent as cancellable background ops
+        const allOps: Array<{ id: string; name: string; startedAt: number; cancel: () => void }> = [];
+        for (const [id, op] of backgroundOps) {
+          allOps.push({ id, ...op });
+        }
+        if (kairos?.isRunning()) {
+          allOps.push({ id: "kairos", name: "KAIROS autonomous mode", startedAt: 0, cancel: () => { kairos?.stop(); kairos = null; } });
+        }
+        if (productAgent?.isRunning()) {
+          allOps.push({ id: "ship", name: "ProductAgent (/ship)", startedAt: 0, cancel: () => { productAgent?.stop(); productAgent = null; } });
+        }
+
+        if (!arg) {
+          // List active background operations
+          if (allOps.length === 0) {
+            addOutput(theme.tertiary("\n  No active background operations.\n"));
+          } else {
+            const lines = [
+              "",
+              theme.accentBold("  Active Background Operations"),
+              "",
+            ];
+            for (const op of allOps) {
+              const elapsed = op.startedAt > 0 ? `${Math.round((Date.now() - op.startedAt) / 1000)}s ago` : "running";
+              lines.push(`    ${theme.accent(op.id)}  ${op.name}  ${theme.muted(`(${elapsed})`)}`);
+            }
+            lines.push("");
+            lines.push(theme.muted("  Usage: /cancel all  or  /cancel <id>"));
+            lines.push("");
+            addOutput(lines.join("\n"));
+          }
+          return true;
+        }
+
+        if (arg === "all") {
+          if (allOps.length === 0) {
+            addOutput(theme.tertiary("\n  No active background operations to cancel.\n"));
+          } else {
+            for (const op of allOps) {
+              op.cancel();
+            }
+            addOutput(theme.success(`\n  Cancelled ${allOps.length} background operation(s).\n`));
+          }
+          return true;
+        }
+
+        // Cancel specific operation by ID
+        const target = allOps.find(op => op.id === arg);
+        if (target) {
+          target.cancel();
+          addOutput(theme.success(`\n  Cancelled: ${target.name}\n`));
+        } else {
+          addOutput(theme.error(`\n  No background operation found with ID: ${arg}\n`));
+          if (allOps.length > 0) {
+            addOutput(theme.muted(`  Active IDs: ${allOps.map(op => op.id).join(", ")}\n`));
+          }
+        }
+        return true;
       }
 
       case "/voice": {
@@ -1377,6 +1471,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         }).join("\n");
         await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
         addOutput(theme.success(`\n  ✓ Compacted to ${state.history.length} messages\n`));
+        return true;
+      }
+      case "/expand": {
+        if (lastFullToolOutput) {
+          addOutput("\n" + lastFullToolOutput + "\n");
+        } else {
+          addOutput(theme.tertiary("\n  No truncated output to expand. The last tool result will be stored after truncation.\n"));
+        }
         return true;
       }
       case "/status": {
@@ -1613,6 +1715,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           const durationMs = toolStartTime > 0 ? Date.now() - toolStartTime : undefined;
           lastToolName = _name;
           lastToolResult = result.slice(0, 50);
+          lastFullToolOutput = result; // Store full output for /expand
           logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
           if (isError) { recordError(state.buddy); lastHadError = true; }
           else recordToolCallSuccess(state.buddy);
@@ -1709,7 +1812,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       const categorized = categorizeError(error);
-      addOutput(theme.error(`\n  Error: ${categorized.message}\n`));
+      const hint = ERROR_RECOVERY_HINTS[categorized.category];
+      addOutput(theme.error(`\n  Error: ${categorized.message}\n`) + (hint ? theme.muted(`  ${hint}\n`) : ""));
       logEvent("error", { message: categorized.message }).catch(() => {});
       notifyError(categorized.message).catch(() => {});
       lastHadError = true;
