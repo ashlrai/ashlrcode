@@ -74,7 +74,7 @@ export const exitPlanTool: Tool = {
   },
 
   validateInput() {
-    if (!isPlanMode()) return "Not in plan mode";
+    if (!isPlanMode()) return "Not in plan mode. You must call EnterPlan first, then PlanWrite to write your plan, then ExitPlan to finish.";
     return null;
   },
 
@@ -122,7 +122,7 @@ export const planWriteTool: Tool = {
   },
 
   validateInput(input) {
-    if (!isPlanMode()) return "Not in plan mode. Call EnterPlan first.";
+    if (!isPlanMode()) return "Not in plan mode. You must call EnterPlan first before writing a plan.";
     if (!input.content || typeof input.content !== "string") {
       return "content is required";
     }
