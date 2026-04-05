@@ -6,21 +6,17 @@
  */
 
 import chalk from "chalk";
-import type { Tool, ToolContext } from "./types.ts";
 import { runSubAgent, type SubAgentConfig } from "../agent/sub-agent.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import type { Tool, ToolContext } from "./types.ts";
 
 // These get injected at registration time
 let _router: ProviderRouter | null = null;
 let _registry: ToolRegistry | null = null;
 let _systemPrompt: string = "";
 
-export function initAgentTool(
-  router: ProviderRouter,
-  registry: ToolRegistry,
-  systemPrompt: string
-) {
+export function initAgentTool(router: ProviderRouter, registry: ToolRegistry, systemPrompt: string) {
   _router = router;
   _registry = registry;
   _systemPrompt = systemPrompt;
@@ -103,7 +99,9 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
     const result = await runSubAgent({
       name: description,
       prompt,
-      systemPrompt: _systemPrompt + "\n\nYou are a sub-agent. Be thorough but concise. Report your findings clearly with file paths and line numbers.",
+      systemPrompt:
+        _systemPrompt +
+        "\n\nYou are a sub-agent. Be thorough but concise. Report your findings clearly with file paths and line numbers.",
       router: _router!,
       toolRegistry: _registry!,
       toolContext: context,
@@ -123,7 +121,7 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
         counts.set(t.name, (counts.get(t.name) ?? 0) + 1);
       }
       const collapsed = Array.from(counts.entries())
-        .map(([name, count]) => count > 1 ? `${name} x${count}` : name)
+        .map(([name, count]) => (count > 1 ? `${name} x${count}` : name))
         .join(", ");
       toolSummary = `\n\nTools used: ${collapsed}`;
     }

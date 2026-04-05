@@ -8,7 +8,7 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, readdir } from "fs/promises";
+import { readdir, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { getConfigDir } from "../config/settings.ts";
 import type { SkillDefinition } from "./types.ts";
@@ -32,11 +32,7 @@ export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
   const seen = new Set<string>();
 
   // Load from all sources (project overrides user overrides built-in)
-  const dirs = [
-    BUILT_IN_DIR,
-    join(getConfigDir(), "skills"),
-    join(cwd, ".ashlrcode", "skills"),
-  ];
+  const dirs = [BUILT_IN_DIR, join(getConfigDir(), "skills"), join(cwd, ".ashlrcode", "skills")];
 
   for (const dir of dirs) {
     if (!existsSync(dir)) continue;

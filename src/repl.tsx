@@ -12,6 +12,7 @@ import { render } from "ink";
 import { join } from "path";
 import React from "react";
 import { type AgentContext, runWithAgentContext } from "./agent/async-context.ts";
+import { type AutopilotLoop, createAutopilotLoop } from "./agent/autopilot-loop.ts";
 import {
   autoCompact,
   contextCollapse,
@@ -28,11 +29,10 @@ import { detectTerminalFocus, KairosLoop } from "./agent/kairos.ts";
 import { runAgentLoop } from "./agent/loop.ts";
 import { SpeculationCache } from "./agent/speculation.ts";
 import { setSpeculationCache } from "./agent/tool-executor.ts";
+import { createVision, loadVision, saveVision, type Vision } from "./agent/vision.ts";
 import { WorkQueue } from "./autopilot/queue.ts";
 import { scanCodebase } from "./autopilot/scanner.ts";
 import { DEFAULT_CONFIG } from "./autopilot/types.ts";
-import { createAutopilotLoop, AutopilotLoop } from "./agent/autopilot-loop.ts";
-import { createVision, loadVision, saveVision, type Vision } from "./agent/vision.ts";
 import { getBridgePort, startBridgeServer, stopBridgeServer } from "./bridge/bridge-server.ts";
 import { feature, listFeatures } from "./config/features.ts";
 import {
@@ -440,11 +440,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/transcript",
         "/transcript last",
         "/search",
-        ...state.skillRegistry.getAll().map((s) => s.trigger.startsWith("/") ? s.trigger : `/${s.trigger}`),
+        ...state.skillRegistry.getAll().map((s) => (s.trigger.startsWith("/") ? s.trigger : `/${s.trigger}`)),
       ].filter((cmd, i, arr) => arr.indexOf(cmd) === i),
       cwd: state.toolContext.cwd,
       pendingQuestionOptionCount: hasPendingQuestion() ? getPendingOptions().length : 0,
-      pendingQuestionLabels: hasPendingQuestion() ? getPendingOptions().map(o => o.label) : [],
+      pendingQuestionLabels: hasPendingQuestion() ? getPendingOptions().map((o) => o.label) : [],
     };
   }
 
@@ -475,7 +475,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     // Route messages to autopilot if running and not a slash command
     if (autopilotRunning && autopilotLoop && !input.startsWith("/")) {
       autopilotLoop.queueUserMessage(input);
-      addOutput(chalk.dim(`  ⏳ Message sent to autopilot: "${input.length > 60 ? input.slice(0, 57) + "..." : input}"`));
+      addOutput(
+        chalk.dim(`  ⏳ Message sent to autopilot: "${input.length > 60 ? input.slice(0, 57) + "..." : input}"`),
+      );
       update();
       return;
     }
@@ -1249,38 +1251,71 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           addOutput(theme.accent(`\n  🚀 Resuming autopilot: ${vision.goal}\n`));
           autopilotLoop = createAutopilotLoop();
           autopilotRunning = true;
-          autopilotLoop.start(vision, {
-            router: state.router,
-            toolRegistry: state.registry,
-            toolContext: state.toolContext,
-            systemPrompt: state.baseSystemPrompt,
-            onProgress: (event) => {
-              switch (event.type) {
-                case "started": addOutput(theme.accent(`  🚀 Started: ${event.goal}`)); break;
-                case "tick": addOutput(theme.tertiary(`  ⏱ Tick ${event.tickNumber} [${event.phase}]`)); break;
-                case "scanning": addOutput(theme.secondary(`  🔍 ${event.message}`)); break;
-                case "scan_complete": addOutput(theme.success(`  ✓ Scan: ${event.newItems} new, ${event.totalItems} total`)); break;
-                case "executing": addOutput(theme.accent(`  ⚡ ${event.itemDescription}`)); break;
-                case "item_complete": addOutput(event.success ? theme.success(`  ✓ ${event.description}`) : theme.error(`  ✗ ${event.description}: ${event.summary}`)); break;
-                case "wrapping_up": addOutput(theme.warning("  🎁 Wrapping up...")); break;
-                case "stopped": addOutput(theme.accent(`  ═══ ${event.summary}`)); break;
-                case "user_message": addOutput(theme.tertiary(`  📩 ${event.message} → ${event.action}`)); break;
-                case "assessing": addOutput(theme.secondary(`  🔮 ${event.message}`)); break;
-                case "assessment": addOutput(theme.secondary(`  📊 ${event.assessment}`)); break;
-                case "committing": addOutput(theme.tertiary(`  📝 ${event.message}`)); break;
-                case "notification": addOutput(theme.warning(`  🔔 ${event.title}: ${event.body}`)); break;
-              }
+          autopilotLoop
+            .start(vision, {
+              router: state.router,
+              toolRegistry: state.registry,
+              toolContext: state.toolContext,
+              systemPrompt: state.baseSystemPrompt,
+              onProgress: (event) => {
+                switch (event.type) {
+                  case "started":
+                    addOutput(theme.accent(`  🚀 Started: ${event.goal}`));
+                    break;
+                  case "tick":
+                    addOutput(theme.tertiary(`  ⏱ Tick ${event.tickNumber} [${event.phase}]`));
+                    break;
+                  case "scanning":
+                    addOutput(theme.secondary(`  🔍 ${event.message}`));
+                    break;
+                  case "scan_complete":
+                    addOutput(theme.success(`  ✓ Scan: ${event.newItems} new, ${event.totalItems} total`));
+                    break;
+                  case "executing":
+                    addOutput(theme.accent(`  ⚡ ${event.itemDescription}`));
+                    break;
+                  case "item_complete":
+                    addOutput(
+                      event.success
+                        ? theme.success(`  ✓ ${event.description}`)
+                        : theme.error(`  ✗ ${event.description}: ${event.summary}`),
+                    );
+                    break;
+                  case "wrapping_up":
+                    addOutput(theme.warning("  🎁 Wrapping up..."));
+                    break;
+                  case "stopped":
+                    addOutput(theme.accent(`  ═══ ${event.summary}`));
+                    break;
+                  case "user_message":
+                    addOutput(theme.tertiary(`  📩 ${event.message} → ${event.action}`));
+                    break;
+                  case "assessing":
+                    addOutput(theme.secondary(`  🔮 ${event.message}`));
+                    break;
+                  case "assessment":
+                    addOutput(theme.secondary(`  📊 ${event.assessment}`));
+                    break;
+                  case "committing":
+                    addOutput(theme.tertiary(`  📝 ${event.message}`));
+                    break;
+                  case "notification":
+                    addOutput(theme.warning(`  🔔 ${event.title}: ${event.body}`));
+                    break;
+                }
+                update();
+              },
+            })
+            .then(() => {
+              autopilotRunning = false;
+              addOutput(theme.success("\n  Autopilot finished.\n"));
               update();
-            },
-          }).then(() => {
-            autopilotRunning = false;
-            addOutput(theme.success("\n  Autopilot finished.\n"));
-            update();
-          }).catch((err: unknown) => {
-            autopilotRunning = false;
-            addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
-            update();
-          });
+            })
+            .catch((err: unknown) => {
+              autopilotRunning = false;
+              addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
+              update();
+            });
           return true;
         }
 
@@ -1339,12 +1374,18 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
             addOutput(theme.secondary(`\n  Progress (${vision.progress.length} entries):`));
             for (const entry of vision.progress.slice(-10)) {
               const date = entry.timestamp.split("T")[0];
-              addOutput(theme.tertiary(`    [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`));
+              addOutput(
+                theme.tertiary(`    [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`),
+              );
             }
           }
           if (autopilotRunning && autopilotLoop) {
             const status = autopilotLoop.getStatus();
-            addOutput(theme.success(`\n  Status: RUNNING (tick ${status.tickNumber}, ${status.itemsCompleted} done, ${status.itemsFailed} failed, ${status.duration})`));
+            addOutput(
+              theme.success(
+                `\n  Status: RUNNING (tick ${status.tickNumber}, ${status.itemsCompleted} done, ${status.itemsFailed} failed, ${status.duration})`,
+              ),
+            );
           } else {
             addOutput(theme.tertiary(`\n  Status: Stopped. /autopilot resume to continue`));
           }
@@ -1367,52 +1408,104 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           addOutput(theme.accent("\n  📜 Autopilot History\n"));
           for (const entry of vision.progress) {
             const date = entry.timestamp.split("T")[0];
-            addOutput(theme.secondary(`  [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`));
+            addOutput(
+              theme.secondary(`  [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`),
+            );
           }
           addOutput("");
           return true;
         }
 
         // If arg doesn't match a known subcommand, treat it as a vision goal
-        if (subCmd && !["scan", "queue", "status", "approve", "run", "auto", "stop", "wrap", "resume", "reset", "focus", "vision", "history"].includes(subCmd)) {
+        if (
+          subCmd &&
+          ![
+            "scan",
+            "queue",
+            "status",
+            "approve",
+            "run",
+            "auto",
+            "stop",
+            "wrap",
+            "resume",
+            "reset",
+            "focus",
+            "vision",
+            "history",
+          ].includes(subCmd)
+        ) {
           const visionText = arg!;
           const cwd = state.toolContext.cwd;
           const vision = await createVision(cwd, visionText);
           addOutput(theme.accent(`\n  🚀 Autopilot started: ${vision.goal}\n`));
           autopilotLoop = createAutopilotLoop();
           autopilotRunning = true;
-          autopilotLoop.start(vision, {
-            router: state.router,
-            toolRegistry: state.registry,
-            toolContext: state.toolContext,
-            systemPrompt: state.baseSystemPrompt,
-            onProgress: (event) => {
-              switch (event.type) {
-                case "started": addOutput(theme.accent(`  🚀 Started: ${event.goal}`)); break;
-                case "tick": addOutput(theme.tertiary(`  ⏱ Tick ${event.tickNumber} [${event.phase}]`)); break;
-                case "scanning": addOutput(theme.secondary(`  🔍 ${event.message}`)); break;
-                case "scan_complete": addOutput(theme.success(`  ✓ Scan: ${event.newItems} new, ${event.totalItems} total`)); break;
-                case "executing": addOutput(theme.accent(`  ⚡ ${event.itemDescription}`)); break;
-                case "item_complete": addOutput(event.success ? theme.success(`  ✓ ${event.description}`) : theme.error(`  ✗ ${event.description}: ${event.summary}`)); break;
-                case "wrapping_up": addOutput(theme.warning("  🎁 Wrapping up...")); break;
-                case "stopped": addOutput(theme.accent(`  ═══ ${event.summary}`)); break;
-                case "user_message": addOutput(theme.tertiary(`  📩 ${event.message} → ${event.action}`)); break;
-                case "assessing": addOutput(theme.secondary(`  🔮 ${event.message}`)); break;
-                case "assessment": addOutput(theme.secondary(`  📊 ${event.assessment}`)); break;
-                case "committing": addOutput(theme.tertiary(`  📝 ${event.message}`)); break;
-                case "notification": addOutput(theme.warning(`  🔔 ${event.title}: ${event.body}`)); break;
-              }
+          autopilotLoop
+            .start(vision, {
+              router: state.router,
+              toolRegistry: state.registry,
+              toolContext: state.toolContext,
+              systemPrompt: state.baseSystemPrompt,
+              onProgress: (event) => {
+                switch (event.type) {
+                  case "started":
+                    addOutput(theme.accent(`  🚀 Started: ${event.goal}`));
+                    break;
+                  case "tick":
+                    addOutput(theme.tertiary(`  ⏱ Tick ${event.tickNumber} [${event.phase}]`));
+                    break;
+                  case "scanning":
+                    addOutput(theme.secondary(`  🔍 ${event.message}`));
+                    break;
+                  case "scan_complete":
+                    addOutput(theme.success(`  ✓ Scan: ${event.newItems} new, ${event.totalItems} total`));
+                    break;
+                  case "executing":
+                    addOutput(theme.accent(`  ⚡ ${event.itemDescription}`));
+                    break;
+                  case "item_complete":
+                    addOutput(
+                      event.success
+                        ? theme.success(`  ✓ ${event.description}`)
+                        : theme.error(`  ✗ ${event.description}: ${event.summary}`),
+                    );
+                    break;
+                  case "wrapping_up":
+                    addOutput(theme.warning("  🎁 Wrapping up..."));
+                    break;
+                  case "stopped":
+                    addOutput(theme.accent(`  ═══ ${event.summary}`));
+                    break;
+                  case "user_message":
+                    addOutput(theme.tertiary(`  📩 ${event.message} → ${event.action}`));
+                    break;
+                  case "assessing":
+                    addOutput(theme.secondary(`  🔮 ${event.message}`));
+                    break;
+                  case "assessment":
+                    addOutput(theme.secondary(`  📊 ${event.assessment}`));
+                    break;
+                  case "committing":
+                    addOutput(theme.tertiary(`  📝 ${event.message}`));
+                    break;
+                  case "notification":
+                    addOutput(theme.warning(`  🔔 ${event.title}: ${event.body}`));
+                    break;
+                }
+                update();
+              },
+            })
+            .then(() => {
+              autopilotRunning = false;
+              addOutput(theme.success("\n  Autopilot finished.\n"));
               update();
-            },
-          }).then(() => {
-            autopilotRunning = false;
-            addOutput(theme.success("\n  Autopilot finished.\n"));
-            update();
-          }).catch((err: unknown) => {
-            autopilotRunning = false;
-            addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
-            update();
-          });
+            })
+            .catch((err: unknown) => {
+              autopilotRunning = false;
+              addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
+              update();
+            });
           return true;
         }
 
@@ -1443,7 +1536,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         addOutput(theme.accent("\n  🤖 Autopilot Status\n"));
         addOutput(theme.primary(`  Running: ${status.running ? "yes" : "no"}`));
         addOutput(theme.secondary(`  Tick: ${status.tickNumber}`));
-        addOutput(theme.secondary(`  Completed: ${status.itemsCompleted} | Failed: ${status.itemsFailed} | Pending: ${status.queuePending}`));
+        addOutput(
+          theme.secondary(
+            `  Completed: ${status.itemsCompleted} | Failed: ${status.itemsFailed} | Pending: ${status.queuePending}`,
+          ),
+        );
         addOutput(theme.secondary(`  Duration: ${status.duration}`));
         addOutput(theme.secondary(`  Focus: ${status.focusState}`));
         if (status.wrapUpRequested) {
@@ -2248,7 +2345,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     // Ultrathink banner
     if (isUltrathinkTurn) {
-      const banner = chalk.bold.magentaBright("  ⚡ ULTRATHINK ") + chalk.magenta("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      const banner =
+        chalk.bold.magentaBright("  ⚡ ULTRATHINK ") +
+        chalk.magenta("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
       addOutput(banner);
       addOutput(chalk.magentaBright("  Deep reasoning enabled — extended thinking budget\n"));
     }

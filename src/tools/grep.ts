@@ -85,7 +85,7 @@ async function runRipgrep(
   searchPath: string,
   globFilter: string | undefined,
   outputMode: string,
-  context: ToolContext
+  context: ToolContext,
 ): Promise<string | null> {
   const rgArgs: string[] = [];
 
@@ -141,7 +141,7 @@ async function runGrep(
   searchPath: string,
   globFilter: string | undefined,
   outputMode: string,
-  context: ToolContext
+  context: ToolContext,
 ): Promise<string> {
   const args = ["grep", "-r"];
 
@@ -160,9 +160,17 @@ async function runGrep(
   if (globFilter) {
     args.push("--include", globFilter);
   } else {
-    args.push("--include=*.ts", "--include=*.js", "--include=*.tsx",
-      "--include=*.jsx", "--include=*.py", "--include=*.go",
-      "--include=*.rs", "--include=*.md", "--include=*.json");
+    args.push(
+      "--include=*.ts",
+      "--include=*.js",
+      "--include=*.tsx",
+      "--include=*.jsx",
+      "--include=*.py",
+      "--include=*.go",
+      "--include=*.rs",
+      "--include=*.md",
+      "--include=*.json",
+    );
   }
 
   args.push(pattern, searchPath);

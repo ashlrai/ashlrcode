@@ -32,10 +32,7 @@ function getFilePathSuggestion(input: string, cwd: string): string | undefined {
   // Check if it looks like a file path — must contain / or start with . or ~
   // (Don't match bare dotted words like "v2.0", "e.g.", "node.js")
   const looksLikePath =
-    lastWord.includes("/") ||
-    lastWord.startsWith("./") ||
-    lastWord.startsWith("../") ||
-    lastWord.startsWith("~");
+    lastWord.includes("/") || lastWord.startsWith("./") || lastWord.startsWith("../") || lastWord.startsWith("~");
   if (!looksLikePath) return undefined;
 
   try {
@@ -335,7 +332,7 @@ export function App({
       {pendingQuestionOptionCount > 0 ? (
         /* Question selection UI — replaces input when a question is pending */
         <Box flexDirection="column">
-          <Text dimColor>  Use ↑↓ arrows + Enter to select, or press 1-{pendingQuestionOptionCount + 1}:</Text>
+          <Text dimColor> Use ↑↓ arrows + Enter to select, or press 1-{pendingQuestionOptionCount + 1}:</Text>
           {pendingQuestionLabels.map((label, i) => (
             <Text key={i}>
               {i === selectedOption
