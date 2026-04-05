@@ -5,6 +5,8 @@
 import { resolve } from "path";
 import type { Tool, ToolContext } from "./types.ts";
 
+let rgWarned = false;
+
 export const grepTool: Tool = {
   name: "Grep",
 
@@ -66,8 +68,11 @@ export const grepTool: Tool = {
       const result = await runRipgrep(pattern, searchPath, globFilter, outputMode, context);
       if (result !== null) return result;
     } catch {
-      // ripgrep not available — fall through to system grep
-      console.error("[grep] ripgrep (rg) not found, using system grep (slower)");
+      // ripgrep not available — warn once, then fall through silently
+      if (!rgWarned) {
+        console.error("[grep] ripgrep (rg) not found, using system grep (install: brew install ripgrep)");
+        rgWarned = true;
+      }
     }
 
     // Fallback to system grep

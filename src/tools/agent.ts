@@ -110,12 +110,9 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
       readOnly,
       mode,
       maxIterations: 15,
-      onToolStart: (name) => {
-        console.log(chalk.dim(`    ↳ ${name}`));
-      },
-      onToolEnd: (_name, _result, isError) => {
-        if (isError) console.log(chalk.dim(`    ↳ ${chalk.red("error")}`));
-      },
+      // Sub-agent tool calls are silent — summary shown at the end
+      onToolStart: () => {},
+      onToolEnd: () => {},
     });
 
     // Collapse repeated tool names: "Read, Read, Grep" → "Read x2, Grep x1"
