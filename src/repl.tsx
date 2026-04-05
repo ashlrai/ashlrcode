@@ -235,6 +235,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let aiCommentGen = 0; // Guards against stale AI callbacks overwriting mid-turn
   let aiCommentInFlight = false;
   let isProcessing = false;
+  let interruptRequested = false;
   const messageQueue: string[] = [];
   let spinnerText = "Thinking";
   let tokenStats = "";
@@ -1767,10 +1768,20 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   const handleClearScreen = () => { items = []; update(); };
   const handleVoiceToggle = () => { handleCommand("/voice").catch(() => {}); };
 
+  function handleInterrupt() {
+    if (!isProcessing) return;
+    interruptRequested = true;
+    addOutput(chalk.yellow("\n  ⚡ Interrupted — stopping current turn\n"));
+    // Clear any queued messages too
+    messageQueue.length = 0;
+    finishProcessing();
+  }
+
   function appProps() {
     return {
       onSubmit: handleSubmit,
       onExit: handleExit,
+      onInterrupt: handleInterrupt,
       onModeSwitch: handleModeSwitch,
       onUndo: handleUndo,
       onEffortCycle: handleEffortCycle,

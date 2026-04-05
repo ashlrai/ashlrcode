@@ -18,6 +18,8 @@ interface OutputItem { id: number; text: string; }
 interface AppProps {
   onSubmit: (text: string) => void;
   onExit: () => void;
+  /** Called when Ctrl+C is pressed while the agent is processing. */
+  onInterrupt?: () => void;
   onModeSwitch: () => void;
   onUndo?: () => void;
   onEffortCycle?: () => void;
@@ -41,7 +43,7 @@ interface AppProps {
 }
 
 export function App({
-  onSubmit, onExit, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle,
+  onSubmit, onExit, onInterrupt, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle,
   inputHistory, mode, modeColor,
   contextPercent, contextUsed, contextLimit,
   buddy, buddyQuip, buddyQuipType,
@@ -83,7 +85,12 @@ export function App({
 
     switch (action) {
       case "exit":
-        onExit(); exit(); return;
+        if (isProcessing && onInterrupt) {
+          onInterrupt(); // Ctrl+C while processing → interrupt agent
+        } else {
+          onExit(); exit(); // Ctrl+C while idle → exit
+        }
+        return;
       case "mode-switch":
         handleModeSwitch(); return;
       case "autocomplete":
@@ -116,7 +123,7 @@ export function App({
       case "voice-toggle":
         onVoiceToggle?.(); return;
     }
-  }, [suggestion, input, handleModeSwitch, onExit, exit, acceptSuggestion, inputHistory, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle]));
+  }, [suggestion, input, isProcessing, handleModeSwitch, onExit, onInterrupt, exit, acceptSuggestion, inputHistory, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle]));
 
   const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);
