@@ -15,6 +15,9 @@ import { checkRules } from "../config/permissions.ts";
 /** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
 let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 
+/** Tools exempt from execution timeout (they wait for external input or spawn long-running sub-agents). */
+const NO_TIMEOUT_TOOLS = new Set(["AskUser", "Agent", "Coordinate"]);
+
 /** Override the default tool timeout (called from settings). */
 export function setDefaultToolTimeout(ms: number): void {
   DEFAULT_TOOL_TIMEOUT_MS = ms;
@@ -155,18 +158,21 @@ export class ToolRegistry {
       return { result: hookResult.message ?? "Denied by hook", isError: true };
     }
 
-    // Execute tool with timeout protection
+    // Execute tool with timeout protection (exempt tools that wait for human input or run sub-agents)
+    const skipTimeout = NO_TIMEOUT_TOOLS.has(toolName);
     const timeout = timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
     try {
-      const result = await Promise.race([
-        tool.call(input, context),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error(`Tool "${toolName}" timed out after ${Math.round(timeout / 1000)}s`)),
-            timeout
-          );
-        }),
-      ]);
+      const result = skipTimeout
+        ? await tool.call(input, context)
+        : await Promise.race([
+            tool.call(input, context),
+            new Promise<never>((_, reject) => {
+              setTimeout(
+                () => reject(new Error(`Tool "${toolName}" timed out after ${Math.round(timeout / 1000)}s`)),
+                timeout
+              );
+            }),
+          ]);
 
       // Run post-tool hooks (fire and forget)
       runPostToolHooks(this.hooks, toolName, input, result).catch(() => {});

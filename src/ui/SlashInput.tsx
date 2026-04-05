@@ -33,7 +33,18 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
   const isSlash = value.startsWith("/");
   // Only color the slash command name (first word), not arguments after the space
   const slashCommandEnd = isSlash ? (value.indexOf(" ") === -1 ? value.length : value.indexOf(" ")) : 0;
-  const colorChar = (ch: string, idx: number) => (isSlash && idx < slashCommandEnd ? chalk.hex(SLASH_COLOR)(ch) : ch);
+
+  // Detect "ultrathink" keyword (case-insensitive) for magenta highlighting
+  const ULTRATHINK_COLOR = "#FF00FF";
+  const lowerValue = value.toLowerCase();
+  const ultrathinkIdx = lowerValue.indexOf("ultrathink");
+  const ultrathinkEnd = ultrathinkIdx >= 0 ? ultrathinkIdx + "ultrathink".length : -1;
+
+  const colorChar = (ch: string, idx: number) => {
+    if (isSlash && idx < slashCommandEnd) return chalk.hex(SLASH_COLOR)(ch);
+    if (ultrathinkIdx >= 0 && idx >= ultrathinkIdx && idx < ultrathinkEnd) return chalk.hex(ULTRATHINK_COLOR).bold(ch);
+    return ch;
+  };
 
   const CONTINUATION_PREFIX = chalk.dim("│ ");
   const hintText = focus && value.length === 0 ? chalk.dim("  Ctrl+J newline · Enter send") : "";

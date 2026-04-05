@@ -29,6 +29,24 @@ let pendingQuestionResolve: ((answer: string) => void) | null = null;
 /** Options for the currently pending question. */
 let pendingOptions: QuestionOption[] = [];
 
+/** Callback to render output through the REPL's addOutput (set by repl.tsx). */
+let _outputFn: ((text: string) => void) | null = null;
+
+/** Callback to toggle isProcessing in the REPL (set by repl.tsx). */
+let _processingHook: ((processing: boolean) => void) | null = null;
+
+/**
+ * Wire AskUser to the REPL's output and processing state.
+ * Called from repl.tsx after addOutput is available.
+ */
+export function setAskUserCallbacks(
+  output: (text: string) => void,
+  processingHook: (processing: boolean) => void,
+): void {
+  _outputFn = output;
+  _processingHook = processingHook;
+}
+
 /** Check if there is a pending question awaiting an answer. */
 export function hasPendingQuestion(): boolean {
   return pendingQuestionResolve !== null;
@@ -37,6 +55,8 @@ export function hasPendingQuestion(): boolean {
 /** Answer a pending question (called from repl.tsx when the user submits input). */
 export function answerPendingQuestion(answer: string): boolean {
   if (!pendingQuestionResolve) return false;
+  // Restore processing state before resolving (agent loop resumes)
+  _processingHook?.(true);
   pendingQuestionResolve(answer);
   pendingQuestionResolve = null;
   pendingOptions = [];
@@ -136,8 +156,29 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   const cols = Math.min(process.stdout.columns || 80, 72);
   const BORDER = chalk.hex("#A78BFA"); // violet-400 for questions
   const BORDER_BOLD = chalk.hex("#A78BFA").bold;
+  const innerWidth = cols - 4; // 2 for borders, 2 for padding
 
   const emptyLine = BORDER("│") + " ".repeat(cols - 2) + BORDER("│");
+
+  /** Wrap text to fit within the box, returning multiple padded lines. */
+  function wrapText(text: string, maxWidth: number): string[] {
+    if (text.length <= maxWidth) return [text];
+    const words = text.split(" ");
+    const wrapped: string[] = [];
+    let current = "";
+    for (const word of words) {
+      if (current.length === 0) {
+        current = word;
+      } else if (current.length + 1 + word.length <= maxWidth) {
+        current += " " + word;
+      } else {
+        wrapped.push(current);
+        current = word;
+      }
+    }
+    if (current) wrapped.push(current);
+    return wrapped;
+  }
 
   function padLine(content: string, rawLen: number): string {
     const pad = Math.max(0, cols - 2 - 2 - rawLen);
@@ -152,18 +193,26 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   // Build lines
   const lines: string[] = ["", topBar, emptyLine];
 
-  // Wrap question text
-  const qText = chalk.hex("#F1F5F9").bold(question);
-  lines.push(padLine(qText, question.length));
+  // Wrap question text within box width
+  const questionLines = wrapText(question, innerWidth);
+  for (const qLine of questionLines) {
+    lines.push(padLine(chalk.hex("#F1F5F9").bold(qLine), qLine.length));
+  }
   lines.push(emptyLine);
 
   // Options
   options.forEach((opt, i) => {
     const numStr = `${i + 1}`;
-    const optLine = chalk.hex("#A78BFA").bold(`${numStr} → `) + chalk.hex("#F1F5F9")(opt.label);
-    lines.push(padLine(optLine, numStr.length + 3 + opt.label.length));
-    const descLine = chalk.hex("#94A3B8")("     " + opt.description);
-    lines.push(padLine(descLine, 5 + opt.description.length));
+    const labelPrefix = `${numStr} → `;
+    const labelText = opt.label;
+    const optLine = chalk.hex("#A78BFA").bold(labelPrefix) + chalk.hex("#F1F5F9")(labelText);
+    lines.push(padLine(optLine, labelPrefix.length + labelText.length));
+    // Wrap description within box width (5 chars indent)
+    const descIndent = "     ";
+    const descLines = wrapText(opt.description, innerWidth - descIndent.length);
+    for (const dLine of descLines) {
+      lines.push(padLine(chalk.hex("#94A3B8")(descIndent + dLine), descIndent.length + dLine.length));
+    }
     if (i < options.length - 1) lines.push(emptyLine);
   });
 
@@ -176,7 +225,12 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   lines.push(emptyLine);
   lines.push(bottom, "");
 
-  console.log(lines.join("\n"));
+  // Output through the REPL's addOutput (Ink-safe) instead of console.log
+  const output = _outputFn ?? console.log;
+  output(lines.join("\n"));
+
+  // Pause processing state so the REPL shows the input box for the user to answer
+  _processingHook?.(false);
 
   // Wait for user to submit input via the repl
   pendingOptions = options;
@@ -187,11 +241,11 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   const choiceNum = parseInt(answer.trim(), 10);
   if (choiceNum >= 1 && choiceNum <= options.length) {
     const selected = options[choiceNum - 1]!;
-    console.log(chalk.hex("#34D399")(`  ✓ ${selected.label}`) + chalk.hex("#94A3B8")(` — ${selected.description}`));
+    output(chalk.hex("#34D399")(`  ✓ ${selected.label}`) + chalk.hex("#94A3B8")(` — ${selected.description}`));
     return `User selected: "${selected.label}" — ${selected.description}`;
   }
   if (!isNaN(choiceNum) && choiceNum === options.length + 1) {
-    console.log(chalk.hex("#94A3B8")(`  ✎ Custom answer requested`));
+    output(chalk.hex("#94A3B8")(`  ✎ Custom answer requested`));
   }
   return `User's custom answer: "${answer.trim()}"`;
 }

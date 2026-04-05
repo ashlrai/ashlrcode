@@ -52,7 +52,7 @@ import type { Message } from "./providers/types.ts";
 import type { SkillRegistry } from "./skills/registry.ts";
 import { FileHistoryStore, getFileHistory, setFileHistory } from "./state/file-history.ts";
 import { formatEvents, initTelemetry, logEvent, readRecentEvents } from "./telemetry/event-log.ts";
-import { answerPendingQuestion, getPendingOptions, hasPendingQuestion } from "./tools/ask-user.ts";
+import { answerPendingQuestion, getPendingOptions, hasPendingQuestion, setAskUserCallbacks } from "./tools/ask-user.ts";
 import { shutdownLSP } from "./tools/lsp.ts";
 import type { ToolRegistry } from "./tools/registry.ts";
 import type { ToolContext } from "./tools/types.ts";
@@ -333,6 +333,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   // Patch the deferred wrapper so permission prompts can use addOutput
   _addOutput = addOutput;
 
+  // Wire AskUser to use REPL output and processing state
+  setAskUserCallbacks(addOutput, (processing) => {
+    isProcessing = processing;
+    update();
+  });
+
   // Check for upgrades (fire and forget)
   checkForUpgrade(VERSION)
     .then((newVersion) => {
@@ -434,8 +440,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/transcript",
         "/transcript last",
         "/search",
-        ...state.skillRegistry.getAll().map((s) => s.trigger),
-      ],
+        ...state.skillRegistry.getAll().map((s) => s.trigger.startsWith("/") ? s.trigger : `/${s.trigger}`),
+      ].filter((cmd, i, arr) => arr.indexOf(cmd) === i),
       cwd: state.toolContext.cwd,
       pendingQuestionOptionCount: hasPendingQuestion() ? getPendingOptions().length : 0,
     };
