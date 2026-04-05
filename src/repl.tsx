@@ -537,6 +537,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
       case "/clear":
         state.history.length = 0;
+        messageQueue.length = 0;
         addOutput(theme.secondary("\n  Conversation cleared.\n"));
         return true;
       case "/quit":

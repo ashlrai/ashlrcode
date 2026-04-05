@@ -465,7 +465,7 @@ async function main() {
       console.log(theme.secondary(`    /buddy`) + theme.tertiary(`                          — meet ${buddy.name}!`));
       console.log(theme.tertiary(`\n  Shift+Tab switches modes. /help for all commands.\n`));
     } else {
-      console.log(theme.tertiary(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to exit.\n`));
+      console.log(theme.tertiary(`  Shift+Tab to switch modes. /help for commands. Ctrl+C to interrupt/exit.\n`));
     }
   }
 
