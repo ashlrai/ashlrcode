@@ -5,13 +5,68 @@
  * Full-width input box. Status line below.
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import { Box, Text, Static, useInput, useApp } from "ink";
+import { readdirSync } from "fs";
+import { resolve, dirname, basename, join } from "path";
 import { SlashInput } from "./SlashInput.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
 import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
 import type { BuddyData } from "../ui/buddy.ts";
 import { getAction, type InputHistory } from "./keybindings.ts";
+
+/**
+ * Extract a file path suggestion for the last word in the input.
+ * Returns the full completed input string if a match is found, or undefined.
+ */
+function getFilePathSuggestion(input: string, cwd: string): string | undefined {
+  if (!input || input.startsWith("/")) return undefined;
+
+  // Extract the last word (space-delimited)
+  const lastSpaceIdx = input.lastIndexOf(" ");
+  const lastWord = lastSpaceIdx === -1 ? input : input.slice(lastSpaceIdx + 1);
+
+  if (!lastWord) return undefined;
+
+  // Check if it looks like a file path: contains / or . (but not just a single dot)
+  const looksLikePath = lastWord.includes("/") || lastWord.startsWith("./") || lastWord.startsWith("../") || lastWord.startsWith("~") || (lastWord.includes(".") && lastWord.length > 1);
+  if (!looksLikePath) return undefined;
+
+  try {
+    // Resolve the directory to list and the partial filename to match
+    let expanded = lastWord;
+    if (expanded.startsWith("~")) {
+      expanded = join(process.env.HOME || "/", expanded.slice(1));
+    }
+
+    const resolved = resolve(cwd, expanded);
+
+    // If the word ends with /, list that directory
+    let dirToList: string;
+    let partial: string;
+    if (lastWord.endsWith("/")) {
+      dirToList = resolved;
+      partial = "";
+    } else {
+      dirToList = dirname(resolved);
+      partial = basename(resolved);
+    }
+
+    const entries = readdirSync(dirToList, { withFileTypes: true });
+    const matches = entries
+      .filter(e => e.name.startsWith(partial) && e.name !== partial)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    if (matches.length === 0) return undefined;
+
+    const match = matches[0]!;
+    const completion = match.name + (match.isDirectory() ? "/" : "");
+    const prefix = input.slice(0, input.length - (partial.length));
+    return prefix + completion;
+  } catch {
+    return undefined;
+  }
+}
 
 interface OutputItem { id: number; text: string; }
 
@@ -41,6 +96,7 @@ interface AppProps {
   spinnerText: string;
   tokenStats: string;
   commands: string[];
+  cwd: string;
 }
 
 export function App({
@@ -48,7 +104,7 @@ export function App({
   inputHistory, mode, modeColor,
   contextPercent, contextUsed, contextLimit, modelName,
   buddy, buddyQuip, buddyQuipType,
-  items, isProcessing, spinnerText, tokenStats, commands,
+  items, isProcessing, spinnerText, tokenStats, commands, cwd,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
@@ -62,9 +118,16 @@ export function App({
     return () => { process.stdout.off('resize', handler); };
   }, []);
 
-  const suggestion = input.startsWith("/") && input.length > 1
+  const slashSuggestion = input.startsWith("/") && input.length > 1
     ? commands.find(c => c.startsWith(input) && c !== input)
     : undefined;
+
+  const fileSuggestion = useMemo(
+    () => (!slashSuggestion && cwd) ? getFilePathSuggestion(input, cwd) : undefined,
+    [input, cwd, slashSuggestion],
+  );
+
+  const suggestion = slashSuggestion ?? fileSuggestion;
 
   const handleSubmit = useCallback((value: string) => {
     const text = value.trim();
@@ -78,7 +141,10 @@ export function App({
   // Accept autocomplete: set value AND force remount to reset cursor to end
   const acceptSuggestion = useCallback(() => {
     if (!suggestion) return;
-    setInput(suggestion + " ");
+    // For directory completions (ending with /), don't add trailing space
+    // so the user can keep tabbing into subdirectories
+    const suffix = suggestion.endsWith("/") ? "" : " ";
+    setInput(suggestion + suffix);
     setInputKey(k => k + 1); // Force TextInput remount — cursor goes to end
   }, [suggestion]);
 

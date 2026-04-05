@@ -31,9 +31,12 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
   }, [value]);
 
   const isSlash = value.startsWith("/");
-  const lineCount = value.split("\n").length;
-  const isMultiLine = lineCount > 1;
   const colorChar = (ch: string) => isSlash ? chalk.hex(SLASH_COLOR)(ch) : ch;
+
+  const CONTINUATION_PREFIX = chalk.dim("│ ");
+  const hintText = focus && value.length === 0
+    ? chalk.dim("  Ctrl+J newline · Enter send")
+    : "";
 
   let rendered = "";
   if (value.length === 0) {
@@ -43,11 +46,11 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
       rendered = chalk.grey(placeholder);
     }
   } else {
-    // Render each character, showing newlines as ↵ + actual newline
+    // Render each character, showing newlines with continuation prefix
     for (let i = 0; i < value.length; i++) {
       const ch = value[i]!;
       if (ch === "\n") {
-        rendered += (i === cursorOffset) ? chalk.inverse(NEWLINE_INDICATOR) + "\n" : NEWLINE_INDICATOR + "\n";
+        rendered += (i === cursorOffset) ? chalk.inverse(NEWLINE_INDICATOR) + "\n" + CONTINUATION_PREFIX : NEWLINE_INDICATOR + "\n" + CONTINUATION_PREFIX;
       } else {
         const colored = colorChar(ch);
         rendered += (i === cursorOffset) ? chalk.inverse(colored) : colored;
@@ -57,9 +60,6 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
       rendered += chalk.inverse(" ");
     }
   }
-
-  // Line count indicator for multi-line input
-  const lineIndicator = isMultiLine ? chalk.grey(` [${lineCount} lines]`) : "";
 
   useInput((input, key) => {
     if (key.upArrow || key.downArrow || (key.ctrl && input === "c") || key.tab || (key.shift && key.tab)) return;
@@ -95,5 +95,5 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
     if (next !== value) onChange(next);
   }, { isActive: focus });
 
-  return <Text>{rendered}{lineIndicator}</Text>;
+  return <Text>{rendered}{hintText}</Text>;
 }

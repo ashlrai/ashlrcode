@@ -55,7 +55,7 @@ import { checkForUpgrade } from "./config/upgrade-notice.ts";
 import { VERSION } from "./version.ts";
 import { startBridgeServer, stopBridgeServer, getBridgePort } from "./bridge/bridge-server.ts";
 import { randomBytes } from "crypto";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
 import { getConfigDir } from "./config/settings.ts";
 import builtinQuips from "./ui/quips.json";
 
@@ -335,9 +335,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
         "/kairos", "/kairos stop", "/ship", "/ship stop", "/verify", "/coordinate", "/stats",
         "/permissions", "/trigger", "/sync", "/plan", "/patches", "/remote", "/undercover",
-        "/bridge", "/telemetry", "/voice",
+        "/bridge", "/telemetry", "/voice", "/transcript", "/transcript last", "/search",
         ...state.skillRegistry.getAll().map(s => s.trigger),
       ],
+      cwd: state.toolContext.cwd,
     };
   }
 
@@ -402,29 +403,31 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       } catch {}
     }
 
-    // Smart paste: collapse long multi-line text
+    // Smart paste: show truncated preview for multi-line text
     const lines = input.split("\n");
     let displayInput = input;
-    if (lines.length > 10) {
-      displayInput = `[Pasted ${lines.length} lines]`;
-    }
-
-    // Smart paste detection — categorize pasted content for better display
     if (lines.length > 3) {
-      // Detect JSON
-      try {
-        JSON.parse(input);
-        displayInput = `[Pasted JSON — ${input.length} chars]`;
-      } catch {}
+      // Build a truncated preview: first 3 lines + count of remaining
+      const preview = lines.slice(0, 3).map((l: string, i: number) => {
+        const trimmed = l.length > 80 ? l.slice(0, 77) + "..." : l;
+        return i === 0 ? trimmed : "  │ " + trimmed;
+      }).join("\n");
+      const remaining = lines.length - 3;
+      displayInput = remaining > 0
+        ? `${preview}\n  │ ... ${remaining} more line${remaining === 1 ? "" : "s"}`
+        : preview;
 
-      // Detect stack trace
+      // Add type hint for special content
+      let typeHint = "";
+      try { JSON.parse(input); typeHint = " (JSON)"; } catch {}
       if (input.includes("at ") && (input.includes("Error:") || input.includes("error:"))) {
-        displayInput = `[Stack trace — ${lines.length} lines]`;
+        typeHint = " (stack trace)";
       }
-
-      // Detect diff/patch
-      if (input.startsWith("diff ") || input.startsWith("---") || lines.some(l => l.startsWith("@@"))) {
-        displayInput = `[Pasted diff — ${lines.length} lines]`;
+      if (input.startsWith("diff ") || input.startsWith("---") || lines.some((l: string) => l.startsWith("@@"))) {
+        typeHint = " (diff)";
+      }
+      if (typeHint) {
+        displayInput += `  ${typeHint}`;
       }
     }
 
@@ -508,6 +511,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           `    /compact ${theme.muted("...........")} Force context compression`,
           `    /expand ${theme.muted("............")} View full untruncated last tool output`,
           `    /history ${theme.muted("...........")} View conversation file history`,
+          `    /transcript ${theme.muted(".......")} Save session output to file (/transcript last for recent)`,
+          `    /search ${theme.muted("...........")} Search output history for a pattern`,
           "",
           theme.accentBold("  Tools & Config"),
           `    /tools ${theme.muted("............")} List all registered tools`,
@@ -1584,6 +1589,92 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       case "/version":
         addOutput(`\n  AshlrCode v${VERSION}\n`);
         return true;
+
+      case "/transcript": {
+        const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*m/g, "");
+        if (arg === "last") {
+          // Show last 50 output lines in terminal
+          const lastItems = items.slice(-50);
+          if (lastItems.length === 0) {
+            addOutput(theme.tertiary("\n  No output to show.\n"));
+          } else {
+            addOutput("\n" + theme.accentBold("  Last 50 output lines:") + "\n");
+            for (const item of lastItems) {
+              addOutput(stripAnsi(item.text));
+            }
+          }
+          return true;
+        }
+        // Save full transcript to file
+        const transcriptDir = join(getConfigDir(), "transcripts");
+        mkdirSync(transcriptDir, { recursive: true });
+        const ts = new Date().toISOString().replace(/[:.]/g, "-");
+        const fname = `${state.session.id}-${ts}.txt`;
+        const fpath = join(transcriptDir, fname);
+        const lines = items.map(i => stripAnsi(i.text));
+        writeFileSync(fpath, lines.join("\n"), "utf-8");
+        addOutput(theme.success(`\n  Transcript saved to ${fpath} (${lines.length} lines)\n`));
+        return true;
+      }
+
+      case "/search": {
+        if (!arg) {
+          addOutput(theme.tertiary("\n  Usage: /search <pattern>\n  Searches output history for matching lines.\n"));
+          return true;
+        }
+        let regex: RegExp;
+        try {
+          regex = new RegExp(arg, "i");
+        } catch {
+          addOutput(theme.error(`\n  Invalid regex: ${arg}\n`));
+          return true;
+        }
+        const stripAnsiSearch = (s: string) => s.replace(/\x1B\[[0-9;]*m/g, "");
+        // Flatten items into individual lines for context matching
+        const allLines: string[] = [];
+        for (const item of items) {
+          const plain = stripAnsiSearch(item.text);
+          for (const line of plain.split("\n")) {
+            allLines.push(line);
+          }
+        }
+        const matches: Array<{ lineNum: number; lines: string[] }> = [];
+        const CONTEXT = 2;
+        const seen = new Set<number>();
+        for (let i = 0; i < allLines.length; i++) {
+          if (regex.test(allLines[i] ?? "")) {
+            const start = Math.max(0, i - CONTEXT);
+            const end = Math.min(allLines.length - 1, i + CONTEXT);
+            const contextLines: string[] = [];
+            for (let j = start; j <= end; j++) {
+              if (!seen.has(j)) {
+                seen.add(j);
+                const prefix = j === i ? theme.accent("  > ") : "    ";
+                contextLines.push(prefix + allLines[j]);
+              }
+            }
+            if (contextLines.length > 0) {
+              matches.push({ lineNum: i + 1, lines: contextLines });
+            }
+          }
+        }
+        if (matches.length === 0) {
+          addOutput(theme.tertiary(`\n  No matches for: ${arg}\n`));
+        } else {
+          addOutput("\n" + theme.accentBold(`  Search results for "${arg}" (${matches.length} matches):`) + "\n");
+          for (const m of matches.slice(0, 50)) {
+            addOutput(theme.muted(`  --- line ${m.lineNum} ---`));
+            for (const l of m.lines) {
+              addOutput(l);
+            }
+          }
+          if (matches.length > 50) {
+            addOutput(theme.muted(`  ... and ${matches.length - 50} more matches`));
+          }
+          addOutput("");
+        }
+        return true;
+      }
 
       default:
         if (cmd?.startsWith("/")) {
