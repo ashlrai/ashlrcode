@@ -28,13 +28,13 @@ function getFilePathSuggestion(input: string, cwd: string): string | undefined {
 
   if (!lastWord) return undefined;
 
-  // Check if it looks like a file path: contains / or . (but not just a single dot)
+  // Check if it looks like a file path — must contain / or start with . or ~
+  // (Don't match bare dotted words like "v2.0", "e.g.", "node.js")
   const looksLikePath =
     lastWord.includes("/") ||
     lastWord.startsWith("./") ||
     lastWord.startsWith("../") ||
-    lastWord.startsWith("~") ||
-    (lastWord.includes(".") && lastWord.length > 1);
+    lastWord.startsWith("~");
   if (!looksLikePath) return undefined;
 
   try {

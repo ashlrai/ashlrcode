@@ -281,7 +281,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let aiCommentGen = 0; // Guards against stale AI callbacks overwriting mid-turn
   let aiCommentInFlight = false;
   let isProcessing = false;
-  let interruptRequested = false;
+  let currentAbortController: AbortController | null = null;
   const messageQueue: string[] = [];
   let spinnerText = "Thinking";
   let tokenStats = "";
@@ -2034,6 +2034,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       let responseText = "";
 
+      // Set up abort controller for Ctrl+C interrupt
+      const abortController = new AbortController();
+      currentAbortController = abortController;
+
       // Wrap agent loop in AsyncLocalStorage root context for sub-agent isolation
       const rootCtx: AgentContext = {
         agentId: `root-${state.session.id}-${turnCount}`,
@@ -2044,8 +2048,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         startedAt: new Date().toISOString(),
       };
 
+      // Race the agent loop against the abort signal so Ctrl+C actually stops it
+      const abortPromise = new Promise<never>((_, reject) => {
+        abortController.signal.addEventListener("abort", () =>
+          reject(new Error("Interrupted by user")),
+        );
+      });
+
       const result = await runWithAgentContext(rootCtx, () =>
-        runAgentLoop(input, state.history, {
+        Promise.race([
+          runAgentLoop(input, state.history, {
           systemPrompt,
           maxIterations: effortConfig.maxIterations,
           router: state.router,
@@ -2119,7 +2131,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
             update();
           },
         }),
+          abortPromise,
+        ]),
       );
+
+      currentAbortController = null;
 
       // Flush remaining markdown buffer
       const flushed = flushMarkdown();
@@ -2215,12 +2231,22 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       lastHadError = false;
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
-      const categorized = categorizeError(error);
-      const hint = ERROR_RECOVERY_HINTS[categorized.category];
-      addOutput(theme.error(`\n  Error: ${categorized.message}\n`) + (hint ? theme.muted(`  ${hint}\n`) : ""));
-      logEvent("error", { message: categorized.message }).catch(() => {});
-      notifyError(categorized.message).catch(() => {});
-      lastHadError = true;
+      currentAbortController = null;
+
+      // Don't show error for user-initiated interrupts
+      if (error.message === "Interrupted by user") {
+        // Interrupt is already reported by handleInterrupt()
+      } else {
+        const categorized = categorizeError(error);
+        const hint = ERROR_RECOVERY_HINTS[categorized.category];
+        addOutput(
+          theme.error(`\n  Error: ${categorized.message}\n`) +
+            (hint ? theme.muted(`  ${hint}\n`) : ""),
+        );
+        logEvent("error", { message: categorized.message }).catch(() => {});
+        notifyError(categorized.message).catch(() => {});
+        lastHadError = true;
+      }
     }
 
     finishProcessing();
@@ -2294,11 +2320,15 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   function handleInterrupt() {
     if (!isProcessing) return;
-    interruptRequested = true;
-    addOutput(chalk.yellow("\n  ⚡ Interrupted — stopping current turn") + chalk.dim("  (Ctrl+C again to exit)\n"));
-    // Clear any queued messages too
+    // Abort the running agent loop — the catch block in runTurnInk
+    // will call finishProcessing(). isProcessing stays true until then
+    // so double-Ctrl+C can still trigger force exit.
+    currentAbortController?.abort();
+    addOutput(
+      chalk.yellow("\n  ⚡ Interrupted — stopping current turn") +
+        chalk.dim("  (Ctrl+C again to exit)\n"),
+    );
     messageQueue.length = 0;
-    finishProcessing();
   }
 
   function appProps() {

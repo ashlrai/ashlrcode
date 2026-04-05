@@ -64,7 +64,7 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
 
   useInput(
     (input, key) => {
-      if (key.upArrow || key.downArrow || (key.ctrl && input === "c") || key.tab || (key.shift && key.tab)) return;
+      if (key.upArrow || key.downArrow || (key.ctrl && input === "c") || key.tab || (key.shift && key.tab) || key.escape) return;
 
       // Ctrl+J inserts a newline (standard terminal newline keybind)
       if (key.ctrl && input === "j") {
