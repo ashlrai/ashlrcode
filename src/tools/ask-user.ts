@@ -132,19 +132,47 @@ async function askInInkMode(
   question: string,
   options: QuestionOption[],
 ): Promise<string> {
-  const w = process.stdout.columns || 80;
+  const chalk = (await import("chalk")).default;
+  const cols = Math.min(process.stdout.columns || 80, 72);
+  const BORDER = chalk.hex("#A78BFA"); // violet-400 for questions
+  const BORDER_BOLD = chalk.hex("#A78BFA").bold;
 
-  // Display question — Ink captures console output into its log area
-  console.log("");
-  console.log("─".repeat(w));
-  console.log(`\n  ✦  ${question}\n`);
+  const emptyLine = BORDER("│") + " ".repeat(cols - 2) + BORDER("│");
+
+  function padLine(content: string, rawLen: number): string {
+    const pad = Math.max(0, cols - 2 - 2 - rawLen);
+    return BORDER("│") + "  " + content + " ".repeat(pad) + BORDER("│");
+  }
+
+  const titleText = " ✦ Question ";
+  const topBar = BORDER("┌─") + BORDER_BOLD(titleText) + BORDER("─".repeat(Math.max(0, cols - 2 - titleText.length - 2)) + "┐");
+  const bottom = BORDER("└" + "─".repeat(cols - 2) + "┘");
+
+  // Build lines
+  const lines: string[] = ["", topBar, emptyLine];
+
+  // Wrap question text
+  const qText = chalk.hex("#F1F5F9").bold(question);
+  lines.push(padLine(qText, question.length));
+  lines.push(emptyLine);
+
+  // Options
   options.forEach((opt, i) => {
-    console.log(`  ${i + 1} → ${opt.label}`);
-    console.log(`       ${opt.description}`);
-    if (i < options.length - 1) console.log("");
+    const numStr = `${i + 1}`;
+    const optLine = chalk.hex("#A78BFA").bold(`${numStr} → `) + chalk.hex("#F1F5F9")(opt.label);
+    lines.push(padLine(optLine, numStr.length + 3 + opt.label.length));
+    const descLine = chalk.hex("#94A3B8")("     " + opt.description);
+    lines.push(padLine(descLine, 5 + opt.description.length));
+    if (i < options.length - 1) lines.push(emptyLine);
   });
-  console.log(`\n  ${options.length + 1} → Other (type your own answer)`);
-  console.log("\n" + "─".repeat(w));
+
+  lines.push(emptyLine);
+  const otherStr = `${options.length + 1} → Other (type your own answer)`;
+  lines.push(padLine(chalk.hex("#64748B")(otherStr), otherStr.length));
+  lines.push(emptyLine);
+  lines.push(bottom, "");
+
+  console.log(lines.join("\n"));
 
   // Wait for user to submit input via the repl
   pendingOptions = options;

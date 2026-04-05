@@ -76,6 +76,7 @@ import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.
 import { cycleMode, getCurrentMode } from "./ui/mode.ts";
 import { notifyError, notifyTurnComplete } from "./ui/notifications.ts";
 import builtinQuips from "./ui/quips.json";
+import { formatPermissionBox, formatPermissionOptions } from "./ui/PermissionPrompt.tsx";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { theme } from "./ui/theme.ts";
 import { VERSION } from "./version.ts";
@@ -143,12 +144,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     const perm = checkPermission(toolName);
     if (perm === "allow") return true;
     if (perm === "deny") return false;
-    // Show permission prompt inline in the output stream
-    _addOutput(`\n  ⚡ ${theme.warning("Permission:")} ${theme.primary(toolName)}`);
-    _addOutput(theme.tertiary(`    ${description}`));
-    _addOutput(
-      `    ${chalk.green("[y]")}${chalk.green("es once")}  ${chalk.cyan("[a]")}${chalk.cyan("lways")}  ${chalk.yellow.bold.underline("[n]")}${chalk.yellow.bold("o once")}  ${chalk.red("[d]")}${chalk.red("eny always")}\n`,
-    );
+    // Show boxed permission prompt inline in the output stream
+    _addOutput(formatPermissionBox(toolName, description));
     return requestPermissionInk(toolName, description);
   };
 
@@ -446,10 +443,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         addOutput(theme.success(`  ✓ ${input.trim()}`));
         return;
       }
-      // Unrecognized key — remind user of valid options
-      addOutput(
-        `  ${chalk.green("[y]")}es  ${chalk.cyan("[a]")}lways  ${chalk.yellow.bold("[n]")}o  ${chalk.red("[d]")}eny`,
-      );
+      // Unrecognized key — remind user of valid options with boxed display
+      addOutput(formatPermissionOptions());
       return;
     }
 

@@ -80,15 +80,18 @@ export class MarkdownRenderer {
         this.state.inCodeBlock = false;
         this.state.codeBlockLang = "";
         this.state.codeBlockLines = [];
-        return tablePre + chalk.dim("```");
+        // Bottom border
+        return tablePre + chalk.dim("  └" + "─".repeat(59));
       } else {
         this.state.inCodeBlock = true;
         this.state.codeBlockLang = line.trim().slice(3).trim();
         this.state.codeBlockLines = [];
+        // Top border with language label
         const langLabel = this.state.codeBlockLang
-          ? chalk.dim(`\`\`\`${this.state.codeBlockLang}`)
-          : chalk.dim("```");
-        return tablePre + langLabel;
+          ? ` ${this.state.codeBlockLang} `
+          : "";
+        const remaining = Math.max(0, 59 - langLabel.length - 1);
+        return tablePre + chalk.dim("  ┌─") + (langLabel ? chalk.hex("#94A3B8")(langLabel) : "") + chalk.dim("─".repeat(remaining));
       }
     }
 
@@ -96,7 +99,7 @@ export class MarkdownRenderer {
       this.state.codeBlockLines.push(line);
       const lineNum = this.state.codeBlockLines.length;
       const highlighted = highlightCode(line, this.state.codeBlockLang);
-      const numStr = chalk.hex("#616161")(`${String(lineNum).padStart(3)} │ `);
+      const numStr = chalk.hex("#616161")(`  │ ${String(lineNum).padStart(3)} │ `);
       return numStr + highlighted;
     }
 

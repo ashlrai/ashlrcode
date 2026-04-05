@@ -7,16 +7,27 @@ import { theme, stylePath } from "./theme.ts";
 import { highlightCode } from "./markdown.ts";
 
 const MAX_BODY_LINES = 20;
+const BOX_WIDTH = 60;
 
 // ── Borders ────────────────────────────────────────────────────────────────
 
-function wrapWithBorder(bodyLines: string[], footer?: string): string[] {
+function wrapWithBorder(bodyLines: string[], header?: string, footer?: string): string[] {
   const lines: string[] = [];
-  for (const line of bodyLines) {
-    lines.push(theme.muted("  │") + `  ${line}`);
+
+  // Top border: ┌─ Header ─────────────────────────────┐
+  if (header) {
+    const label = ` ${header} `;
+    const remaining = Math.max(0, BOX_WIDTH - label.length - 1);
+    lines.push(theme.border("  ┌─") + theme.borderBright(label) + theme.border("─".repeat(remaining)));
   }
-  const suffix = footer ? `  ${theme.muted(footer)}` : "";
-  lines.push(theme.muted("  └") + suffix);
+
+  for (const line of bodyLines) {
+    lines.push(theme.border("  │") + `  ${line}`);
+  }
+
+  // Bottom border: └────────────────────────────────────┘
+  const footerSuffix = footer ? `  ${theme.muted(footer)}` : "";
+  lines.push(theme.border("  └" + "─".repeat(Math.max(0, BOX_WIDTH - 1))) + footerSuffix);
   return lines;
 }
 
@@ -76,13 +87,13 @@ function formatEditBody(result: string): string[] {
   const body: string[] = [];
   for (const line of lines) {
     if (line.startsWith("- ")) {
-      body.push(chalk.hex("#FF1744")(line));
+      body.push(chalk.hex("#FF1744")("- ") + chalk.hex("#FF1744").dim(line.slice(2)));
     } else if (line.startsWith("+ ")) {
-      body.push(chalk.hex("#00E676")(line));
+      body.push(chalk.hex("#00E676")("+ ") + chalk.hex("#00E676")(line.slice(2)));
     } else if (line.startsWith("  ...")) {
       body.push(theme.muted(line));
     } else {
-      body.push(line);
+      body.push(theme.tertiary(line));
     }
   }
   return truncateLines(body);
@@ -91,23 +102,38 @@ function formatEditBody(result: string): string[] {
 function formatReadBody(result: string, filePath: string): string[] {
   const lang = extToLang(filePath);
   const lines = result.split("\n");
-  if (!lang) return truncateLines(lines);
-  return truncateLines(lines.map(line => {
-    // Line-numbered content: "   1\tcontent" — highlight the content part
+  // Find max line number width for right-alignment
+  const maxNumWidth = lines.reduce((max, line) => {
     const tabIdx = line.indexOf("\t");
     if (tabIdx > 0) {
-      const num = line.slice(0, tabIdx);
-      const content = line.slice(tabIdx + 1);
-      return chalk.hex("#616161")(num + " │ ") + highlightCode(content, lang);
+      const num = line.slice(0, tabIdx).trim();
+      return Math.max(max, num.length);
     }
-    return highlightCode(line, lang);
-  }));
+    return max;
+  }, 3);
+
+  const formatted = lines.map(line => {
+    const tabIdx = line.indexOf("\t");
+    if (tabIdx > 0) {
+      const num = line.slice(0, tabIdx).trim();
+      const content = line.slice(tabIdx + 1);
+      const paddedNum = num.padStart(maxNumWidth);
+      const highlighted = lang ? highlightCode(content, lang) : content;
+      return theme.muted(`${paddedNum} │ `) + highlighted;
+    }
+    return lang ? highlightCode(line, lang) : line;
+  });
+  return truncateLines(formatted);
 }
 
 function formatBashBody(result: string, isError: boolean): string[] {
   const lines = result.split("\n");
   if (isError) return truncateLines(lines.map(line => chalk.hex("#FF1744")(line)));
-  return truncateLines(lines);
+  // Apply dim styling to empty lines and subtle highlighting otherwise
+  return truncateLines(lines.map(line => {
+    if (line.trim() === "") return "";
+    return line;
+  }));
 }
 
 function formatGrepBody(result: string): string[] {
@@ -132,16 +158,17 @@ function formatDefaultBody(result: string): string[] {
 export function formatToolExecution(name: string, input: Record<string, unknown>, result: string, isError: boolean, durationMs?: number): string[] {
   const lines: string[] = [];
 
-  // Header: ● ToolName(compact_input)
+  // Build header label: "ToolName: compact_input"
   const compactInput = getCompactInput(name, input);
-  const inputStr = compactInput ? theme.muted(`(${compactInput})`) : "";
+  const headerLabel = compactInput ? `${name}: ${compactInput}` : name;
   const icon = isError ? theme.error("●") : theme.accent("●");
-  lines.push(`  ${icon} ${theme.toolName(name)}${inputStr}`);
+  lines.push(`  ${icon} ${theme.toolName(name)}${compactInput ? theme.muted(` ${compactInput}`) : ""}`);
 
   // Body — per-tool formatting
   let bodyLines: string[];
   switch (name) {
     case "Edit":
+    case "Write":
       bodyLines = formatEditBody(result);
       break;
     case "Read":
@@ -162,9 +189,9 @@ export function formatToolExecution(name: string, input: Record<string, unknown>
     bodyLines.pop();
   }
 
-  // Wrap with border and footer
+  // Wrap with border, header, and footer
   const timing = durationMs ? `(${formatDuration(durationMs)})` : "";
-  lines.push(...wrapWithBorder(bodyLines, timing));
+  lines.push(...wrapWithBorder(bodyLines, headerLabel, timing));
 
   return lines;
 }
