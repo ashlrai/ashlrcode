@@ -235,12 +235,28 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   let aiCommentGen = 0; // Guards against stale AI callbacks overwriting mid-turn
   let aiCommentInFlight = false;
   let isProcessing = false;
+  const messageQueue: string[] = [];
   let spinnerText = "Thinking";
   let tokenStats = "";
   let turnStreamStart = 0;
   let turnOutputTokens = 0;
   let turnInputTokens = 0;
   let turnCharCount = 0;
+
+  /** Mark turn complete and drain any queued messages. */
+  function finishProcessing() {
+    isProcessing = false;
+    update();
+    // Drain message queue — process next queued message
+    if (messageQueue.length > 0) {
+      const next = messageQueue.shift()!;
+      addOutput(chalk.dim(`  ⏩ Processing queued: "${next.length > 60 ? next.slice(0, 57) + "..." : next}"`));
+      update();
+      // Use setTimeout to avoid stack depth issues
+      setTimeout(() => handleSubmit(next), 0);
+    }
+  }
+
   function formatTk(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
@@ -332,8 +348,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       return;
     }
 
-    // Prevent concurrent turns
-    if (isProcessing) return;
+    // Queue messages while processing — drain after turn completes
+    if (isProcessing) {
+      messageQueue.push(input);
+      addOutput(chalk.dim(`  ⏳ Queued: "${input.length > 60 ? input.slice(0, 57) + "..." : input}"`));
+      update();
+      return;
+    }
 
     // Detect image file paths (drag-and-drop inserts path as text)
     const imageMatch = input.match(/(?:^|\s)(\/[^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i)
@@ -1692,8 +1713,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       lastHadError = true;
     }
 
-    isProcessing = false;
-    update();
+    finishProcessing();
   }
 
   // Wire deferred trigger callback now that runTurnInk is defined
