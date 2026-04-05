@@ -87,11 +87,14 @@ export class MarkdownRenderer {
         this.state.codeBlockLang = line.trim().slice(3).trim();
         this.state.codeBlockLines = [];
         // Top border with language label
-        const langLabel = this.state.codeBlockLang
-          ? ` ${this.state.codeBlockLang} `
-          : "";
+        const langLabel = this.state.codeBlockLang ? ` ${this.state.codeBlockLang} ` : "";
         const remaining = Math.max(0, 59 - langLabel.length - 1);
-        return tablePre + chalk.dim("  ┌─") + (langLabel ? chalk.hex("#94A3B8")(langLabel) : "") + chalk.dim("─".repeat(remaining));
+        return (
+          tablePre +
+          chalk.dim("  ┌─") +
+          (langLabel ? chalk.hex("#94A3B8")(langLabel) : "") +
+          chalk.dim("─".repeat(remaining))
+        );
       }
     }
 
@@ -208,10 +211,7 @@ export function highlightCode(line: string, lang: string): string {
   }
 
   // Collect comment spans
-  const commentPattern =
-    lang === "python" || lang === "bash" || lang === "sh"
-      ? /#.*$/gm
-      : /\/\/.*$/gm;
+  const commentPattern = lang === "python" || lang === "bash" || lang === "sh" ? /#.*$/gm : /\/\/.*$/gm;
   while ((match = commentPattern.exec(line)) !== null) {
     // Only add if not overlapping with a string token
     const s = match.index;
@@ -337,8 +337,10 @@ function renderInline(text: string): string {
   text = text.replace(/`([^`]+)`/g, (_match, g1) => chalk.cyan(`\`${g1}\``));
 
   // Links: [text](url)
-  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, linkText, url) =>
-    chalk.underline(linkText) + chalk.dim(` (${url})`));
+  text = text.replace(
+    /\[([^\]]+)\]\(([^)]+)\)/g,
+    (_match, linkText, url) => chalk.underline(linkText) + chalk.dim(` (${url})`),
+  );
 
   // Bold + italic: ***text*** or ___text___
   text = text.replace(/\*\*\*([^*]+)\*\*\*/g, (_match, g1) => chalk.bold.italic(g1));
@@ -418,11 +420,7 @@ function renderTable(rows: string[][]): string {
   const lines: string[] = [];
 
   // Top border: ┌───┬───┐
-  lines.push(
-    chalk.dim("┌") +
-      colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┬")) +
-      chalk.dim("┐"),
-  );
+  lines.push(chalk.dim("┌") + colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┬")) + chalk.dim("┐"));
 
   for (let r = 0; r < formatted.length; r++) {
     const row = formatted[r]!;
@@ -437,19 +435,13 @@ function renderTable(rows: string[][]): string {
     // After first row (header), add separator: ├───┼───┤
     if (r === 0 && formatted.length > 1) {
       lines.push(
-        chalk.dim("├") +
-          colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┼")) +
-          chalk.dim("┤"),
+        chalk.dim("├") + colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┼")) + chalk.dim("┤"),
       );
     }
   }
 
   // Bottom border: └───┴───┘
-  lines.push(
-    chalk.dim("└") +
-      colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┴")) +
-      chalk.dim("┘"),
-  );
+  lines.push(chalk.dim("└") + colWidths.map((w) => chalk.dim("─".repeat(w + 2))).join(chalk.dim("┴")) + chalk.dim("┘"));
 
   return lines.join("\n");
 }

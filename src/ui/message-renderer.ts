@@ -3,8 +3,8 @@
  */
 
 import chalk from "chalk";
-import { theme, stylePath } from "./theme.ts";
 import { highlightCode } from "./markdown.ts";
+import { stylePath, theme } from "./theme.ts";
 
 const MAX_BODY_LINES = 20;
 const BOX_WIDTH = 60;
@@ -34,7 +34,7 @@ function wrapWithBorder(bodyLines: string[], header?: string, footer?: string): 
 function truncateLines(allLines: string[], max: number = MAX_BODY_LINES): string[] {
   if (allLines.length <= max) return allLines;
   const tail = Math.max(1, Math.floor((max - 1) / 4));
-  const head = (max - 1) - tail;
+  const head = max - 1 - tail;
   const omitted = allLines.length - head - tail;
   return [...allLines.slice(0, head), theme.muted(`  ... ${omitted} more lines ...`), ...allLines.slice(-tail)];
 }
@@ -42,10 +42,25 @@ function truncateLines(allLines: string[], max: number = MAX_BODY_LINES): string
 // ── File extension → language ──────────────────────────────────────────────
 
 const EXT_TO_LANG: Record<string, string> = {
-  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-  py: "python", go: "go", rs: "rust", sh: "bash", bash: "bash", zsh: "bash",
-  json: "json", yaml: "json", yml: "json", toml: "json",
-  md: "", txt: "", css: "", html: "", sql: "",
+  ts: "typescript",
+  tsx: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  py: "python",
+  go: "go",
+  rs: "rust",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  json: "json",
+  yaml: "json",
+  yml: "json",
+  toml: "json",
+  md: "",
+  txt: "",
+  css: "",
+  html: "",
+  sql: "",
 };
 
 function extToLang(filePath: string): string {
@@ -57,16 +72,26 @@ function extToLang(filePath: string): string {
 
 function getCompactInput(name: string, input: Record<string, unknown>): string {
   switch (name) {
-    case "Bash": return String(input.command ?? "").split("\n")[0]!.slice(0, 60);
+    case "Bash":
+      return String(input.command ?? "")
+        .split("\n")[0]!
+        .slice(0, 60);
     case "Read":
     case "Write":
-    case "Edit": return shortenPath(String(input.file_path ?? ""));
-    case "Glob": return String(input.pattern ?? "");
-    case "Grep": return `/${String(input.pattern ?? "")}/`;
-    case "WebFetch": return String(input.url ?? "").slice(0, 50);
-    case "WebSearch": return String(input.query ?? "").slice(0, 50);
-    case "Agent": return String(input.description ?? "").slice(0, 50);
-    case "LSP": return `${input.action ?? ""} ${shortenPath(String(input.file ?? ""))}`;
+    case "Edit":
+      return shortenPath(String(input.file_path ?? ""));
+    case "Glob":
+      return String(input.pattern ?? "");
+    case "Grep":
+      return `/${String(input.pattern ?? "")}/`;
+    case "WebFetch":
+      return String(input.url ?? "").slice(0, 50);
+    case "WebSearch":
+      return String(input.query ?? "").slice(0, 50);
+    case "Agent":
+      return String(input.description ?? "").slice(0, 50);
+    case "LSP":
+      return `${input.action ?? ""} ${shortenPath(String(input.file ?? ""))}`;
     default: {
       const first = Object.entries(input)[0];
       return first ? String(first[1]).slice(0, 50) : "";
@@ -112,7 +137,7 @@ function formatReadBody(result: string, filePath: string): string[] {
     return max;
   }, 3);
 
-  const formatted = lines.map(line => {
+  const formatted = lines.map((line) => {
     const tabIdx = line.indexOf("\t");
     if (tabIdx > 0) {
       const num = line.slice(0, tabIdx).trim();
@@ -128,24 +153,29 @@ function formatReadBody(result: string, filePath: string): string[] {
 
 function formatBashBody(result: string, isError: boolean): string[] {
   const lines = result.split("\n");
-  if (isError) return truncateLines(lines.map(line => chalk.hex("#FF1744")(line)));
+  if (isError) return truncateLines(lines.map((line) => chalk.hex("#FF1744")(line)));
   // Apply dim styling to empty lines and subtle highlighting otherwise
-  return truncateLines(lines.map(line => {
-    if (line.trim() === "") return "";
-    return line;
-  }));
+  return truncateLines(
+    lines.map((line) => {
+      if (line.trim() === "") return "";
+      return line;
+    }),
+  );
 }
 
 function formatGrepBody(result: string): string[] {
   const lines = result.split("\n");
-  return truncateLines(lines.map(line => {
-    // Highlight file:line: pattern matches
-    const colonIdx = line.indexOf(":");
-    if (colonIdx > 0) {
-      return stylePath(line.slice(0, colonIdx)) + line.slice(colonIdx);
-    }
-    return line;
-  }), 15);
+  return truncateLines(
+    lines.map((line) => {
+      // Highlight file:line: pattern matches
+      const colonIdx = line.indexOf(":");
+      if (colonIdx > 0) {
+        return stylePath(line.slice(0, colonIdx)) + line.slice(colonIdx);
+      }
+      return line;
+    }),
+    15,
+  );
 }
 
 function formatDefaultBody(result: string): string[] {
@@ -155,7 +185,13 @@ function formatDefaultBody(result: string): string[] {
 // ── Main formatter ─────────────────────────────────────────────────────────
 
 /** Format a tool execution for display with bordered block */
-export function formatToolExecution(name: string, input: Record<string, unknown>, result: string, isError: boolean, durationMs?: number): string[] {
+export function formatToolExecution(
+  name: string,
+  input: Record<string, unknown>,
+  result: string,
+  isError: boolean,
+  durationMs?: number,
+): string[] {
   const lines: string[] = [];
 
   // Build header label: "ToolName: compact_input"
@@ -197,7 +233,9 @@ export function formatToolExecution(name: string, input: Record<string, unknown>
 }
 
 /** Format a group of tool executions (parallel tools) */
-export function formatToolGroup(tools: Array<{ name: string; result: string; isError: boolean; durationMs?: number }>): string[] {
+export function formatToolGroup(
+  tools: Array<{ name: string; result: string; isError: boolean; durationMs?: number }>,
+): string[] {
   if (tools.length <= 1) return [];
 
   const lines: string[] = [];

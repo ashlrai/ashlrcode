@@ -128,10 +128,7 @@ The user can always type a custom answer beyond the provided options.`;
 // Ink-mode implementation (bypass / Ink active)
 // ---------------------------------------------------------------------------
 
-async function askInInkMode(
-  question: string,
-  options: QuestionOption[],
-): Promise<string> {
+async function askInInkMode(question: string, options: QuestionOption[]): Promise<string> {
   const chalk = (await import("chalk")).default;
   const cols = Math.min(process.stdout.columns || 80, 72);
   const BORDER = chalk.hex("#A78BFA"); // violet-400 for questions
@@ -145,7 +142,8 @@ async function askInInkMode(
   }
 
   const titleText = " ✦ Question ";
-  const topBar = BORDER("┌─") + BORDER_BOLD(titleText) + BORDER("─".repeat(Math.max(0, cols - 2 - titleText.length - 2)) + "┐");
+  const topBar =
+    BORDER("┌─") + BORDER_BOLD(titleText) + BORDER("─".repeat(Math.max(0, cols - 2 - titleText.length - 2)) + "┐");
   const bottom = BORDER("└" + "─".repeat(cols - 2) + "┘");
 
   // Build lines
@@ -192,10 +190,7 @@ async function askInInkMode(
 // CLI-mode implementation (readline, no Ink)
 // ---------------------------------------------------------------------------
 
-async function askInCliMode(
-  question: string,
-  options: QuestionOption[],
-): Promise<string> {
+async function askInCliMode(question: string, options: QuestionOption[]): Promise<string> {
   const w = process.stdout.columns || 80;
 
   console.log("");
@@ -232,9 +227,7 @@ async function askInCliMode(
   }
 
   if (choiceNum === options.length + 1 || isNaN(choiceNum)) {
-    const customAnswer = isNaN(choiceNum)
-      ? answer.trim()
-      : await promptUser(theme.accent("  Your answer: "));
+    const customAnswer = isNaN(choiceNum) ? answer.trim() : await promptUser(theme.accent("  Your answer: "));
     console.log(theme.success(`  ✓ ${customAnswer}`));
     console.log("");
     return `User's custom answer: "${customAnswer}"`;

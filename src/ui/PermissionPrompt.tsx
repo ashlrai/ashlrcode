@@ -5,8 +5,8 @@
  * showing the tool name, description, and available key options.
  */
 
-import React from "react";
 import { Box, Text } from "ink";
+import React from "react";
 
 interface Props {
   toolName: string;
@@ -17,12 +17,14 @@ export function PermissionPrompt({ toolName, description }: Props) {
   return (
     <Box flexDirection="column" marginY={1}>
       <Box>
-        <Text color="yellow" bold>⚡ Permission: </Text>
+        <Text color="yellow" bold>
+          ⚡ Permission:{" "}
+        </Text>
         <Text bold>{toolName}</Text>
       </Box>
-      <Text dimColor>  {description}</Text>
+      <Text dimColor> {description}</Text>
       <Box marginTop={1}>
-        <Text dimColor>  [y] allow  [a] always  [n] deny  [d] always deny</Text>
+        <Text dimColor> [y] allow [a] always [n] deny [d] always deny</Text>
       </Box>
     </Box>
   );
@@ -33,7 +35,7 @@ export function PermissionPrompt({ toolName, description }: Props) {
 import chalk from "chalk";
 
 const BORDER_COLOR = chalk.hex("#FBBF24"); // amber-400 (warning/yellow)
-const DIM_BORDER = chalk.hex("#D97706");   // amber-500 (dimmer)
+const DIM_BORDER = chalk.hex("#D97706"); // amber-500 (dimmer)
 
 /**
  * Build a boxed permission prompt string for console output.
@@ -44,7 +46,10 @@ export function formatPermissionBox(toolName: string, description: string): stri
   const innerW = cols - 4; // account for "│  " + " │"
 
   const titleText = " ⚡ Permission Required ";
-  const topBar = BORDER_COLOR("┌─") + chalk.hex("#FBBF24").bold(titleText) + BORDER_COLOR("─".repeat(Math.max(0, cols - 2 - titleText.length - 2)) + "┐");
+  const topBar =
+    BORDER_COLOR("┌─") +
+    chalk.hex("#FBBF24").bold(titleText) +
+    BORDER_COLOR("─".repeat(Math.max(0, cols - 2 - titleText.length - 2)) + "┐");
   const emptyLine = BORDER_COLOR("│") + " ".repeat(cols - 2) + BORDER_COLOR("│");
   const bottom = BORDER_COLOR("└" + "─".repeat(cols - 2) + "┘");
 
@@ -56,9 +61,9 @@ export function formatPermissionBox(toolName: string, description: string): stri
   const toolLabel = chalk.hex("#94A3B8")("Tool:   ") + chalk.hex("#F1F5F9").bold(toolName);
   const actionLabel = chalk.hex("#94A3B8")("Action: ") + chalk.hex("#CBD5E1")(truncate(description, innerW - 10));
 
-  const allowOnce  = chalk.green.bold("[Y]") + chalk.green(" Allow once");
+  const allowOnce = chalk.green.bold("[Y]") + chalk.green(" Allow once");
   const allowAlways = chalk.cyan.bold("[A]") + chalk.cyan(" Allow always");
-  const denyOnce   = chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once");
+  const denyOnce = chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once");
   const denyAlways = chalk.red.bold("[D]") + chalk.red(" Deny always");
 
   const lines = [
@@ -85,9 +90,9 @@ export function formatPermissionOptions(): string {
   const cols = Math.min(process.stdout.columns || 80, 72);
   const emptyLine = BORDER_COLOR("│") + " ".repeat(cols - 2) + BORDER_COLOR("│");
 
-  const allowOnce  = chalk.green.bold("[Y]") + chalk.green(" Allow once");
+  const allowOnce = chalk.green.bold("[Y]") + chalk.green(" Allow once");
   const allowAlways = chalk.cyan.bold("[A]") + chalk.cyan(" Allow always");
-  const denyOnce   = chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once");
+  const denyOnce = chalk.yellow.bold.underline("[N]") + chalk.yellow.bold(" Deny once");
   const denyAlways = chalk.red.bold("[D]") + chalk.red(" Deny always");
 
   function padLine(content: string, rawLen: number): string {

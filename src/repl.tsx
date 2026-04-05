@@ -75,8 +75,8 @@ import { flushMarkdown, renderMarkdownDelta, resetMarkdown } from "./ui/markdown
 import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.ts";
 import { cycleMode, getCurrentMode } from "./ui/mode.ts";
 import { notifyError, notifyTurnComplete } from "./ui/notifications.ts";
-import builtinQuips from "./ui/quips.json";
 import { formatPermissionBox, formatPermissionOptions } from "./ui/PermissionPrompt.tsx";
+import builtinQuips from "./ui/quips.json";
 import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { theme } from "./ui/theme.ts";
 import { VERSION } from "./version.ts";
@@ -2045,87 +2045,85 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       // Race the agent loop against the abort signal so Ctrl+C actually stops it
       const abortPromise = new Promise<never>((_, reject) => {
-        abortController.signal.addEventListener("abort", () =>
-          reject(new Error("Interrupted by user")),
-        );
+        abortController.signal.addEventListener("abort", () => reject(new Error("Interrupted by user")));
       });
 
       const result = await runWithAgentContext(rootCtx, () =>
         Promise.race([
           runAgentLoop(input, state.history, {
-          systemPrompt,
-          maxIterations: effortConfig.maxIterations,
-          router: state.router,
-          toolRegistry: state.registry,
-          toolContext: state.toolContext,
-          readOnly: isPlanMode(),
-          onUsage: (usage) => {
-            if (usage.inputTokens) turnInputTokens = usage.inputTokens;
-            if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
-            const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
-            tokenStats = computeTokenStats(tokens, false);
-            update();
-          },
-          onText: (text) => {
-            isProcessing = false;
-            if (!turnStreamStart) turnStreamStart = Date.now();
-            turnCharCount += text.length;
-            responseText += text;
-            // Use stateful markdown renderer (handles code blocks, headers, etc.)
-            const rendered = renderMarkdownDelta(text);
-            if (rendered) {
-              // Rendered output is newline-terminated; split and indent each line
-              const lines = rendered.replace(/\n$/, "").split("\n");
-              for (const line of lines) {
-                addOutput("  " + line);
+            systemPrompt,
+            maxIterations: effortConfig.maxIterations,
+            router: state.router,
+            toolRegistry: state.registry,
+            toolContext: state.toolContext,
+            readOnly: isPlanMode(),
+            onUsage: (usage) => {
+              if (usage.inputTokens) turnInputTokens = usage.inputTokens;
+              if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
+              const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
+              tokenStats = computeTokenStats(tokens, false);
+              update();
+            },
+            onText: (text) => {
+              isProcessing = false;
+              if (!turnStreamStart) turnStreamStart = Date.now();
+              turnCharCount += text.length;
+              responseText += text;
+              // Use stateful markdown renderer (handles code blocks, headers, etc.)
+              const rendered = renderMarkdownDelta(text);
+              if (rendered) {
+                // Rendered output is newline-terminated; split and indent each line
+                const lines = rendered.replace(/\n$/, "").split("\n");
+                for (const line of lines) {
+                  addOutput("  " + line);
+                }
               }
-            }
-            // Partial line stays in spinnerText for live display
-            const allLines = responseText.split("\n");
-            responseText = allLines[allLines.length - 1]!;
-            // Update token stats from char estimate if no actual usage yet
-            if (!turnOutputTokens) {
-              tokenStats = computeTokenStats(Math.round(turnCharCount / 4), true);
-            }
-            spinnerText = responseText;
-            update();
-          },
-          onToolStart: (name, toolInput) => {
-            isProcessing = true;
-            spinnerText = name;
-            toolStartTime = Date.now();
-            currentToolInput = toolInput as Record<string, unknown>;
-            recordThinking(state.buddy);
-            logEvent("tool_start", { tool: name }).catch(() => {});
-            if (isFirstToolCall()) {
-              addOutput(getBuddyReaction(state.buddy, "first_tool"));
-            }
-            update();
-          },
-          onToolEnd: (_name, result, isError) => {
-            isProcessing = false;
-            turnToolCount++;
-            const durationMs = toolStartTime > 0 ? Date.now() - toolStartTime : undefined;
-            lastToolName = _name;
-            lastToolResult = result.slice(0, 50);
-            lastFullToolOutput = result; // Store full output for /expand
-            logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
-            if (isError) {
-              recordError(state.buddy);
-              lastHadError = true;
-            } else recordToolCallSuccess(state.buddy);
+              // Partial line stays in spinnerText for live display
+              const allLines = responseText.split("\n");
+              responseText = allLines[allLines.length - 1]!;
+              // Update token stats from char estimate if no actual usage yet
+              if (!turnOutputTokens) {
+                tokenStats = computeTokenStats(Math.round(turnCharCount / 4), true);
+              }
+              spinnerText = responseText;
+              update();
+            },
+            onToolStart: (name, toolInput) => {
+              isProcessing = true;
+              spinnerText = name;
+              toolStartTime = Date.now();
+              currentToolInput = toolInput as Record<string, unknown>;
+              recordThinking(state.buddy);
+              logEvent("tool_start", { tool: name }).catch(() => {});
+              if (isFirstToolCall()) {
+                addOutput(getBuddyReaction(state.buddy, "first_tool"));
+              }
+              update();
+            },
+            onToolEnd: (_name, result, isError) => {
+              isProcessing = false;
+              turnToolCount++;
+              const durationMs = toolStartTime > 0 ? Date.now() - toolStartTime : undefined;
+              lastToolName = _name;
+              lastToolResult = result.slice(0, 50);
+              lastFullToolOutput = result; // Store full output for /expand
+              logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
+              if (isError) {
+                recordError(state.buddy);
+                lastHadError = true;
+              } else recordToolCallSuccess(state.buddy);
 
-            // Use message renderer for formatted output
-            addOutput(""); // spacing before tool block
-            const rendered = formatToolExecution(_name, currentToolInput, result, isError, durationMs);
-            for (const line of rendered) addOutput(line);
+              // Use message renderer for formatted output
+              addOutput(""); // spacing before tool block
+              const rendered = formatToolExecution(_name, currentToolInput, result, isError, durationMs);
+              for (const line of rendered) addOutput(line);
 
-            if (isError) addOutput(getBuddyReaction(state.buddy, "error"));
-            toolStartTime = 0;
-            currentToolInput = {};
-            update();
-          },
-        }),
+              if (isError) addOutput(getBuddyReaction(state.buddy, "error"));
+              toolStartTime = 0;
+              currentToolInput = {};
+              update();
+            },
+          }),
           abortPromise,
         ]),
       );
@@ -2234,10 +2232,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       } else {
         const categorized = categorizeError(error);
         const hint = ERROR_RECOVERY_HINTS[categorized.category];
-        addOutput(
-          theme.error(`\n  Error: ${categorized.message}\n`) +
-            (hint ? theme.muted(`  ${hint}\n`) : ""),
-        );
+        addOutput(theme.error(`\n  Error: ${categorized.message}\n`) + (hint ? theme.muted(`  ${hint}\n`) : ""));
         logEvent("error", { message: categorized.message }).catch(() => {});
         notifyError(categorized.message).catch(() => {});
         lastHadError = true;
@@ -2319,10 +2314,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     // will call finishProcessing(). isProcessing stays true until then
     // so double-Ctrl+C can still trigger force exit.
     currentAbortController?.abort();
-    addOutput(
-      chalk.yellow("\n  ⚡ Interrupted — stopping current turn") +
-        chalk.dim("  (Ctrl+C again to exit)\n"),
-    );
+    addOutput(chalk.yellow("\n  ⚡ Interrupted — stopping current turn") + chalk.dim("  (Ctrl+C again to exit)\n"));
     messageQueue.length = 0;
   }
 
