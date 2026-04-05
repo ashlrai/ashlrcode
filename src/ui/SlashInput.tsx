@@ -6,9 +6,9 @@
  * Line count indicator shown when multi-line.
  */
 
-import React, { useState, useEffect } from "react";
-import { Text, useInput } from "ink";
 import chalk from "chalk";
+import { Text, useInput } from "ink";
+import React, { useEffect, useState } from "react";
 
 const SLASH_COLOR = "#38BDF8"; // sky-400
 const NEWLINE_INDICATOR = chalk.grey("↵");
@@ -31,12 +31,10 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
   }, [value]);
 
   const isSlash = value.startsWith("/");
-  const colorChar = (ch: string) => isSlash ? chalk.hex(SLASH_COLOR)(ch) : ch;
+  const colorChar = (ch: string) => (isSlash ? chalk.hex(SLASH_COLOR)(ch) : ch);
 
   const CONTINUATION_PREFIX = chalk.dim("│ ");
-  const hintText = focus && value.length === 0
-    ? chalk.dim("  Ctrl+J newline · Enter send")
-    : "";
+  const hintText = focus && value.length === 0 ? chalk.dim("  Ctrl+J newline · Enter send") : "";
 
   let rendered = "";
   if (value.length === 0) {
@@ -50,10 +48,13 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
     for (let i = 0; i < value.length; i++) {
       const ch = value[i]!;
       if (ch === "\n") {
-        rendered += (i === cursorOffset) ? chalk.inverse(NEWLINE_INDICATOR) + "\n" + CONTINUATION_PREFIX : NEWLINE_INDICATOR + "\n" + CONTINUATION_PREFIX;
+        rendered +=
+          i === cursorOffset
+            ? chalk.inverse(NEWLINE_INDICATOR) + "\n" + CONTINUATION_PREFIX
+            : NEWLINE_INDICATOR + "\n" + CONTINUATION_PREFIX;
       } else {
         const colored = colorChar(ch);
-        rendered += (i === cursorOffset) ? chalk.inverse(colored) : colored;
+        rendered += i === cursorOffset ? chalk.inverse(colored) : colored;
       }
     }
     if (cursorOffset === value.length && focus) {
@@ -61,39 +62,50 @@ export function SlashInput({ value, onChange, onSubmit, placeholder = "", focus 
     }
   }
 
-  useInput((input, key) => {
-    if (key.upArrow || key.downArrow || (key.ctrl && input === "c") || key.tab || (key.shift && key.tab)) return;
+  useInput(
+    (input, key) => {
+      if (key.upArrow || key.downArrow || (key.ctrl && input === "c") || key.tab || (key.shift && key.tab)) return;
 
-    // Ctrl+J inserts a newline (standard terminal newline keybind)
-    if (key.ctrl && input === "j") {
-      const next = value.slice(0, cursorOffset) + "\n" + value.slice(cursorOffset);
-      setCursorOffset(cursorOffset + 1);
-      onChange(next);
-      return;
-    }
-
-    if (key.return) { onSubmit(value); return; }
-
-    let next = value;
-    let nextOffset = cursorOffset;
-
-    if (key.leftArrow) {
-      nextOffset = Math.max(0, cursorOffset - 1);
-    } else if (key.rightArrow) {
-      nextOffset = Math.min(value.length, cursorOffset + 1);
-    } else if (key.backspace || key.delete) {
-      if (cursorOffset > 0) {
-        next = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
-        nextOffset = cursorOffset - 1;
+      // Ctrl+J inserts a newline (standard terminal newline keybind)
+      if (key.ctrl && input === "j") {
+        const next = value.slice(0, cursorOffset) + "\n" + value.slice(cursorOffset);
+        setCursorOffset(cursorOffset + 1);
+        onChange(next);
+        return;
       }
-    } else if (input) {
-      next = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
-      nextOffset = cursorOffset + input.length;
-    }
 
-    setCursorOffset(nextOffset);
-    if (next !== value) onChange(next);
-  }, { isActive: focus });
+      if (key.return) {
+        onSubmit(value);
+        return;
+      }
 
-  return <Text>{rendered}{hintText}</Text>;
+      let next = value;
+      let nextOffset = cursorOffset;
+
+      if (key.leftArrow) {
+        nextOffset = Math.max(0, cursorOffset - 1);
+      } else if (key.rightArrow) {
+        nextOffset = Math.min(value.length, cursorOffset + 1);
+      } else if (key.backspace || key.delete) {
+        if (cursorOffset > 0) {
+          next = value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
+          nextOffset = cursorOffset - 1;
+        }
+      } else if (input) {
+        next = value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
+        nextOffset = cursorOffset + input.length;
+      }
+
+      setCursorOffset(nextOffset);
+      if (next !== value) onChange(next);
+    },
+    { isActive: focus },
+  );
+
+  return (
+    <Text>
+      {rendered}
+      {hintText}
+    </Text>
+  );
 }

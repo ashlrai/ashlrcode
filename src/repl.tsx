@@ -5,59 +5,88 @@
  * and the Ink React component tree.
  */
 
-import React from "react";
-import { render } from "ink";
-import { App } from "./ui/App.tsx";
-import { runAgentLoop } from "./agent/loop.ts";
-import { getCurrentMode, cycleMode } from "./ui/mode.ts";
-import { getEffort, setEffort, cycleEffort, getEffortConfig, getEffortEmoji, type EffortLevel } from "./ui/effort.ts";
-import { estimateTokens, getProviderContextLimit, needsCompaction, autoCompact, snipCompact, contextCollapse } from "./agent/context.ts";
-import { runWithAgentContext, type AgentContext } from "./agent/async-context.ts";
-import { resetMarkdown, renderMarkdownDelta, flushMarkdown } from "./ui/markdown.ts";
-import { getBuddyReaction, getBuddyArt, isFirstToolCall, recordThinking, recordToolCallSuccess, recordError, saveBuddy, startBuddyAnimation, stopBuddyAnimation } from "./ui/buddy.ts";
-import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
-import { isPlanMode, getPlanModePrompt } from "./planning/plan-mode.ts";
-import { categorizeError, type ErrorCategory } from "./agent/error-handler.ts";
-import { theme } from "./ui/theme.ts";
-import { getRemoteSettings, stopPolling as stopRemotePolling } from "./config/remote-settings.ts";
-import { exportSettings, importSettings, getSyncStatus } from "./config/settings-sync.ts";
-import { join } from "path";
-import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.ts";
 import chalk from "chalk";
-import type { ProviderRouter } from "./providers/router.ts";
-import type { ToolRegistry } from "./tools/registry.ts";
-import type { ToolContext } from "./tools/types.ts";
-import type { Message } from "./providers/types.ts";
-import type { Session } from "./persistence/session.ts";
-import type { SkillRegistry } from "./skills/registry.ts";
-import type { BuddyData } from "./ui/buddy.ts";
-import { shutdownLSP } from "./tools/lsp.ts";
-import { shutdownBrowser } from "./tools/web-browser.ts";
+import { randomBytes } from "crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { render } from "ink";
+import { join } from "path";
+import React from "react";
+import { type AgentContext, runWithAgentContext } from "./agent/async-context.ts";
+import {
+  autoCompact,
+  contextCollapse,
+  estimateTokens,
+  getProviderContextLimit,
+  needsCompaction,
+  snipCompact,
+} from "./agent/context.ts";
+import { createTrigger, deleteTrigger, listTriggers, TriggerRunner, toggleTrigger } from "./agent/cron.ts";
+import { formatDreamsForPrompt, generateDream, IdleDetector, loadRecentDreams } from "./agent/dream.ts";
+import { categorizeError, type ErrorCategory } from "./agent/error-handler.ts";
 import { startIPCServer, stopIPCServer } from "./agent/ipc.ts";
-import { checkPermission, hasPendingPermission, answerPendingPermission, requestPermissionInk } from "./config/permissions.ts";
-import { feature, listFeatures } from "./config/features.ts";
-import { hasPendingQuestion, answerPendingQuestion } from "./tools/ask-user.ts";
-import { generateBuddyComment, shouldUseAI, type BuddyCommentType } from "./ui/buddy-ai.ts";
-import { scanCodebase } from "./autopilot/scanner.ts";
-import { WorkQueue } from "./autopilot/queue.ts";
-import { DEFAULT_CONFIG } from "./autopilot/types.ts";
-import { generateDream, loadRecentDreams, formatDreamsForPrompt, IdleDetector } from "./agent/dream.ts";
-import { FileHistoryStore, setFileHistory, getFileHistory } from "./state/file-history.ts";
-import { loadKeybindings, getBindings, InputHistory } from "./ui/keybindings.ts";
+import { detectTerminalFocus, KairosLoop } from "./agent/kairos.ts";
+import { runAgentLoop } from "./agent/loop.ts";
 import { SpeculationCache } from "./agent/speculation.ts";
 import { setSpeculationCache } from "./agent/tool-executor.ts";
-import { KairosLoop, detectTerminalFocus } from "./agent/kairos.ts";
-import { notifyTurnComplete, notifyError } from "./ui/notifications.ts";
-import { initTelemetry, logEvent, readRecentEvents, formatEvents } from "./telemetry/event-log.ts";
-import { createTrigger, listTriggers, deleteTrigger, toggleTrigger, TriggerRunner } from "./agent/cron.ts";
-import { startRecording, stopRecording, isRecording, transcribeRecording, checkVoiceAvailability, type VoiceConfig } from "./voice/voice-mode.ts";
-import { checkForUpgrade } from "./config/upgrade-notice.ts";
-import { VERSION } from "./version.ts";
-import { startBridgeServer, stopBridgeServer, getBridgePort } from "./bridge/bridge-server.ts";
-import { randomBytes } from "crypto";
-import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
+import { WorkQueue } from "./autopilot/queue.ts";
+import { scanCodebase } from "./autopilot/scanner.ts";
+import { DEFAULT_CONFIG } from "./autopilot/types.ts";
+import { getBridgePort, startBridgeServer, stopBridgeServer } from "./bridge/bridge-server.ts";
+import { feature, listFeatures } from "./config/features.ts";
+import {
+  answerPendingPermission,
+  checkPermission,
+  hasPendingPermission,
+  requestPermissionInk,
+} from "./config/permissions.ts";
+import { getRemoteSettings, stopPolling as stopRemotePolling } from "./config/remote-settings.ts";
 import { getConfigDir } from "./config/settings.ts";
+import { exportSettings, getSyncStatus, importSettings } from "./config/settings-sync.ts";
+import { checkForUpgrade } from "./config/upgrade-notice.ts";
+import type { Session } from "./persistence/session.ts";
+import { getPlanModePrompt, isPlanMode } from "./planning/plan-mode.ts";
+import type { ProviderRouter } from "./providers/router.ts";
+import type { Message } from "./providers/types.ts";
+import type { SkillRegistry } from "./skills/registry.ts";
+import { FileHistoryStore, getFileHistory, setFileHistory } from "./state/file-history.ts";
+import { formatEvents, initTelemetry, logEvent, readRecentEvents } from "./telemetry/event-log.ts";
+import { answerPendingQuestion, hasPendingQuestion } from "./tools/ask-user.ts";
+import { shutdownLSP } from "./tools/lsp.ts";
+import type { ToolRegistry } from "./tools/registry.ts";
+import type { ToolContext } from "./tools/types.ts";
+import { shutdownBrowser } from "./tools/web-browser.ts";
+import { App } from "./ui/App.tsx";
+import type { BuddyData } from "./ui/buddy.ts";
+import {
+  getBuddyArt,
+  getBuddyReaction,
+  isFirstToolCall,
+  recordError,
+  recordThinking,
+  recordToolCallSuccess,
+  saveBuddy,
+  startBuddyAnimation,
+  stopBuddyAnimation,
+} from "./ui/buddy.ts";
+import { type BuddyCommentType, generateBuddyComment, shouldUseAI } from "./ui/buddy-ai.ts";
+import { cycleEffort, type EffortLevel, getEffort, getEffortConfig, getEffortEmoji, setEffort } from "./ui/effort.ts";
+import { getBindings, InputHistory, loadKeybindings } from "./ui/keybindings.ts";
+import { flushMarkdown, renderMarkdownDelta, resetMarkdown } from "./ui/markdown.ts";
+import { formatToolExecution, formatTurnSeparator } from "./ui/message-renderer.ts";
+import { cycleMode, getCurrentMode } from "./ui/mode.ts";
+import { notifyError, notifyTurnComplete } from "./ui/notifications.ts";
 import builtinQuips from "./ui/quips.json";
+import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
+import { theme } from "./ui/theme.ts";
+import { VERSION } from "./version.ts";
+import {
+  checkVoiceAvailability,
+  isRecording,
+  startRecording,
+  stopRecording,
+  transcribeRecording,
+  type VoiceConfig,
+} from "./voice/voice-mode.ts";
 
 // Buddy quips — loaded from ~/.ashlrcode/quips.json if present, otherwise built-in
 function loadQuips(): Record<string, string[]> {
@@ -117,7 +146,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     // Show permission prompt inline in the output stream
     _addOutput(`\n  ⚡ ${theme.warning("Permission:")} ${theme.primary(toolName)}`);
     _addOutput(theme.tertiary(`    ${description}`));
-    _addOutput(`    ${chalk.green("[y]")}${chalk.green("es once")}  ${chalk.cyan("[a]")}${chalk.cyan("lways")}  ${chalk.yellow.bold.underline("[n]")}${chalk.yellow.bold("o once")}  ${chalk.red("[d]")}${chalk.red("eny always")}\n`);
+    _addOutput(
+      `    ${chalk.green("[y]")}${chalk.green("es once")}  ${chalk.cyan("[a]")}${chalk.cyan("lways")}  ${chalk.yellow.bold.underline("[n]")}${chalk.yellow.bold("o once")}  ${chalk.red("[d]")}${chalk.red("eny always")}\n`,
+    );
     return requestPermissionInk(toolName, description);
   };
 
@@ -141,9 +172,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     switch (msg.type) {
       case "ping":
         // Auto-reply with pong (peer discovery)
-        import("./agent/ipc.ts").then(({ sendToPeer }) =>
-          sendToPeer(msg.from, "pong", "alive").catch(() => {}),
-        );
+        import("./agent/ipc.ts").then(({ sendToPeer }) => sendToPeer(msg.from, "pong", "alive").catch(() => {}));
         break;
       case "message":
         // Show peer messages in the output
@@ -219,12 +248,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   const inputHistory = new InputHistory();
 
   // Load dreams from previous sessions into system prompt
-  loadRecentDreams(3).then(dreams => {
-    if (dreams.length > 0) {
-      const dreamContext = formatDreamsForPrompt(dreams);
-      state.baseSystemPrompt += "\n\n" + dreamContext;
-    }
-  }).catch(() => {});
+  loadRecentDreams(3)
+    .then((dreams) => {
+      if (dreams.length > 0) {
+        const dreamContext = formatDreamsForPrompt(dreams);
+        state.baseSystemPrompt += "\n\n" + dreamContext;
+      }
+    })
+    .catch(() => {});
 
   // Idle detector — generate dream when user is idle for 2 minutes
   const idleDetector = new IdleDetector(async () => {
@@ -297,18 +328,29 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   _addOutput = addOutput;
 
   // Check for upgrades (fire and forget)
-  checkForUpgrade(VERSION).then(newVersion => {
-    if (newVersion) {
-      addOutput(theme.warning(`\n  ⬆ AshlrCode ${newVersion} available (current: ${VERSION}). Run: bun update -g ashlrcode\n`));
-    }
-  }).catch(() => {});
+  checkForUpgrade(VERSION)
+    .then((newVersion) => {
+      if (newVersion) {
+        addOutput(
+          theme.warning(
+            `\n  ⬆ AshlrCode ${newVersion} available (current: ${VERSION}). Run: bun update -g ashlrcode\n`,
+          ),
+        );
+      }
+    })
+    .catch(() => {});
 
   function getDisplayProps() {
     const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
     const ctxUsed = estimateTokens(state.history);
     const ctxPct = Math.round((ctxUsed / ctxLimit) * 100);
     const mode = getCurrentMode();
-    const modeColors: Record<string, string> = { normal: "green", plan: "magenta", "accept-edits": "yellow", yolo: "red" };
+    const modeColors: Record<string, string> = {
+      normal: "green",
+      plan: "magenta",
+      "accept-edits": "yellow",
+      yolo: "red",
+    };
 
     const effort = getEffort();
     const effortDisplay = effort !== "normal" ? ` ${getEffortEmoji()} ${effort}` : "";
@@ -328,15 +370,58 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       spinnerText,
       tokenStats,
       commands: [
-        "/help", "/cost", "/status", "/effort", "/btw", "/cancel", "/history", "/undo", "/expand",
-        "/restore", "/tools", "/skills", "/buddy", "/memory", "/sessions",
-        "/model", "/compact", "/diff", "/git", "/clear", "/quit", "/bug", "/version",
-        "/autopilot", "/autopilot scan", "/autopilot queue", "/autopilot auto",
-        "/autopilot approve all", "/autopilot run", "/features", "/keybindings",
-        "/kairos", "/kairos stop", "/ship", "/ship stop", "/verify", "/coordinate", "/stats",
-        "/permissions", "/trigger", "/sync", "/plan", "/patches", "/remote", "/undercover",
-        "/bridge", "/telemetry", "/voice", "/transcript", "/transcript last", "/search",
-        ...state.skillRegistry.getAll().map(s => s.trigger),
+        "/help",
+        "/cost",
+        "/status",
+        "/effort",
+        "/btw",
+        "/cancel",
+        "/history",
+        "/undo",
+        "/expand",
+        "/restore",
+        "/tools",
+        "/skills",
+        "/buddy",
+        "/memory",
+        "/sessions",
+        "/model",
+        "/compact",
+        "/diff",
+        "/git",
+        "/clear",
+        "/quit",
+        "/bug",
+        "/version",
+        "/autopilot",
+        "/autopilot scan",
+        "/autopilot queue",
+        "/autopilot auto",
+        "/autopilot approve all",
+        "/autopilot run",
+        "/features",
+        "/keybindings",
+        "/kairos",
+        "/kairos stop",
+        "/ship",
+        "/ship stop",
+        "/verify",
+        "/coordinate",
+        "/stats",
+        "/permissions",
+        "/trigger",
+        "/sync",
+        "/plan",
+        "/patches",
+        "/remote",
+        "/undercover",
+        "/bridge",
+        "/telemetry",
+        "/voice",
+        "/transcript",
+        "/transcript last",
+        "/search",
+        ...state.skillRegistry.getAll().map((s) => s.trigger),
       ],
       cwd: state.toolContext.cwd,
     };
@@ -362,7 +447,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return;
       }
       // Unrecognized key — remind user of valid options
-      addOutput(`  ${chalk.green("[y]")}es  ${chalk.cyan("[a]")}lways  ${chalk.yellow.bold("[n]")}o  ${chalk.red("[d]")}eny`);
+      addOutput(
+        `  ${chalk.green("[y]")}es  ${chalk.cyan("[a]")}lways  ${chalk.yellow.bold("[n]")}o  ${chalk.red("[d]")}eny`,
+      );
       return;
     }
 
@@ -375,8 +462,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     }
 
     // Detect image file paths (drag-and-drop inserts path as text)
-    const imageMatch = input.match(/(?:^|\s)(\/[^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i)
-      ?? input.match(/(?:^|\s)([^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i);
+    const imageMatch =
+      input.match(/(?:^|\s)(\/[^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i) ??
+      input.match(/(?:^|\s)([^\s]+\.(?:png|jpg|jpeg|gif|webp))(?:\s|$)/i);
 
     if (imageMatch) {
       const imagePath = imageMatch[1]!;
@@ -408,18 +496,23 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     let displayInput = input;
     if (lines.length > 3) {
       // Build a truncated preview: first 3 lines + count of remaining
-      const preview = lines.slice(0, 3).map((l: string, i: number) => {
-        const trimmed = l.length > 80 ? l.slice(0, 77) + "..." : l;
-        return i === 0 ? trimmed : "  │ " + trimmed;
-      }).join("\n");
+      const preview = lines
+        .slice(0, 3)
+        .map((l: string, i: number) => {
+          const trimmed = l.length > 80 ? l.slice(0, 77) + "..." : l;
+          return i === 0 ? trimmed : "  │ " + trimmed;
+        })
+        .join("\n");
       const remaining = lines.length - 3;
-      displayInput = remaining > 0
-        ? `${preview}\n  │ ... ${remaining} more line${remaining === 1 ? "" : "s"}`
-        : preview;
+      displayInput =
+        remaining > 0 ? `${preview}\n  │ ... ${remaining} more line${remaining === 1 ? "" : "s"}` : preview;
 
       // Add type hint for special content
       let typeHint = "";
-      try { JSON.parse(input); typeHint = " (JSON)"; } catch {}
+      try {
+        JSON.parse(input);
+        typeHint = " (JSON)";
+      } catch {}
       if (input.includes("at ") && (input.includes("Error:") || input.includes("error:"))) {
         typeHint = " (stack trace)";
       }
@@ -453,22 +546,55 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   /** Run with image attachment */
   async function runTurnInkWithImage(text: string, imageDataUrl: string) {
-    isProcessing = true; spinnerText = "Analyzing image"; update();
+    isProcessing = true;
+    spinnerText = "Analyzing image";
+    update();
     try {
       const { getUndercoverPrompt } = await import("./config/undercover.ts");
       const { getModelPatches: getPatches } = await import("./agent/model-patches.ts");
       const imgModelPatches = getPatches(state.router.currentProvider.config.model).combinedSuffix;
       const systemPrompt = state.baseSystemPrompt + getPlanModePrompt() + imgModelPatches + getUndercoverPrompt();
-      const userMsg: import("./providers/types.ts").Message = { role: "user", content: [{ type: "image_url", image_url: { url: imageDataUrl } }, { type: "text", text }] };
+      const userMsg: import("./providers/types.ts").Message = {
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: imageDataUrl } },
+          { type: "text", text },
+        ],
+      };
       const preTurn = state.history.length;
       state.history.push(userMsg);
-      const result = await runAgentLoop("", state.history, { systemPrompt, router: state.router, toolRegistry: state.registry, toolContext: state.toolContext, readOnly: isPlanMode(), onText: (t) => { isProcessing = false; addOutput(t); update(); }, onToolStart: (name) => { isProcessing = true; spinnerText = name; update(); }, onToolEnd: (_n, r, e) => { isProcessing = false; addOutput((e ? theme.error("  ✗ ") : theme.success("  ✓ ")) + r.split("\n")[0]?.slice(0, 90)); update(); } });
-      state.history.length = 0; state.history.push(...result.messages);
+      const result = await runAgentLoop("", state.history, {
+        systemPrompt,
+        router: state.router,
+        toolRegistry: state.registry,
+        toolContext: state.toolContext,
+        readOnly: isPlanMode(),
+        onText: (t) => {
+          isProcessing = false;
+          addOutput(t);
+          update();
+        },
+        onToolStart: (name) => {
+          isProcessing = true;
+          spinnerText = name;
+          update();
+        },
+        onToolEnd: (_n, r, e) => {
+          isProcessing = false;
+          addOutput((e ? theme.error("  ✗ ") : theme.success("  ✓ ")) + r.split("\n")[0]?.slice(0, 90));
+          update();
+        },
+      });
+      state.history.length = 0;
+      state.history.push(...result.messages);
       const newMsgs = result.messages.slice(preTurn);
       if (newMsgs.length > 0) await state.session.appendMessages(newMsgs);
       lastPersistedCount = state.history.length;
-    } catch (err) { addOutput(theme.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`)); }
-    isProcessing = false; update();
+    } catch (err) {
+      addOutput(theme.error(`\n  Error: ${err instanceof Error ? err.message : String(err)}\n`));
+    }
+    isProcessing = false;
+    update();
   }
 
   function formatTimeAgo(date: Date): string {
@@ -485,61 +611,63 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     switch (cmd) {
       case "/help":
-        addOutput([
-          "",
-          theme.accentBold("  Agent Intelligence"),
-          `    /ship ${theme.muted(".............")} Autonomous product-building agent (finds & fixes issues)`,
-          `    /verify ${theme.muted("............")} Run verification agent on recent changes`,
-          `    /coordinate ${theme.muted("......")} Break complex tasks into parallel sub-agents`,
-          `    /kairos ${theme.muted("...........")} Start autonomous mode (focus-aware)`,
-          `    /trigger ${theme.muted("..........")} Schedule recurring agent tasks`,
-          "",
-          theme.accentBold("  Workflow"),
-          `    /plan ${theme.muted(".............")} Enter plan mode (read-only exploration)`,
-          `    /commit ${theme.muted("...........")} Create a well-crafted git commit`,
-          `    /review ${theme.muted("...........")} Code review for bugs & security`,
-          `    /autopilot ${theme.muted(".........")} Autonomous scan → fix → test → PR`,
-          `    /btw ${theme.muted("...............")} Side question without interrupting flow`,
-          `    /cancel ${theme.muted("...........")} List or cancel background operations`,
-          "",
-          theme.accentBold("  Session"),
-          `    /cost ${theme.muted(".............")} Show token usage and costs`,
-          `    /stats ${theme.muted("............")} Tool metrics + speculation cache stats`,
-          `    /status ${theme.muted("...........")} Current session info`,
-          `    /memory ${theme.muted("...........")} View saved project memories`,
-          `    /sessions ${theme.muted(".........")} List past sessions`,
-          `    /compact ${theme.muted("...........")} Force context compression`,
-          `    /expand ${theme.muted("............")} View full untruncated last tool output`,
-          `    /history ${theme.muted("...........")} View conversation file history`,
-          `    /transcript ${theme.muted(".......")} Save session output to file (/transcript last for recent)`,
-          `    /search ${theme.muted("...........")} Search output history for a pattern`,
-          "",
-          theme.accentBold("  Tools & Config"),
-          `    /tools ${theme.muted("............")} List all registered tools`,
-          `    /skills ${theme.muted("...........")} List available slash commands`,
-          `    /model ${theme.muted("............")} Switch provider/model`,
-          `    /effort ${theme.muted("...........")} Set model effort level`,
-          `    /patches ${theme.muted("...........")} View active model patches`,
-          `    /permissions ${theme.muted(".......")} View allowed/denied tool permissions`,
-          `    /features ${theme.muted("..........")} Toggle feature flags`,
-          `    /keybindings ${theme.muted(".......")} View/edit keyboard shortcuts`,
-          "",
-          theme.accentBold("  Files & Git"),
-          `    /undo ${theme.muted(".............")} Undo last file change`,
-          `    /restore ${theme.muted("...........")} Restore file from history`,
-          `    /diff ${theme.muted(".............")} Show git diff`,
-          `    /git ${theme.muted("..............")} Git status summary`,
-          "",
-          theme.accentBold("  Other"),
-          `    /buddy ${theme.muted("............")} View/customize companion`,
-          `    /voice ${theme.muted("............")} Voice input mode`,
-          `    /version ${theme.muted("...........")} Show version`,
-          `    /clear ${theme.muted("............")} Clear conversation`,
-          `    /quit ${theme.muted(".............")} Exit AshlrCode`,
-          "",
-          theme.muted("  Tip: Type any slash command name for more info. Custom skills: ~/.ashlrcode/skills/"),
-          "",
-        ].join("\n"));
+        addOutput(
+          [
+            "",
+            theme.accentBold("  Agent Intelligence"),
+            `    /ship ${theme.muted(".............")} Autonomous product-building agent (finds & fixes issues)`,
+            `    /verify ${theme.muted("............")} Run verification agent on recent changes`,
+            `    /coordinate ${theme.muted("......")} Break complex tasks into parallel sub-agents`,
+            `    /kairos ${theme.muted("...........")} Start autonomous mode (focus-aware)`,
+            `    /trigger ${theme.muted("..........")} Schedule recurring agent tasks`,
+            "",
+            theme.accentBold("  Workflow"),
+            `    /plan ${theme.muted(".............")} Enter plan mode (read-only exploration)`,
+            `    /commit ${theme.muted("...........")} Create a well-crafted git commit`,
+            `    /review ${theme.muted("...........")} Code review for bugs & security`,
+            `    /autopilot ${theme.muted(".........")} Autonomous scan → fix → test → PR`,
+            `    /btw ${theme.muted("...............")} Side question without interrupting flow`,
+            `    /cancel ${theme.muted("...........")} List or cancel background operations`,
+            "",
+            theme.accentBold("  Session"),
+            `    /cost ${theme.muted(".............")} Show token usage and costs`,
+            `    /stats ${theme.muted("............")} Tool metrics + speculation cache stats`,
+            `    /status ${theme.muted("...........")} Current session info`,
+            `    /memory ${theme.muted("...........")} View saved project memories`,
+            `    /sessions ${theme.muted(".........")} List past sessions`,
+            `    /compact ${theme.muted("...........")} Force context compression`,
+            `    /expand ${theme.muted("............")} View full untruncated last tool output`,
+            `    /history ${theme.muted("...........")} View conversation file history`,
+            `    /transcript ${theme.muted(".......")} Save session output to file (/transcript last for recent)`,
+            `    /search ${theme.muted("...........")} Search output history for a pattern`,
+            "",
+            theme.accentBold("  Tools & Config"),
+            `    /tools ${theme.muted("............")} List all registered tools`,
+            `    /skills ${theme.muted("...........")} List available slash commands`,
+            `    /model ${theme.muted("............")} Switch provider/model`,
+            `    /effort ${theme.muted("...........")} Set model effort level`,
+            `    /patches ${theme.muted("...........")} View active model patches`,
+            `    /permissions ${theme.muted(".......")} View allowed/denied tool permissions`,
+            `    /features ${theme.muted("..........")} Toggle feature flags`,
+            `    /keybindings ${theme.muted(".......")} View/edit keyboard shortcuts`,
+            "",
+            theme.accentBold("  Files & Git"),
+            `    /undo ${theme.muted(".............")} Undo last file change`,
+            `    /restore ${theme.muted("...........")} Restore file from history`,
+            `    /diff ${theme.muted(".............")} Show git diff`,
+            `    /git ${theme.muted("..............")} Git status summary`,
+            "",
+            theme.accentBold("  Other"),
+            `    /buddy ${theme.muted("............")} View/customize companion`,
+            `    /voice ${theme.muted("............")} Voice input mode`,
+            `    /version ${theme.muted("...........")} Show version`,
+            `    /clear ${theme.muted("............")} Clear conversation`,
+            `    /quit ${theme.muted(".............")} Exit AshlrCode`,
+            "",
+            theme.muted("  Tip: Type any slash command name for more info. Custom skills: ~/.ashlrcode/skills/"),
+            "",
+          ].join("\n"),
+        );
         return true;
       case "/cost":
         addOutput("\n" + state.router.getCostSummary() + "\n");
@@ -549,13 +677,15 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const specStats = speculationCache.getStats();
         const specTotal = specStats.hits + specStats.misses;
         const specRate = specTotal > 0 ? Math.round((specStats.hits / specTotal) * 100) : 0;
-        addOutput([
-          "",
-          formatToolMetrics(),
-          "",
-          `Speculation Cache: ${specStats.size} entries, ${specStats.hits} hits / ${specStats.misses} misses (${specRate}% hit rate)`,
-          "",
-        ].join("\n"));
+        addOutput(
+          [
+            "",
+            formatToolMetrics(),
+            "",
+            `Speculation Cache: ${specStats.size} entries, ${specStats.hits} hits / ${specStats.misses} misses (${specRate}% hit rate)`,
+            "",
+          ].join("\n"),
+        );
         return true;
       }
       case "/clear":
@@ -577,24 +707,32 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const shinyStr = b.shiny ? " ✨ SHINY" : "";
         addOutput(`\n  ${b.name} the ${b.species}${shinyStr}`);
         addOutput(`  Rarity: ${b.rarity.toUpperCase()} · Level ${b.level} · Hat: ${b.hat}`);
-        addOutput(`  Stats: 🐛${b.stats.debugging} 🧘${b.stats.patience} 🌀${b.stats.chaos} 🦉${b.stats.wisdom} 😏${b.stats.snark}`);
+        addOutput(
+          `  Stats: 🐛${b.stats.debugging} 🧘${b.stats.patience} 🌀${b.stats.chaos} 🦉${b.stats.wisdom} 😏${b.stats.snark}`,
+        );
         addOutput(`  Sessions: ${b.totalSessions} · Tool calls: ${b.toolCalls}\n`);
         return true;
       }
-      case "/tools":
+      case "/tools": {
         const tools = state.registry.getAll();
-        addOutput(`\n  ${tools.length} tools: ${tools.map(t => t.name).join(", ")}\n`);
+        addOutput(`\n  ${tools.length} tools: ${tools.map((t) => t.name).join(", ")}\n`);
         return true;
-      case "/skills":
+      }
+      case "/skills": {
         const skills = state.skillRegistry.getAll();
-        addOutput(`\n  ${skills.length} skills: ${skills.map(s => s.trigger).join(", ")}\n`);
+        addOutput(`\n  ${skills.length} skills: ${skills.map((s) => s.trigger).join(", ")}\n`);
         return true;
+      }
       case "/model":
         if (arg) {
           const aliases: Record<string, string> = {
-            "grok-fast": "grok-4-1-fast-reasoning", "grok-4": "grok-4-0314",
-            "grok-3": "grok-3-fast", "sonnet": "claude-sonnet-4-6-20250514",
-            "opus": "claude-opus-4-6-20250514", "llama": "llama3.2", "local": "llama3.2",
+            "grok-fast": "grok-4-1-fast-reasoning",
+            "grok-4": "grok-4-0314",
+            "grok-3": "grok-3-fast",
+            sonnet: "claude-sonnet-4-6-20250514",
+            opus: "claude-opus-4-6-20250514",
+            llama: "llama3.2",
+            local: "llama3.2",
           };
           state.router.currentProvider.config.model = aliases[arg] ?? arg;
           addOutput(theme.success(`\n  Model: ${state.router.currentProvider.config.model}\n`));
@@ -605,9 +743,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       case "/effort": {
         // Also accept "fast"/"balanced"/"thorough" as aliases
         const effortAliases: Record<string, EffortLevel> = {
-          fast: "low", low: "low",
-          normal: "normal", balanced: "normal",
-          high: "high", thorough: "high",
+          fast: "low",
+          low: "low",
+          normal: "normal",
+          balanced: "normal",
+          high: "high",
+          thorough: "high",
         };
         if (arg && effortAliases[arg]) {
           setEffort(effortAliases[arg]!);
@@ -619,7 +760,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         state.router.currentProvider.config.maxTokens = effortCfg.maxTokens;
         state.router.currentProvider.config.temperature = effortCfg.temperature;
         const tempInfo = effortCfg.temperature !== undefined ? `, temp ${effortCfg.temperature}` : "";
-        addOutput(theme.success(`\n  ${getEffortEmoji()} Effort: ${getEffort()} (${effortCfg.maxTokens} tokens${tempInfo})\n`));
+        addOutput(
+          theme.success(`\n  ${getEffortEmoji()} Effort: ${getEffort()} (${effortCfg.maxTokens} tokens${tempInfo})\n`),
+        );
         return true;
       }
       case "/autopilot": {
@@ -637,7 +780,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               cwd: state.toolContext.cwd,
               runCommand: async (cmd: string) => {
                 const proc = Bun.spawn(["bash", "-c", cmd], {
-                  cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe",
+                  cwd: state.toolContext.cwd,
+                  stdout: "pipe",
+                  stderr: "pipe",
                 });
                 return await new Response(proc.stdout).text();
               },
@@ -645,7 +790,8 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 const fg = await import("fast-glob");
                 const files = await fg.default(pattern, {
                   cwd: path ? `${state.toolContext.cwd}/${path}` : state.toolContext.cwd,
-                  absolute: false, ignore: ["**/node_modules/**", "**/.git/**"],
+                  absolute: false,
+                  ignore: ["**/node_modules/**", "**/.git/**"],
                 });
                 return files.join("\n");
               },
@@ -675,9 +821,12 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               addOutput(theme.secondary(`    ${type}: ${count}`));
             }
 
-            addOutput(theme.tertiary(`\n  Queue: ${stats.discovered ?? 0} pending · ${stats.approved ?? 0} approved · ${stats.completed ?? 0} done`));
+            addOutput(
+              theme.tertiary(
+                `\n  Queue: ${stats.discovered ?? 0} pending · ${stats.approved ?? 0} approved · ${stats.completed ?? 0} done`,
+              ),
+            );
             addOutput(theme.tertiary(`  Use /autopilot queue to see items, /autopilot approve all to approve\n`));
-
           } catch (err) {
             addOutput(theme.error(`  Scan failed: ${err instanceof Error ? err.message : String(err)}\n`));
           }
@@ -693,12 +842,17 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           const stats = workQueue.getStats();
 
           addOutput(theme.accent(`\n  📋 Autopilot Queue\n`));
-          addOutput(theme.tertiary(`  ${stats.discovered ?? 0} discovered · ${stats.approved ?? 0} approved · ${stats.in_progress ?? 0} in progress · ${stats.completed ?? 0} done\n`));
+          addOutput(
+            theme.tertiary(
+              `  ${stats.discovered ?? 0} discovered · ${stats.approved ?? 0} approved · ${stats.in_progress ?? 0} in progress · ${stats.completed ?? 0} done\n`,
+            ),
+          );
 
           if (pending.length > 0) {
             addOutput(theme.primary("  Pending (needs approval):"));
             for (const item of pending.slice(0, 15)) {
-              const pColor = item.priority === "critical" ? theme.error : item.priority === "high" ? theme.warning : theme.secondary;
+              const pColor =
+                item.priority === "critical" ? theme.error : item.priority === "high" ? theme.warning : theme.secondary;
               addOutput(`  ${pColor(`[${item.priority}]`)} ${theme.accent(item.id)} ${item.title}`);
             }
             if (pending.length > 15) addOutput(theme.tertiary(`  ... and ${pending.length - 15} more`));
@@ -726,7 +880,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           } else if (target) {
             const ok = workQueue.approve(target);
             await workQueue.save();
-            addOutput(ok ? theme.success(`\n  ✓ Approved ${target}\n`) : theme.error(`\n  Item ${target} not found or already approved\n`));
+            addOutput(
+              ok
+                ? theme.success(`\n  ✓ Approved ${target}\n`)
+                : theme.error(`\n  Item ${target} not found or already approved\n`),
+            );
           } else {
             addOutput(theme.tertiary("\n  Usage: /autopilot approve <id> or /autopilot approve all\n"));
           }
@@ -736,7 +894,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         if (subCmd === "run") {
           const next = workQueue.getNextApproved();
           if (!next) {
-            addOutput(theme.tertiary("\n  No approved items to execute. Run /autopilot scan then /autopilot approve all\n"));
+            addOutput(
+              theme.tertiary("\n  No approved items to execute. Run /autopilot scan then /autopilot approve all\n"),
+            );
             return true;
           }
 
@@ -821,7 +981,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               runCommand: async (cmd: string) => (await run(cmd)).out,
               searchFiles: async (pattern: string) => {
                 const fg = await import("fast-glob");
-                const files = await fg.default(pattern, { cwd, absolute: false, ignore: ["**/node_modules/**", "**/.git/**"] });
+                const files = await fg.default(pattern, {
+                  cwd,
+                  absolute: false,
+                  ignore: ["**/node_modules/**", "**/.git/**"],
+                });
                 return files.join("\n");
               },
               grepContent: async (pattern: string, glob?: string) => {
@@ -910,9 +1074,17 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               await git("push", "-u", "origin", branch);
 
               const prTitle = `fix(autopilot): ${fixed} automated fixes`;
-              const prBody = `## Autopilot Fixes\n\nFixed ${fixed} issues automatically:\n${workQueue.getByStatus("completed").slice(-fixed).map(i => `- ${i.title}`).join("\n")}\n\nGenerated by AshlrCode Autopilot.`;
+              const prBody = `## Autopilot Fixes\n\nFixed ${fixed} issues automatically:\n${workQueue
+                .getByStatus("completed")
+                .slice(-fixed)
+                .map((i) => `- ${i.title}`)
+                .join("\n")}\n\nGenerated by AshlrCode Autopilot.`;
               // Use Bun.spawn for safe PR creation (no shell injection from titles)
-              const prProc = Bun.spawn(["gh", "pr", "create", "--title", prTitle, "--body", prBody], { cwd, stdout: "pipe", stderr: "pipe" });
+              const prProc = Bun.spawn(["gh", "pr", "create", "--title", prTitle, "--body", prBody], {
+                cwd,
+                stdout: "pipe",
+                stderr: "pipe",
+              });
               const prResult = (await new Response(prProc.stdout).text()).trim();
               await prProc.exited;
 
@@ -920,7 +1092,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 addOutput(theme.success(`  PR created: ${prResult.split("\n").pop()}`));
 
                 // Auto-merge if tests pass
-                const mergeProc = Bun.spawn(["gh", "pr", "merge", "--auto", "--squash"], { cwd, stdout: "pipe", stderr: "pipe" });
+                const mergeProc = Bun.spawn(["gh", "pr", "merge", "--auto", "--squash"], {
+                  cwd,
+                  stdout: "pipe",
+                  stderr: "pipe",
+                });
                 const mergeResult = (await new Response(mergeProc.stdout).text()).trim();
                 await mergeProc.exited;
                 if (mergeResult.includes("auto-merge")) {
@@ -932,7 +1108,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 addOutput(theme.secondary(`  PR creation: ${prResult.slice(0, 200)}`));
               }
             } else if (fixed > 0 && !hasGhCli) {
-              addOutput(theme.warning("\n  ⚠ gh CLI not found — skipping PR creation. Install: https://cli.github.com"));
+              addOutput(
+                theme.warning("\n  ⚠ gh CLI not found — skipping PR creation. Install: https://cli.github.com"),
+              );
               addOutput(theme.secondary(`  Changes committed on branch: ${branch}\n`));
             }
 
@@ -956,15 +1134,22 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               addOutput(theme.warning(`  Stopped after ${maxFails} consecutive failures`));
             }
             addOutput("");
-
           } catch (err) {
             addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
             // Try to get back to original branch
             try {
-              const proc = Bun.spawn(["git", "checkout", originalBranch], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+              const proc = Bun.spawn(["git", "checkout", originalBranch], {
+                cwd: state.toolContext.cwd,
+                stdout: "pipe",
+                stderr: "pipe",
+              });
               await proc.exited;
               if (hasUncommitted) {
-                const pop = Bun.spawn(["git", "stash", "pop"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+                const pop = Bun.spawn(["git", "stash", "pop"], {
+                  cwd: state.toolContext.cwd,
+                  stdout: "pipe",
+                  stderr: "pipe",
+                });
                 await pop.exited;
               }
             } catch {}
@@ -989,19 +1174,18 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       case "/keybindings": {
         const binds = getBindings();
-        const kbLines = binds.map(b =>
-          `  ${b.key.padEnd(18)} ${b.action.padEnd(16)} ${b.description ?? ""}`
-        );
+        const kbLines = binds.map((b) => `  ${b.key.padEnd(18)} ${b.action.padEnd(16)} ${b.description ?? ""}`);
         addOutput(`\n  Keybindings:\n${kbLines.join("\n")}\n`);
         addOutput(theme.tertiary("  Customize: ~/.ashlrcode/keybindings.json\n"));
         return true;
       }
 
-
       case "/undercover": {
         const { isUndercoverMode, setUndercoverMode } = await import("./config/undercover.ts");
         setUndercoverMode(!isUndercoverMode());
-        addOutput(isUndercoverMode() ? theme.warning("\n  🕶 Undercover mode ON\n") : theme.success("\n  Undercover mode OFF\n"));
+        addOutput(
+          isUndercoverMode() ? theme.warning("\n  🕶 Undercover mode ON\n") : theme.success("\n  Undercover mode OFF\n"),
+        );
         return true;
       }
 
@@ -1010,7 +1194,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const currentModel = state.router.currentProvider.config.model;
         const { names } = getModelPatches(currentModel);
         const allPatches = listPatches();
-        const patchLines = allPatches.map(p => {
+        const patchLines = allPatches.map((p) => {
           const active = names.includes(p.name);
           return `  ${active ? theme.success("●") : theme.tertiary("○")} ${p.name} ${theme.tertiary(`(${p.pattern})`)}`;
         });
@@ -1019,9 +1203,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
       case "/features": {
         const flags = listFeatures();
-        const lines = Object.entries(flags).map(([k, v]) =>
-          `  ${v ? theme.success("✓") : theme.error("✗")} ${k}`
-        );
+        const lines = Object.entries(flags).map(([k, v]) => `  ${v ? theme.success("✓") : theme.error("✗")} ${k}`);
         addOutput(`\n  Feature Flags:\n${lines.join("\n")}\n`);
         return true;
       }
@@ -1053,7 +1235,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       case "/remote": {
         const rs = getRemoteSettings();
         if (!rs) {
-          addOutput(theme.tertiary("\n  No remote settings configured.\n  Set AC_REMOTE_SETTINGS_URL env var or remoteSettingsUrl in settings.json.\n"));
+          addOutput(
+            theme.tertiary(
+              "\n  No remote settings configured.\n  Set AC_REMOTE_SETTINGS_URL env var or remoteSettingsUrl in settings.json.\n",
+            ),
+          );
           return true;
         }
         addOutput(`\n  Remote Settings (fetched ${new Date(rs.fetchedAt).toLocaleString()}):`);
@@ -1117,23 +1303,25 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           return true;
         }
         if (!arg) {
-          addOutput([
-            "",
-            theme.accentBold("  KAIROS — Autonomous Agent Mode"),
-            "",
-            `  ${theme.accent("Usage:")}  /kairos <goal>`,
-            `  ${theme.accent("Stop:")}   /kairos stop`,
-            "",
-            `  ${theme.muted("Detects terminal focus to adjust behavior:")}`,
-            `    ${theme.success("Focused")}    → Collaborative (asks before big changes)`,
-            `    ${theme.warning("Unfocused")}  → Full auto (commits, pushes independently)`,
-            `    ${theme.muted("Unknown")}    → Balanced default`,
-            "",
-            `  ${theme.muted("Heartbeat every 30s · macOS notification when done · Auto-stops when idle")}`,
-            "",
-            `  ${theme.accent("Example:")} /kairos Fix all TODO comments in src/agent/`,
-            "",
-          ].join("\n"));
+          addOutput(
+            [
+              "",
+              theme.accentBold("  KAIROS — Autonomous Agent Mode"),
+              "",
+              `  ${theme.accent("Usage:")}  /kairos <goal>`,
+              `  ${theme.accent("Stop:")}   /kairos stop`,
+              "",
+              `  ${theme.muted("Detects terminal focus to adjust behavior:")}`,
+              `    ${theme.success("Focused")}    → Collaborative (asks before big changes)`,
+              `    ${theme.warning("Unfocused")}  → Full auto (commits, pushes independently)`,
+              `    ${theme.muted("Unknown")}    → Balanced default`,
+              "",
+              `  ${theme.muted("Heartbeat every 30s · macOS notification when done · Auto-stops when idle")}`,
+              "",
+              `  ${theme.accent("Example:")} /kairos Fix all TODO comments in src/agent/`,
+              "",
+            ].join("\n"),
+          );
           return true;
         }
         if (kairos?.isRunning()) {
@@ -1147,8 +1335,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           systemPrompt: state.baseSystemPrompt,
           heartbeatIntervalMs: 30_000,
           maxAutonomousIterations: 5,
-          onOutput: (text) => { addOutput(text); },
-          onToolStart: (name) => { addOutput(`  * ${name}`); update(); },
+          onOutput: (text) => {
+            addOutput(text);
+          },
+          onToolStart: (name) => {
+            addOutput(`  * ${name}`);
+            update();
+          },
           onToolEnd: (_name, result, isError) => {
             addOutput(isError ? `  x ${result.slice(0, 80)}` : `  > ${result.split("\n")[0]?.slice(0, 80)}`);
             update();
@@ -1160,7 +1353,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
       case "/coordinate": {
         if (!arg) {
-          addOutput(theme.warning("\n  Usage: /coordinate <goal>\n  Example: /coordinate Refactor auth module to use JWT\n"));
+          addOutput(
+            theme.warning("\n  Usage: /coordinate <goal>\n  Example: /coordinate Refactor auth module to use JWT\n"),
+          );
           return true;
         }
         const { coordinate, formatCoordinatorReport } = await import("./agent/coordinator.ts");
@@ -1177,12 +1372,16 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
                 addOutput(theme.tertiary(`  📋 ${event.message}\n`));
                 break;
               case "dispatching":
-                addOutput(theme.accent(`  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`));
+                addOutput(
+                  theme.accent(`  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`),
+                );
                 break;
               case "agent_complete":
-                addOutput(event.success
-                  ? theme.success(`  ✓ ${event.agentName} completed\n`)
-                  : theme.error(`  ✗ ${event.agentName} failed\n`));
+                addOutput(
+                  event.success
+                    ? theme.success(`  ✓ ${event.agentName} completed\n`)
+                    : theme.error(`  ✗ ${event.agentName} failed\n`),
+                );
                 break;
               case "verifying":
                 addOutput(theme.tertiary("  🔍 Running verification...\n"));
@@ -1210,23 +1409,25 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           return true;
         }
         if (!arg) {
-          addOutput([
-            "",
-            theme.accentBold("  🚀 ProductAgent — Autonomous Product Building"),
-            "",
-            `  ${theme.accent("Usage:")}  /ship <product-goal>`,
-            `  ${theme.accent("Stop:")}   /ship stop`,
-            "",
-            `  ${theme.muted("The agent autonomously:")}`,
-            `    1. Scans your codebase against the goal`,
-            `    2. Finds bugs, missing features, quality gaps`,
-            `    3. Prioritizes by user impact`,
-            `    4. Executes fixes with sub-agents`,
-            `    5. Verifies every change`,
-            "",
-            `  ${theme.accent("Example:")} /ship Make ashlrcode production-ready for paying users`,
-            "",
-          ].join("\n"));
+          addOutput(
+            [
+              "",
+              theme.accentBold("  🚀 ProductAgent — Autonomous Product Building"),
+              "",
+              `  ${theme.accent("Usage:")}  /ship <product-goal>`,
+              `  ${theme.accent("Stop:")}   /ship stop`,
+              "",
+              `  ${theme.muted("The agent autonomously:")}`,
+              `    1. Scans your codebase against the goal`,
+              `    2. Finds bugs, missing features, quality gaps`,
+              `    3. Prioritizes by user impact`,
+              `    4. Executes fixes with sub-agents`,
+              `    5. Verifies every change`,
+              "",
+              `  ${theme.accent("Example:")} /ship Make ashlrcode production-ready for paying users`,
+              "",
+            ].join("\n"),
+          );
           return true;
         }
         if (productAgent?.isRunning()) {
@@ -1243,8 +1444,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           maxItems: 20,
           pauseBetweenMs: 3000,
           autoCommit: false, // User should commit themselves
-          onOutput: (text) => { addOutput(text); update(); },
-          onPhaseChange: (phase) => { spinnerText = `ProductAgent: ${phase}`; update(); },
+          onOutput: (text) => {
+            addOutput(text);
+            update();
+          },
+          onPhaseChange: (phase) => {
+            spinnerText = `ProductAgent: ${phase}`;
+            update();
+          },
         });
         const shipResult = await productAgent.start();
         addOutput("\n" + formatProductReport(shipResult) + "\n");
@@ -1256,17 +1463,25 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const { runVerification, formatVerificationReport, getModifiedFiles } = await import("./agent/verification.ts");
         const modFiles = getModifiedFiles();
         if (modFiles.length === 0 && !arg) {
-          addOutput(theme.warning("\n  No modified files to verify. Make changes first or specify: /verify <intent>\n"));
+          addOutput(
+            theme.warning("\n  No modified files to verify. Make changes first or specify: /verify <intent>\n"),
+          );
           return true;
         }
         addOutput(theme.accent("\n  🔍 Running verification agent...\n"));
-        const vResult = await runVerification({
-          router: state.router,
-          toolRegistry: state.registry,
-          toolContext: state.toolContext,
-          systemPrompt: state.baseSystemPrompt,
-          onOutput: (text) => { addOutput(text); update(); },
-        }, { intent: arg || undefined });
+        const vResult = await runVerification(
+          {
+            router: state.router,
+            toolRegistry: state.registry,
+            toolContext: state.toolContext,
+            systemPrompt: state.baseSystemPrompt,
+            onOutput: (text) => {
+              addOutput(text);
+              update();
+            },
+          },
+          { intent: arg || undefined },
+        );
         addOutput("\n" + formatVerificationReport(vResult) + "\n");
         return true;
       }
@@ -1277,7 +1492,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         if (sub === "add") {
           const [schedule, ...promptParts] = triggerRest;
           if (!schedule || promptParts.length === 0) {
-            addOutput(theme.tertiary("\n  Usage: /trigger add <schedule> <prompt>\n  Schedule: 30s, 5m, 1h, 2d\n  Example: /trigger add 5m run tests\n"));
+            addOutput(
+              theme.tertiary(
+                "\n  Usage: /trigger add <schedule> <prompt>\n  Schedule: 30s, 5m, 1h, 2d\n  Example: /trigger add 5m run tests\n",
+              ),
+            );
             return true;
           }
           try {
@@ -1325,12 +1544,23 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           return true;
         }
 
-        addOutput(theme.tertiary("\n  /trigger add <schedule> <prompt>\n  /trigger list\n  /trigger toggle <id>\n  /trigger delete <id>\n"));
+        addOutput(
+          theme.tertiary(
+            "\n  /trigger add <schedule> <prompt>\n  /trigger list\n  /trigger toggle <id>\n  /trigger delete <id>\n",
+          ),
+        );
         return true;
       }
 
       case "/btw": {
-        if (!arg) { addOutput(theme.tertiary("\n  Usage: /btw <question>\n  Ask a side question in the background — doesn't block your flow.\n")); return true; }
+        if (!arg) {
+          addOutput(
+            theme.tertiary(
+              "\n  Usage: /btw <question>\n  Ask a side question in the background — doesn't block your flow.\n",
+            ),
+          );
+          return true;
+        }
         // Spawn async background sub-agent — doesn't block main loop
         const { runSubAgent: spawnBtw } = await import("./agent/sub-agent.ts");
         addOutput(theme.accent(`\n  💬 Side question (background): ${arg}\n`));
@@ -1346,26 +1576,31 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         spawnBtw({
           name: "btw",
           prompt: arg,
-          systemPrompt: state.baseSystemPrompt + "\n\nThis is a brief side question. Answer concisely (1-3 sentences). Do not modify any files.",
+          systemPrompt:
+            state.baseSystemPrompt +
+            "\n\nThis is a brief side question. Answer concisely (1-3 sentences). Do not modify any files.",
           router: state.router,
           toolRegistry: state.registry,
           toolContext: state.toolContext,
           readOnly: true,
           maxIterations: 5,
-        }).then((result) => {
-          if (btwController.signal.aborted) return; // Cancelled before result arrived
-          addOutput(theme.accent("\n  💬 BTW answer:\n") + result.text + "\n");
-          update();
-        }).catch((err) => {
-          if (btwController.signal.aborted) {
-            addOutput(theme.tertiary(`\n  💬 BTW cancelled: ${arg.slice(0, 60)}\n`));
-          } else {
-            addOutput(theme.error(`\n  💬 BTW error: ${err instanceof Error ? err.message : String(err)}\n`));
-          }
-          update();
-        }).finally(() => {
-          backgroundOps.delete(btwOpId);
-        });
+        })
+          .then((result) => {
+            if (btwController.signal.aborted) return; // Cancelled before result arrived
+            addOutput(theme.accent("\n  💬 BTW answer:\n") + result.text + "\n");
+            update();
+          })
+          .catch((err) => {
+            if (btwController.signal.aborted) {
+              addOutput(theme.tertiary(`\n  💬 BTW cancelled: ${arg.slice(0, 60)}\n`));
+            } else {
+              addOutput(theme.error(`\n  💬 BTW error: ${err instanceof Error ? err.message : String(err)}\n`));
+            }
+            update();
+          })
+          .finally(() => {
+            backgroundOps.delete(btwOpId);
+          });
         return true; // Returns immediately — doesn't block
       }
 
@@ -1376,10 +1611,26 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           allOps.push({ id, ...op });
         }
         if (kairos?.isRunning()) {
-          allOps.push({ id: "kairos", name: "KAIROS autonomous mode", startedAt: 0, cancel: () => { kairos?.stop(); kairos = null; } });
+          allOps.push({
+            id: "kairos",
+            name: "KAIROS autonomous mode",
+            startedAt: 0,
+            cancel: () => {
+              kairos?.stop();
+              kairos = null;
+            },
+          });
         }
         if (productAgent?.isRunning()) {
-          allOps.push({ id: "ship", name: "ProductAgent (/ship)", startedAt: 0, cancel: () => { productAgent?.stop(); productAgent = null; } });
+          allOps.push({
+            id: "ship",
+            name: "ProductAgent (/ship)",
+            startedAt: 0,
+            cancel: () => {
+              productAgent?.stop();
+              productAgent = null;
+            },
+          });
         }
 
         if (!arg) {
@@ -1387,11 +1638,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           if (allOps.length === 0) {
             addOutput(theme.tertiary("\n  No active background operations.\n"));
           } else {
-            const lines = [
-              "",
-              theme.accentBold("  Active Background Operations"),
-              "",
-            ];
+            const lines = ["", theme.accentBold("  Active Background Operations"), ""];
             for (const op of allOps) {
               const elapsed = op.startedAt > 0 ? `${Math.round((Date.now() - op.startedAt) / 1000)}s ago` : "running";
               lines.push(`    ${theme.accent(op.id)}  ${op.name}  ${theme.muted(`(${elapsed})`)}`);
@@ -1417,14 +1664,14 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         }
 
         // Cancel specific operation by ID
-        const target = allOps.find(op => op.id === arg);
+        const target = allOps.find((op) => op.id === arg);
         if (target) {
           target.cancel();
           addOutput(theme.success(`\n  Cancelled: ${target.name}\n`));
         } else {
           addOutput(theme.error(`\n  No background operation found with ID: ${arg}\n`));
           if (allOps.length > 0) {
-            addOutput(theme.muted(`  Active IDs: ${allOps.map(op => op.id).join(", ")}\n`));
+            addOutput(theme.muted(`  Active IDs: ${allOps.map((op) => op.id).join(", ")}\n`));
           }
         }
         return true;
@@ -1470,10 +1717,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);
         state.history = await autoCompact(state.history, state.router);
-        const summary = state.history.slice(-5).map(m => {
-          const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-          return `${m.role}: ${c.slice(0, 150)}`;
-        }).join("\n");
+        const summary = state.history
+          .slice(-5)
+          .map((m) => {
+            const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+            return `${m.role}: ${c.slice(0, 150)}`;
+          })
+          .join("\n");
         await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
         addOutput(theme.success(`\n  ✓ Compacted to ${state.history.length} messages\n`));
         return true;
@@ -1482,7 +1732,11 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         if (lastFullToolOutput) {
           addOutput("\n" + lastFullToolOutput + "\n");
         } else {
-          addOutput(theme.tertiary("\n  No truncated output to expand. The last tool result will be stored after truncation.\n"));
+          addOutput(
+            theme.tertiary(
+              "\n  No truncated output to expand. The last tool result will be stored after truncation.\n",
+            ),
+          );
         }
         return true;
       }
@@ -1490,7 +1744,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const ctxLimit = getProviderContextLimit(state.router.currentProvider.name);
         const ctxUsed = estimateTokens(state.history);
         addOutput(`\n  Provider: ${state.router.currentProvider.name}:${state.router.currentProvider.config.model}`);
-        addOutput(`  Context: ${ctxUsed}/${ctxLimit} tokens (${Math.round(ctxUsed/ctxLimit*100)}%)`);
+        addOutput(`  Context: ${ctxUsed}/${ctxLimit} tokens (${Math.round((ctxUsed / ctxLimit) * 100)}%)`);
         addOutput(`  Session: ${state.session.id}`);
         addOutput(`  History: ${state.history.length} messages\n`);
         return true;
@@ -1498,7 +1752,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       case "/sessions": {
         const { listSessions } = await import("./persistence/session.ts");
         const sessions = await listSessions(10);
-        if (sessions.length === 0) { addOutput(theme.tertiary("\n  No sessions found.\n")); return true; }
+        if (sessions.length === 0) {
+          addOutput(theme.tertiary("\n  No sessions found.\n"));
+          return true;
+        }
         addOutput("");
         for (const s of sessions) {
           const ago = formatTimeAgo(new Date(s.updatedAt));
@@ -1506,7 +1763,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           const isCurrent = s.id === state.session.id;
           const marker = isCurrent ? theme.success("●") : theme.muted("○");
           const title = s.title ?? "(untitled)";
-          addOutput(`  ${marker} ${theme.accent(s.id.slice(0, 8))} ${title.slice(0, 30).padEnd(30)} ${theme.muted(modelShort.padEnd(12))} ${s.messageCount} msgs  ${theme.muted(ago)}`);
+          addOutput(
+            `  ${marker} ${theme.accent(s.id.slice(0, 8))} ${title.slice(0, 30).padEnd(30)} ${theme.muted(modelShort.padEnd(12))} ${s.messageCount} msgs  ${theme.muted(ago)}`,
+          );
         }
         addOutput(theme.muted("\n  Resume with: ac --resume <id>\n"));
         return true;
@@ -1514,20 +1773,33 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       case "/memory": {
         const { loadMemories } = await import("./persistence/memory.ts");
         const memories = await loadMemories(state.toolContext.cwd);
-        if (memories.length === 0) { addOutput(theme.tertiary("\n  No memory files.\n")); return true; }
-        for (const m of memories) { addOutput(`  [${m.type}] ${m.name} — ${m.description ?? m.filePath}`); }
+        if (memories.length === 0) {
+          addOutput(theme.tertiary("\n  No memory files.\n"));
+          return true;
+        }
+        for (const m of memories) {
+          addOutput(`  [${m.type}] ${m.name} — ${m.description ?? m.filePath}`);
+        }
         addOutput("");
         return true;
       }
       case "/diff": {
-        const proc = Bun.spawn(["git", "diff", "--stat"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawn(["git", "diff", "--stat"], {
+          cwd: state.toolContext.cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
         const output = (await new Response(proc.stdout).text()).trim();
         await proc.exited;
         addOutput(output ? `\n${output}\n` : theme.tertiary("\n  No changes.\n"));
         return true;
       }
       case "/git": {
-        const proc = Bun.spawn(["git", "log", "--oneline", "-10"], { cwd: state.toolContext.cwd, stdout: "pipe", stderr: "pipe" });
+        const proc = Bun.spawn(["git", "log", "--oneline", "-10"], {
+          cwd: state.toolContext.cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
         const output = (await new Response(proc.stdout).text()).trim();
         await proc.exited;
         addOutput(output ? `\n${output}\n` : theme.tertiary("\n  Not a git repo.\n"));
@@ -1541,7 +1813,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
       case "/restore": {
         const fh = getFileHistory();
-        if (!fh || fh.undoCount === 0) { addOutput(theme.tertiary("\n  Nothing to restore.\n")); return true; }
+        if (!fh || fh.undoCount === 0) {
+          addOutput(theme.tertiary("\n  Nothing to restore.\n"));
+          return true;
+        }
         addOutput(`\n  ${fh.undoCount} snapshots available. Use /undo to restore.\n`);
         return true;
       }
@@ -1572,7 +1847,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         // Default: show sync status
         const status = await getSyncStatus();
         addOutput(`\n  Syncable files:\n${status.files.map((f) => `    ${f}`).join("\n")}\n`);
-        addOutput(theme.tertiary("  /sync export [path]  — export settings\n  /sync import <path>  — import settings\n"));
+        addOutput(
+          theme.tertiary("  /sync export [path]  — export settings\n  /sync import <path>  — import settings\n"),
+        );
         return true;
       }
 
@@ -1611,7 +1888,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         const ts = new Date().toISOString().replace(/[:.]/g, "-");
         const fname = `${state.session.id}-${ts}.txt`;
         const fpath = join(transcriptDir, fname);
-        const lines = items.map(i => stripAnsi(i.text));
+        const lines = items.map((i) => stripAnsi(i.text));
         writeFileSync(fpath, lines.join("\n"), "utf-8");
         addOutput(theme.success(`\n  Transcript saved to ${fpath} (${lines.length} lines)\n`));
         return true;
@@ -1698,14 +1975,21 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
     // Echo — use displayText for smart paste collapse
     const echo = displayText ?? input;
-    addOutput("\n" + theme.accent("  ❯ ") + theme.primary(echo.length > 200 ? echo.slice(0, 197) + "..." : echo) + "\n");
+    addOutput(
+      "\n" + theme.accent("  ❯ ") + theme.primary(echo.length > 200 ? echo.slice(0, 197) + "..." : echo) + "\n",
+    );
 
     try {
       const effortConfig = getEffortConfig();
       const { getUndercoverPrompt: getUcPrompt } = await import("./config/undercover.ts");
       const { getModelPatches: getMPatches } = await import("./agent/model-patches.ts");
       const turnModelPatches = getMPatches(state.router.currentProvider.config.model).combinedSuffix;
-      const systemPrompt = state.baseSystemPrompt + getPlanModePrompt() + effortConfig.systemPromptSuffix + turnModelPatches + getUcPrompt();
+      const systemPrompt =
+        state.baseSystemPrompt +
+        getPlanModePrompt() +
+        effortConfig.systemPromptSuffix +
+        turnModelPatches +
+        getUcPrompt();
       const systemTokens = Math.ceil(systemPrompt.length / 4);
       const contextLimit = getProviderContextLimit(state.router.currentProvider.name);
 
@@ -1714,20 +1998,31 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       if (needsCompaction(state.history, systemTokens, { maxContextTokens: contextLimit }, actualTokens)) {
         const beforeCount = state.history.length;
         const estTokensBefore = estimateTokens(state.history);
-        addOutput(theme.tertiary(`  [auto-compacting: ${beforeCount} messages, ~${Math.round(estTokensBefore / 1000)}K tokens → summarizing...]`));
+        addOutput(
+          theme.tertiary(
+            `  [auto-compacting: ${beforeCount} messages, ~${Math.round(estTokensBefore / 1000)}K tokens → summarizing...]`,
+          ),
+        );
         update();
         state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);
         state.history = await autoCompact(state.history, state.router);
         const afterCount = state.history.length;
         const estTokensAfter = estimateTokens(state.history);
-        addOutput(theme.tertiary(`  [compacted: ${beforeCount} → ${afterCount} messages, ~${Math.round(estTokensBefore / 1000)}K → ~${Math.round(estTokensAfter / 1000)}K tokens]`));
+        addOutput(
+          theme.tertiary(
+            `  [compacted: ${beforeCount} → ${afterCount} messages, ~${Math.round(estTokensBefore / 1000)}K → ~${Math.round(estTokensAfter / 1000)}K tokens]`,
+          ),
+        );
 
         // Persist compact boundary to session log
-        const summary = state.history.slice(-5).map(m => {
-          const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-          return `${m.role}: ${c.slice(0, 150)}`;
-        }).join("\n");
+        const summary = state.history
+          .slice(-5)
+          .map((m) => {
+            const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+            return `${m.role}: ${c.slice(0, 150)}`;
+          })
+          .join("\n");
         await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
       }
 
@@ -1750,78 +2045,82 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         startedAt: new Date().toISOString(),
       };
 
-      const result = await runWithAgentContext(rootCtx, () => runAgentLoop(input, state.history, {
-        systemPrompt,
-        maxIterations: effortConfig.maxIterations,
-        router: state.router,
-        toolRegistry: state.registry,
-        toolContext: state.toolContext,
-        readOnly: isPlanMode(),
-        onUsage: (usage) => {
-          if (usage.inputTokens) turnInputTokens = usage.inputTokens;
-          if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
-          const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
-          tokenStats = computeTokenStats(tokens, false);
-          update();
-        },
-        onText: (text) => {
-          isProcessing = false;
-          if (!turnStreamStart) turnStreamStart = Date.now();
-          turnCharCount += text.length;
-          responseText += text;
-          // Use stateful markdown renderer (handles code blocks, headers, etc.)
-          const rendered = renderMarkdownDelta(text);
-          if (rendered) {
-            // Rendered output is newline-terminated; split and indent each line
-            const lines = rendered.replace(/\n$/, "").split("\n");
-            for (const line of lines) {
-              addOutput("  " + line);
+      const result = await runWithAgentContext(rootCtx, () =>
+        runAgentLoop(input, state.history, {
+          systemPrompt,
+          maxIterations: effortConfig.maxIterations,
+          router: state.router,
+          toolRegistry: state.registry,
+          toolContext: state.toolContext,
+          readOnly: isPlanMode(),
+          onUsage: (usage) => {
+            if (usage.inputTokens) turnInputTokens = usage.inputTokens;
+            if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
+            const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
+            tokenStats = computeTokenStats(tokens, false);
+            update();
+          },
+          onText: (text) => {
+            isProcessing = false;
+            if (!turnStreamStart) turnStreamStart = Date.now();
+            turnCharCount += text.length;
+            responseText += text;
+            // Use stateful markdown renderer (handles code blocks, headers, etc.)
+            const rendered = renderMarkdownDelta(text);
+            if (rendered) {
+              // Rendered output is newline-terminated; split and indent each line
+              const lines = rendered.replace(/\n$/, "").split("\n");
+              for (const line of lines) {
+                addOutput("  " + line);
+              }
             }
-          }
-          // Partial line stays in spinnerText for live display
-          const allLines = responseText.split("\n");
-          responseText = allLines[allLines.length - 1]!;
-          // Update token stats from char estimate if no actual usage yet
-          if (!turnOutputTokens) {
-            tokenStats = computeTokenStats(Math.round(turnCharCount / 4), true);
-          }
-          spinnerText = responseText;
-          update();
-        },
-        onToolStart: (name, toolInput) => {
-          isProcessing = true;
-          spinnerText = name;
-          toolStartTime = Date.now();
-          currentToolInput = toolInput as Record<string, unknown>;
-          recordThinking(state.buddy);
-          logEvent("tool_start", { tool: name }).catch(() => {});
-          if (isFirstToolCall()) {
-            addOutput(getBuddyReaction(state.buddy, "first_tool"));
-          }
-          update();
-        },
-        onToolEnd: (_name, result, isError) => {
-          isProcessing = false;
-          turnToolCount++;
-          const durationMs = toolStartTime > 0 ? Date.now() - toolStartTime : undefined;
-          lastToolName = _name;
-          lastToolResult = result.slice(0, 50);
-          lastFullToolOutput = result; // Store full output for /expand
-          logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
-          if (isError) { recordError(state.buddy); lastHadError = true; }
-          else recordToolCallSuccess(state.buddy);
+            // Partial line stays in spinnerText for live display
+            const allLines = responseText.split("\n");
+            responseText = allLines[allLines.length - 1]!;
+            // Update token stats from char estimate if no actual usage yet
+            if (!turnOutputTokens) {
+              tokenStats = computeTokenStats(Math.round(turnCharCount / 4), true);
+            }
+            spinnerText = responseText;
+            update();
+          },
+          onToolStart: (name, toolInput) => {
+            isProcessing = true;
+            spinnerText = name;
+            toolStartTime = Date.now();
+            currentToolInput = toolInput as Record<string, unknown>;
+            recordThinking(state.buddy);
+            logEvent("tool_start", { tool: name }).catch(() => {});
+            if (isFirstToolCall()) {
+              addOutput(getBuddyReaction(state.buddy, "first_tool"));
+            }
+            update();
+          },
+          onToolEnd: (_name, result, isError) => {
+            isProcessing = false;
+            turnToolCount++;
+            const durationMs = toolStartTime > 0 ? Date.now() - toolStartTime : undefined;
+            lastToolName = _name;
+            lastToolResult = result.slice(0, 50);
+            lastFullToolOutput = result; // Store full output for /expand
+            logEvent(isError ? "tool_error" : "tool_end", { tool: _name }).catch(() => {});
+            if (isError) {
+              recordError(state.buddy);
+              lastHadError = true;
+            } else recordToolCallSuccess(state.buddy);
 
-          // Use message renderer for formatted output
-          addOutput(""); // spacing before tool block
-          const rendered = formatToolExecution(_name, currentToolInput, result, isError, durationMs);
-          for (const line of rendered) addOutput(line);
+            // Use message renderer for formatted output
+            addOutput(""); // spacing before tool block
+            const rendered = formatToolExecution(_name, currentToolInput, result, isError, durationMs);
+            for (const line of rendered) addOutput(line);
 
-          if (isError) addOutput(getBuddyReaction(state.buddy, "error"));
-          toolStartTime = 0;
-          currentToolInput = {};
-          update();
-        },
-      }));
+            if (isError) addOutput(getBuddyReaction(state.buddy, "error"));
+            toolStartTime = 0;
+            currentToolInput = {};
+            update();
+          },
+        }),
+      );
 
       // Flush remaining markdown buffer
       const flushed = flushMarkdown();
@@ -1853,12 +2152,21 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       }
       cachedQuip = getQuip(state.buddy.mood); // Update quip once per turn, not per render
       currentQuipType = "quip";
-      const tc = state.history.filter(m => m.role === "user" && typeof m.content === "string").length;
+      const tc = state.history.filter((m) => m.role === "user" && typeof m.content === "string").length;
       const budgetInfo = {
         budgetUSD: state.router.costTracker.budgetUSD,
         percentUsed: state.router.costTracker.getBudgetPercent(),
       };
-      addOutput(formatTurnSeparator(tc, state.router.costs.totalCostUSD, state.buddy.name, turnToolCount, speculationCache.getStats(), budgetInfo));
+      addOutput(
+        formatTurnSeparator(
+          tc,
+          state.router.costs.totalCostUSD,
+          state.buddy.name,
+          turnToolCount,
+          speculationCache.getStats(),
+          budgetInfo,
+        ),
+      );
 
       // Suggest verification after multi-file changes
       const { shouldAutoVerify, getModifiedFiles, clearModifiedFiles } = await import("./agent/verification.ts");
@@ -1869,11 +2177,13 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       clearModifiedFiles(); // Reset for next turn
 
       // Desktop notification when terminal is not focused
-      detectTerminalFocus().then(focus => {
-        if (focus === "unfocused") {
-          notifyTurnComplete(turnToolCount, Date.now() - turnStartTime).catch(() => {});
-        }
-      }).catch(() => {});
+      detectTerminalFocus()
+        .then((focus) => {
+          if (focus === "unfocused") {
+            notifyTurnComplete(turnToolCount, Date.now() - turnStartTime).catch(() => {});
+          }
+        })
+        .catch(() => {});
 
       // Speech bubble — render buddy + bubble as Static output so it scrolls up with history
       const bubbleLines = renderBuddyWithBubble(cachedQuip, getBuddyArt(state.buddy), state.buddy.name);
@@ -1886,20 +2196,24 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         generateBuddyComment(
           { lastTool: lastToolName, lastResult: lastToolResult, mood: state.buddy.mood, errorOccurred: lastHadError },
           state.router.currentProvider.config.apiKey,
-          state.router.currentProvider.config.baseURL
-        ).then((comment) => {
-          if (gen !== aiCommentGen) return; // Stale — a newer turn started
-          currentQuipType = comment.type;
-          cachedQuip = comment.text;
-          const pool = QUIPS[state.buddy.mood] ?? [];
-          if (!pool.includes(comment.text)) {
-            QUIPS[state.buddy.mood] = [...pool, comment.text];
-          }
-          update();
-        }).catch(() => {}).finally(() => { aiCommentInFlight = false; });
+          state.router.currentProvider.config.baseURL,
+        )
+          .then((comment) => {
+            if (gen !== aiCommentGen) return; // Stale — a newer turn started
+            currentQuipType = comment.type;
+            cachedQuip = comment.text;
+            const pool = QUIPS[state.buddy.mood] ?? [];
+            if (!pool.includes(comment.text)) {
+              QUIPS[state.buddy.mood] = [...pool, comment.text];
+            }
+            update();
+          })
+          .catch(() => {})
+          .finally(() => {
+            aiCommentInFlight = false;
+          });
       }
       lastHadError = false;
-
     } catch (err) {
       const error = err instanceof Error ? err : new Error(String(err));
       const categorized = categorizeError(error);
@@ -1957,12 +2271,27 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   }
 
   // Keybinding action callbacks
-  const handleModeSwitch = () => { cycleMode(); update(); };
-  const handleUndo = () => { handleCommand("/undo").catch(() => {}); };
-  const handleEffortCycle = () => { cycleEffort(); update(); };
-  const handleCompact = () => { handleCommand("/compact").catch(() => {}); };
-  const handleClearScreen = () => { items = []; update(); };
-  const handleVoiceToggle = () => { handleCommand("/voice").catch(() => {}); };
+  const handleModeSwitch = () => {
+    cycleMode();
+    update();
+  };
+  const handleUndo = () => {
+    handleCommand("/undo").catch(() => {});
+  };
+  const handleEffortCycle = () => {
+    cycleEffort();
+    update();
+  };
+  const handleCompact = () => {
+    handleCommand("/compact").catch(() => {});
+  };
+  const handleClearScreen = () => {
+    items = [];
+    update();
+  };
+  const handleVoiceToggle = () => {
+    handleCommand("/voice").catch(() => {});
+  };
 
   function handleInterrupt() {
     if (!isProcessing) return;

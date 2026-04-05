@@ -5,15 +5,15 @@
  * Full-width input box. Status line below.
  */
 
-import React, { useState, useCallback, useEffect, useMemo } from "react";
-import { Box, Text, Static, useInput, useApp } from "ink";
 import { readdirSync } from "fs";
-import { resolve, dirname, basename, join } from "path";
-import { SlashInput } from "./SlashInput.tsx";
-import { BuddyPanel } from "./BuddyPanel.tsx";
-import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
+import { Box, Static, Text, useApp, useInput } from "ink";
+import { basename, dirname, join, resolve } from "path";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { BuddyData } from "../ui/buddy.ts";
+import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
+import { BuddyPanel } from "./BuddyPanel.tsx";
 import { getAction, type InputHistory } from "./keybindings.ts";
+import { SlashInput } from "./SlashInput.tsx";
 
 /**
  * Extract a file path suggestion for the last word in the input.
@@ -29,7 +29,12 @@ function getFilePathSuggestion(input: string, cwd: string): string | undefined {
   if (!lastWord) return undefined;
 
   // Check if it looks like a file path: contains / or . (but not just a single dot)
-  const looksLikePath = lastWord.includes("/") || lastWord.startsWith("./") || lastWord.startsWith("../") || lastWord.startsWith("~") || (lastWord.includes(".") && lastWord.length > 1);
+  const looksLikePath =
+    lastWord.includes("/") ||
+    lastWord.startsWith("./") ||
+    lastWord.startsWith("../") ||
+    lastWord.startsWith("~") ||
+    (lastWord.includes(".") && lastWord.length > 1);
   if (!looksLikePath) return undefined;
 
   try {
@@ -54,21 +59,24 @@ function getFilePathSuggestion(input: string, cwd: string): string | undefined {
 
     const entries = readdirSync(dirToList, { withFileTypes: true });
     const matches = entries
-      .filter(e => e.name.startsWith(partial) && e.name !== partial)
+      .filter((e) => e.name.startsWith(partial) && e.name !== partial)
       .sort((a, b) => a.name.localeCompare(b.name));
 
     if (matches.length === 0) return undefined;
 
     const match = matches[0]!;
     const completion = match.name + (match.isDirectory() ? "/" : "");
-    const prefix = input.slice(0, input.length - (partial.length));
+    const prefix = input.slice(0, input.length - partial.length);
     return prefix + completion;
   } catch {
     return undefined;
   }
 }
 
-interface OutputItem { id: number; text: string; }
+interface OutputItem {
+  id: number;
+  text: string;
+}
 
 interface AppProps {
   onSubmit: (text: string) => void;
@@ -100,11 +108,31 @@ interface AppProps {
 }
 
 export function App({
-  onSubmit, onExit, onInterrupt, onModeSwitch, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle,
-  inputHistory, mode, modeColor,
-  contextPercent, contextUsed, contextLimit, modelName,
-  buddy, buddyQuip, buddyQuipType,
-  items, isProcessing, spinnerText, tokenStats, commands, cwd,
+  onSubmit,
+  onExit,
+  onInterrupt,
+  onModeSwitch,
+  onUndo,
+  onEffortCycle,
+  onCompact,
+  onClearScreen,
+  onVoiceToggle,
+  inputHistory,
+  mode,
+  modeColor,
+  contextPercent,
+  contextUsed,
+  contextLimit,
+  modelName,
+  buddy,
+  buddyQuip,
+  buddyQuipType,
+  items,
+  isProcessing,
+  spinnerText,
+  tokenStats,
+  commands,
+  cwd,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
@@ -114,27 +142,31 @@ export function App({
 
   useEffect(() => {
     const handler = () => setTermWidth(process.stdout.columns || 80);
-    process.stdout.on('resize', handler);
-    return () => { process.stdout.off('resize', handler); };
+    process.stdout.on("resize", handler);
+    return () => {
+      process.stdout.off("resize", handler);
+    };
   }, []);
 
-  const slashSuggestion = input.startsWith("/") && input.length > 1
-    ? commands.find(c => c.startsWith(input) && c !== input)
-    : undefined;
+  const slashSuggestion =
+    input.startsWith("/") && input.length > 1 ? commands.find((c) => c.startsWith(input) && c !== input) : undefined;
 
   const fileSuggestion = useMemo(
-    () => (!slashSuggestion && cwd) ? getFilePathSuggestion(input, cwd) : undefined,
+    () => (!slashSuggestion && cwd ? getFilePathSuggestion(input, cwd) : undefined),
     [input, cwd, slashSuggestion],
   );
 
   const suggestion = slashSuggestion ?? fileSuggestion;
 
-  const handleSubmit = useCallback((value: string) => {
-    const text = value.trim();
-    setInput("");
-    setInputKey(k => k + 1); // Remount to reset cursor
-    if (text) onSubmit(text);
-  }, [onSubmit]);
+  const handleSubmit = useCallback(
+    (value: string) => {
+      const text = value.trim();
+      setInput("");
+      setInputKey((k) => k + 1); // Remount to reset cursor
+      if (text) onSubmit(text);
+    },
+    [onSubmit],
+  );
 
   const handleModeSwitch = useCallback(() => onModeSwitch(), [onModeSwitch]);
 
@@ -145,67 +177,118 @@ export function App({
     // so the user can keep tabbing into subdirectories
     const suffix = suggestion.endsWith("/") ? "" : " ";
     setInput(suggestion + suffix);
-    setInputKey(k => k + 1); // Force TextInput remount — cursor goes to end
+    setInputKey((k) => k + 1); // Force TextInput remount — cursor goes to end
   }, [suggestion]);
 
-  useInput(useCallback((ch: string, key: any) => {
-    // Map Ink key event to a normalized key name
-    const keyName = key.tab ? "tab" : key.upArrow ? "up" : key.downArrow ? "down"
-      : key.leftArrow ? "left" : key.rightArrow ? "right" : key.escape ? "escape"
-      : key.return ? "return" : key.backspace ? "backspace" : key.delete ? "delete"
-      : ch;
+  useInput(
+    useCallback(
+      (ch: string, key: any) => {
+        // Map Ink key event to a normalized key name
+        const keyName = key.tab
+          ? "tab"
+          : key.upArrow
+            ? "up"
+            : key.downArrow
+              ? "down"
+              : key.leftArrow
+                ? "left"
+                : key.rightArrow
+                  ? "right"
+                  : key.escape
+                    ? "escape"
+                    : key.return
+                      ? "return"
+                      : key.backspace
+                        ? "backspace"
+                        : key.delete
+                          ? "delete"
+                          : ch;
 
-    const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
+        const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
 
-    switch (action) {
-      case "exit": {
-        const now = Date.now();
-        if (isProcessing && onInterrupt) {
-          // Double Ctrl+C within 1.5s during processing → force exit
-          if (now - lastCtrlC < 1500) {
-            onExit(); exit();
-          } else {
-            onInterrupt(); // First Ctrl+C → interrupt agent
-            setLastCtrlC(now);
+        switch (action) {
+          case "exit": {
+            const now = Date.now();
+            if (isProcessing && onInterrupt) {
+              // Double Ctrl+C within 1.5s during processing → force exit
+              if (now - lastCtrlC < 1500) {
+                onExit();
+                exit();
+              } else {
+                onInterrupt(); // First Ctrl+C → interrupt agent
+                setLastCtrlC(now);
+              }
+            } else {
+              onExit();
+              exit(); // Ctrl+C while idle → exit
+            }
+            return;
           }
-        } else {
-          onExit(); exit(); // Ctrl+C while idle → exit
+          case "mode-switch":
+            handleModeSwitch();
+            return;
+          case "autocomplete":
+            if (suggestion && (key.tab || (key.rightArrow && input.length > 0))) {
+              acceptSuggestion();
+            }
+            return;
+          case "history-prev":
+            if (inputHistory) {
+              const prev = inputHistory.prev(input);
+              if (prev !== null) {
+                setInput(prev);
+                setInputKey((k) => k + 1);
+              }
+            }
+            return;
+          case "history-next":
+            if (inputHistory) {
+              const next = inputHistory.next();
+              if (next !== null) {
+                setInput(next);
+                setInputKey((k) => k + 1);
+              }
+            }
+            return;
+          case "clear-input":
+            setInput("");
+            setInputKey((k) => k + 1);
+            return;
+          case "undo":
+            onUndo?.();
+            return;
+          case "effort-cycle":
+            onEffortCycle?.();
+            return;
+          case "compact":
+            onCompact?.();
+            return;
+          case "clear-screen":
+            onClearScreen?.();
+            return;
+          case "voice-toggle":
+            onVoiceToggle?.();
+            return;
         }
-        return;
-      }
-      case "mode-switch":
-        handleModeSwitch(); return;
-      case "autocomplete":
-        if (suggestion && (key.tab || (key.rightArrow && input.length > 0))) {
-          acceptSuggestion();
-        }
-        return;
-      case "history-prev":
-        if (inputHistory) {
-          const prev = inputHistory.prev(input);
-          if (prev !== null) { setInput(prev); setInputKey(k => k + 1); }
-        }
-        return;
-      case "history-next":
-        if (inputHistory) {
-          const next = inputHistory.next();
-          if (next !== null) { setInput(next); setInputKey(k => k + 1); }
-        }
-        return;
-      case "clear-input":
-        setInput(""); setInputKey(k => k + 1); return;
-      case "undo":
-        onUndo?.(); return;
-      case "effort-cycle":
-        onEffortCycle?.(); return;
-      case "compact":
-        onCompact?.(); return;
-      case "clear-screen":
-        onClearScreen?.(); return;
-      case "voice-toggle":
-        onVoiceToggle?.(); return;
-    }
-  }, [suggestion, input, isProcessing, handleModeSwitch, onExit, onInterrupt, exit, acceptSuggestion, inputHistory, onUndo, onEffortCycle, onCompact, onClearScreen, onVoiceToggle]));
+      },
+      [
+        suggestion,
+        input,
+        isProcessing,
+        handleModeSwitch,
+        onExit,
+        onInterrupt,
+        exit,
+        acceptSuggestion,
+        inputHistory,
+        onUndo,
+        onEffortCycle,
+        onCompact,
+        onClearScreen,
+        onVoiceToggle,
+      ],
+    ),
+  );
 
   const barWidth = 10;
   const filled = Math.round((contextPercent / 100) * barWidth);
@@ -215,9 +298,7 @@ export function App({
   return (
     <Box flexDirection="column">
       {/* Scrollable output */}
-      <Static items={items}>
-        {(item) => <Text key={item.id}>{item.text}</Text>}
-      </Static>
+      <Static items={items}>{(item) => <Text key={item.id}>{item.text}</Text>}</Static>
 
       {/* Animated spinner with rotating phrases + token stats */}
       {isProcessing && <AnimatedSpinner text={spinnerText} tokenStats={tokenStats} />}
@@ -225,7 +306,9 @@ export function App({
       {/* Input box — full width */}
       <Text dimColor>{"-".repeat(termWidth)}</Text>
       <Box>
-        <Text color={modeColor} bold>❯ </Text>
+        <Text color={modeColor} bold>
+          ❯{" "}
+        </Text>
         {isProcessing ? (
           <Text dimColor>waiting for response...</Text>
         ) : (
@@ -244,8 +327,18 @@ export function App({
       {/* Autocomplete hints — only shown when typing a slash command */}
       {input.startsWith("/") && input.length > 1 && !isProcessing && (
         <Box marginLeft={2}>
-          <Text dimColor>{commands.filter(c => c.startsWith(input)).slice(0, 5).join("  ")}</Text>
-          {suggestion && <Text dimColor italic>  tab ↹</Text>}
+          <Text dimColor>
+            {commands
+              .filter((c) => c.startsWith(input))
+              .slice(0, 5)
+              .join("  ")}
+          </Text>
+          {suggestion && (
+            <Text dimColor italic>
+              {" "}
+              tab ↹
+            </Text>
+          )}
         </Box>
       )}
       <Text dimColor>{"-".repeat(termWidth)}</Text>
@@ -253,7 +346,9 @@ export function App({
       {/* Bottom: status left, buddy right */}
       <Box>
         <Box flexGrow={1}>
-          <Text color={modeColor} bold>❯❯ </Text>
+          <Text color={modeColor} bold>
+            ❯❯{" "}
+          </Text>
           <Text color={modeColor}>{mode}</Text>
           <Text dimColor> (shift+tab)</Text>
           <Text dimColor>{"  ·  "}</Text>
@@ -263,7 +358,10 @@ export function App({
           <Text dimColor>{"░".repeat(empty)}</Text>
           <Text> </Text>
           <Text color={ctxColor}>{contextPercent}%</Text>
-          <Text dimColor> · {contextUsed}/{contextLimit}</Text>
+          <Text dimColor>
+            {" "}
+            · {contextUsed}/{contextLimit}
+          </Text>
         </Box>
 
         {/* Buddy panel — fixed height, right-aligned */}
