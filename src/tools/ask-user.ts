@@ -229,13 +229,14 @@ async function askInInkMode(question: string, options: QuestionOption[]): Promis
   const output = _outputFn ?? console.log;
   output(lines.join("\n"));
 
-  // Pause processing state so the REPL shows the input box for the user to answer
-  _processingHook?.(false);
-
-  // Wait for user to submit input via the repl
+  // Set up pending state FIRST, then trigger update.
+  // _processingHook(false) calls update() which checks hasPendingQuestion().
+  // pendingQuestionResolve MUST be set before that update() runs.
   pendingOptions = options;
   const answer = await new Promise<string>((resolve) => {
     pendingQuestionResolve = resolve;
+    // NOW trigger update — question state is fully set, selection UI will render
+    _processingHook?.(false);
   });
 
   const choiceNum = parseInt(answer.trim(), 10);
