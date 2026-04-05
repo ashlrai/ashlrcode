@@ -28,6 +28,7 @@ const DEFAULT_BINDINGS: Keybinding[] = [
   { key: "ctrl+e",    action: "effort-cycle",  description: "Cycle effort level" },
   { key: "ctrl+k",    action: "compact",       description: "Compact context" },
   { key: "ctrl+u",    action: "clear-input",   description: "Clear input line" },
+  { key: "escape",    action: "clear-input",   description: "Clear input line (Escape)" },
   { key: "up",        action: "history-prev",  description: "Previous input" },
   { key: "down",      action: "history-next",  description: "Next input" },
   { key: "right",     action: "autocomplete",  description: "Accept autocomplete (arrow)" },

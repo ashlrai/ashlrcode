@@ -51,6 +51,7 @@ export function App({
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
+  const [lastCtrlC, setLastCtrlC] = useState(0); // Track double Ctrl+C for force exit
   const { exit } = useApp();
   const w = process.stdout.columns || 80;
 
@@ -84,13 +85,21 @@ export function App({
     const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
 
     switch (action) {
-      case "exit":
+      case "exit": {
+        const now = Date.now();
         if (isProcessing && onInterrupt) {
-          onInterrupt(); // Ctrl+C while processing → interrupt agent
+          // Double Ctrl+C within 1.5s during processing → force exit
+          if (now - lastCtrlC < 1500) {
+            onExit(); exit();
+          } else {
+            onInterrupt(); // First Ctrl+C → interrupt agent
+            setLastCtrlC(now);
+          }
         } else {
           onExit(); exit(); // Ctrl+C while idle → exit
         }
         return;
+      }
       case "mode-switch":
         handleModeSwitch(); return;
       case "autocomplete":

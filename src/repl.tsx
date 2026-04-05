@@ -1771,7 +1771,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   function handleInterrupt() {
     if (!isProcessing) return;
     interruptRequested = true;
-    addOutput(chalk.yellow("\n  ⚡ Interrupted — stopping current turn\n"));
+    addOutput(chalk.yellow("\n  ⚡ Interrupted — stopping current turn") + chalk.dim("  (Ctrl+C again to exit)\n"));
     // Clear any queued messages too
     messageQueue.length = 0;
     finishProcessing();
