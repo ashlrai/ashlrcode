@@ -168,8 +168,6 @@ export function App({
     [onSubmit],
   );
 
-  const handleModeSwitch = useCallback(() => onModeSwitch(), [onModeSwitch]);
-
   // Accept autocomplete: set value AND force remount to reset cursor to end
   const acceptSuggestion = useCallback(() => {
     if (!suggestion) return;
@@ -183,26 +181,17 @@ export function App({
   useInput(
     useCallback(
       (ch: string, key: any) => {
-        // Map Ink key event to a normalized key name
-        const keyName = key.tab
-          ? "tab"
-          : key.upArrow
-            ? "up"
-            : key.downArrow
-              ? "down"
-              : key.leftArrow
-                ? "left"
-                : key.rightArrow
-                  ? "right"
-                  : key.escape
-                    ? "escape"
-                    : key.return
-                      ? "return"
-                      : key.backspace
-                        ? "backspace"
-                        : key.delete
-                          ? "delete"
-                          : ch;
+        // Map Ink key booleans to a normalized key name
+        let keyName = ch;
+        if (key.tab) keyName = "tab";
+        else if (key.upArrow) keyName = "up";
+        else if (key.downArrow) keyName = "down";
+        else if (key.leftArrow) keyName = "left";
+        else if (key.rightArrow) keyName = "right";
+        else if (key.escape) keyName = "escape";
+        else if (key.return) keyName = "return";
+        else if (key.backspace) keyName = "backspace";
+        else if (key.delete) keyName = "delete";
 
         const action = getAction(keyName, !!key.ctrl, !!key.shift, !!key.meta);
 
@@ -225,7 +214,7 @@ export function App({
             return;
           }
           case "mode-switch":
-            handleModeSwitch();
+            onModeSwitch();
             return;
           case "autocomplete":
             if (suggestion && (key.tab || (key.rightArrow && input.length > 0))) {
@@ -275,7 +264,7 @@ export function App({
         suggestion,
         input,
         isProcessing,
-        handleModeSwitch,
+        onModeSwitch,
         onExit,
         onInterrupt,
         exit,

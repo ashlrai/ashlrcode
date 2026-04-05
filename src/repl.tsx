@@ -597,6 +597,21 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     update();
   }
 
+  function stripAnsi(s: string): string {
+    return s.replace(/\x1B\[[0-9;]*m/g, "");
+  }
+
+  /** Build a compact summary of recent messages for session boundary markers. */
+  function buildCompactSummary(): string {
+    return state.history
+      .slice(-5)
+      .map((m) => {
+        const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        return `${m.role}: ${c.slice(0, 150)}`;
+      })
+      .join("\n");
+  }
+
   function formatTimeAgo(date: Date): string {
     const ms = Date.now() - date.getTime();
     if (ms < 60_000) return "just now";
@@ -1717,14 +1732,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         state.history = contextCollapse(state.history);
         state.history = snipCompact(state.history);
         state.history = await autoCompact(state.history, state.router);
-        const summary = state.history
-          .slice(-5)
-          .map((m) => {
-            const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-            return `${m.role}: ${c.slice(0, 150)}`;
-          })
-          .join("\n");
-        await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
+        await state.session.insertCompactBoundary(buildCompactSummary(), state.history.length).catch(() => {});
         addOutput(theme.success(`\n  ✓ Compacted to ${state.history.length} messages\n`));
         return true;
       }
@@ -1868,7 +1876,6 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         return true;
 
       case "/transcript": {
-        const stripAnsi = (s: string) => s.replace(/\x1B\[[0-9;]*m/g, "");
         if (arg === "last") {
           // Show last 50 output lines in terminal
           const lastItems = items.slice(-50);
@@ -1906,11 +1913,10 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
           addOutput(theme.error(`\n  Invalid regex: ${arg}\n`));
           return true;
         }
-        const stripAnsiSearch = (s: string) => s.replace(/\x1B\[[0-9;]*m/g, "");
         // Flatten items into individual lines for context matching
         const allLines: string[] = [];
         for (const item of items) {
-          const plain = stripAnsiSearch(item.text);
+          const plain = stripAnsi(item.text);
           for (const line of plain.split("\n")) {
             allLines.push(line);
           }
@@ -1964,7 +1970,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
 
   async function runTurnInk(input: string, displayText?: string) {
     const turnStartTime = Date.now();
-    turnStreamStart = Date.now();
+    turnStreamStart = turnStartTime;
     turnOutputTokens = 0;
     turnInputTokens = 0;
     turnCharCount = 0;
@@ -2016,14 +2022,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
         );
 
         // Persist compact boundary to session log
-        const summary = state.history
-          .slice(-5)
-          .map((m) => {
-            const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-            return `${m.role}: ${c.slice(0, 150)}`;
-          })
-          .join("\n");
-        await state.session.insertCompactBoundary(summary, state.history.length).catch(() => {});
+        await state.session.insertCompactBoundary(buildCompactSummary(), state.history.length).catch(() => {});
       }
 
       resetMarkdown();
