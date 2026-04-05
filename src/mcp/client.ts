@@ -102,11 +102,13 @@ export class MCPClient {
       params,
     };
 
+    // Initialize gets 30s (server may need to download via npx), other requests 10s
+    const timeoutMs = method === "initialize" ? 30_000 : 10_000;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP request timeout: ${method}`));
-      }, 5_000); // 5s timeout (was 30s — don't block startup)
+      }, timeoutMs);
 
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timeout); resolve(value); },
@@ -382,11 +384,12 @@ export class MCPSSEClient {
     const id = this.nextId++;
     const message: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
 
+    const timeoutMs = method === "initialize" ? 30_000 : 10_000;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP SSE request timeout: ${method}`));
-      }, 10_000);
+      }, timeoutMs);
 
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timeout); resolve(value); },
@@ -545,11 +548,12 @@ export class MCPWebSocketClient {
     const id = this.nextId++;
     const message: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
 
+    const timeoutMs = method === "initialize" ? 30_000 : 10_000;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`MCP WebSocket request timeout: ${method}`));
-      }, 10_000);
+      }, timeoutMs);
 
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timeout); resolve(value); },
