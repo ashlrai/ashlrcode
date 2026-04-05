@@ -153,8 +153,12 @@ export function App({
     };
   }, []);
 
+  // Autocomplete slash commands — works at start of input OR after a space (mid-message)
+  const lastWord = input.split(" ").pop() ?? "";
   const slashSuggestion =
-    input.startsWith("/") && input.length > 1 ? commands.find((c) => c.startsWith(input) && c !== input) : undefined;
+    lastWord.startsWith("/") && lastWord.length > 1
+      ? commands.find((c) => c.startsWith(lastWord) && c !== lastWord)
+      : undefined;
 
   const fileSuggestion = useMemo(
     () => (!slashSuggestion && cwd ? getFilePathSuggestion(input, cwd) : undefined),
@@ -177,11 +181,13 @@ export function App({
   const acceptSuggestion = useCallback(() => {
     if (!suggestion) return;
     // For directory completions (ending with /), don't add trailing space
-    // so the user can keep tabbing into subdirectories
     const suffix = suggestion.endsWith("/") ? "" : " ";
-    setInput(suggestion + suffix);
-    setInputKey((k) => k + 1); // Force TextInput remount — cursor goes to end
-  }, [suggestion]);
+    // Replace only the last word with the suggestion, preserving text before it
+    const words = input.split(" ");
+    words[words.length - 1] = suggestion + suffix;
+    setInput(words.join(" "));
+    setInputKey((k) => k + 1);
+  }, [suggestion, input]);
 
   useInput(
     useCallback(
@@ -362,17 +368,17 @@ export function App({
                 onSubmit={handleSubmit}
                 placeholder="Type a message..."
               />
-              {suggestion && <Text dimColor>{suggestion.slice(input.length)}</Text>}
+              {suggestion && <Text dimColor>{suggestion.slice(lastWord.length)}</Text>}
             </Box>
           )}
         </Box>
       )}
       {/* Autocomplete hints — only shown when typing a slash command and no question pending */}
-      {!pendingQuestionOptionCount && input.startsWith("/") && input.length > 1 && !isProcessing && (
+      {!pendingQuestionOptionCount && lastWord.startsWith("/") && lastWord.length > 1 && !isProcessing && (
         <Box marginLeft={2}>
           <Text dimColor>
             {commands
-              .filter((c) => c.startsWith(input))
+              .filter((c) => c.startsWith(lastWord))
               .slice(0, 5)
               .join("  ")}
           </Text>
