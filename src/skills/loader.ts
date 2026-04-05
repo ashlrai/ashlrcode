@@ -13,7 +13,19 @@ import { join, resolve } from "path";
 import { getConfigDir } from "../config/settings.ts";
 import type { SkillDefinition } from "./types.ts";
 
-const BUILT_IN_DIR = resolve(import.meta.dir, "../../prompts/skills");
+// Find the package root by looking for package.json — works with bun link/symlinks
+function findPackageRoot(): string {
+  let dir = import.meta.dir;
+  for (let i = 0; i < 10; i++) {
+    if (existsSync(join(dir, "package.json"))) return dir;
+    const parent = resolve(dir, "..");
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return resolve(import.meta.dir, "../..");
+}
+
+const BUILT_IN_DIR = join(findPackageRoot(), "prompts", "skills");
 
 export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
   const skills: SkillDefinition[] = [];
