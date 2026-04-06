@@ -2,11 +2,15 @@
  * Git & file commands — /git, /diff, /undo, /restore, /plan.
  */
 
-import type { Command } from "./types.ts";
 import { theme } from "../ui/theme.ts";
+import type { Command } from "./types.ts";
 
 export function gitCommands(deps: {
-  getFileHistory: () => { undoCount: number; undoLast: () => Promise<{ filePath: string } | null>; getHistory: () => Array<{ timestamp: number; tool: string; content: string; filePath: string }> } | null;
+  getFileHistory: () => {
+    undoCount: number;
+    undoLast: () => Promise<{ filePath: string } | null>;
+    getHistory: () => Array<{ timestamp: number; tool: string; content: string; filePath: string }>;
+  } | null;
 }): Command[] {
   return [
     {

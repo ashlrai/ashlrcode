@@ -3,14 +3,14 @@
  */
 
 export { CommandRegistry } from "./registry.ts";
-export type { Command, CommandContext, CommandCategory } from "./types.ts";
+export type { Command, CommandCategory, CommandContext } from "./types.ts";
 
-import { CommandRegistry } from "./registry.ts";
+import { agentCommands } from "./agent.ts";
+import { autopilotCommands } from "./autopilot.ts";
 import { coreCommands } from "./core.ts";
 import { gitCommands } from "./git.ts";
-import { agentCommands } from "./agent.ts";
+import { CommandRegistry } from "./registry.ts";
 import { sessionCommands } from "./session.ts";
-import { autopilotCommands } from "./autopilot.ts";
 
 /**
  * Create a fully populated command registry with all built-in commands.

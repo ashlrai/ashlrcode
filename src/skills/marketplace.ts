@@ -10,10 +10,10 @@
  */
 
 import { existsSync } from "fs";
-import { readdir, readFile, writeFile, mkdir, rm } from "fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { getConfigDir } from "../config/settings.ts";
-import type { SkillPackage, SkillDefinition } from "./types.ts";
+import type { SkillDefinition, SkillPackage } from "./types.ts";
 import { validateSkillFile } from "./validator.ts";
 
 // ── Paths ────────────────────────────────────────────────────────────
@@ -97,7 +97,12 @@ export async function installSkill(nameOrUrl: string): Promise<{
   if (nameOrUrl.startsWith("http://") || nameOrUrl.startsWith("https://")) {
     // Direct URL
     url = nameOrUrl;
-    packageName = nameOrUrl.split("/").pop()?.replace(/\.tar\.gz$/, "").replace(/\.git$/, "") ?? "unknown";
+    packageName =
+      nameOrUrl
+        .split("/")
+        .pop()
+        ?.replace(/\.tar\.gz$/, "")
+        .replace(/\.git$/, "") ?? "unknown";
   } else {
     // Look up in registry
     const registry = await loadRegistry();
@@ -277,11 +282,7 @@ export async function searchSkills(query: string): Promise<RegistryEntry[]> {
   }
 
   const q = query.toLowerCase();
-  return registry.filter(
-    (e) =>
-      e.name.toLowerCase().includes(q) ||
-      e.description.toLowerCase().includes(q),
-  );
+  return registry.filter((e) => e.name.toLowerCase().includes(q) || e.description.toLowerCase().includes(q));
 }
 
 /**

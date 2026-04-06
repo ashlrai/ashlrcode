@@ -4,14 +4,14 @@
 
 export { isCmuxAvailable, ping, resetAvailability } from "./client.ts";
 export {
-  cmuxSessionStart,
-  cmuxSessionEnd,
   cmuxAgentIdle,
-  cmuxNeedsInput,
-  cmuxToolStart,
-  cmuxToolEnd,
-  cmuxPromptSubmit,
-  cmuxNotify,
   cmuxError,
+  cmuxNeedsInput,
+  cmuxNotify,
+  cmuxPromptSubmit,
+  cmuxSessionEnd,
+  cmuxSessionStart,
+  cmuxToolEnd,
+  cmuxToolStart,
 } from "./hooks.ts";
-export { spawnAgentInSplit, canUseSplits, getActiveSplits } from "./splits.ts";
+export { canUseSplits, getActiveSplits, spawnAgentInSplit } from "./splits.ts";

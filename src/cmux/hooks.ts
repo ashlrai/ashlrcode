@@ -13,14 +13,7 @@
  * All hooks are no-ops when not in cmux. Safe to call unconditionally.
  */
 
-import {
-  isCmuxAvailable,
-  setStatus,
-  clearStatus,
-  setProgress,
-  clearProgress,
-  notify,
-} from "./client.ts";
+import { clearProgress, clearStatus, isCmuxAvailable, notify, setProgress, setStatus } from "./client.ts";
 
 /** Called when a session starts. */
 export function cmuxSessionStart(sessionId: string, _cwd: string): void {

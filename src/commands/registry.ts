@@ -5,8 +5,8 @@
  * register → lookup → dispatch pattern.
  */
 
-import type { Command, CommandCategory, CommandContext } from "./types.ts";
 import { theme } from "../ui/theme.ts";
+import type { Command, CommandCategory, CommandContext } from "./types.ts";
 
 export class CommandRegistry {
   private commands = new Map<string, Command>();

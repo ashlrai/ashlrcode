@@ -8,20 +8,15 @@
  * resumed via `/coordinate resume <id>`.
  */
 
-import { existsSync } from "fs";
-import { readdir, readFile, writeFile, mkdir, unlink } from "fs/promises";
-import { join } from "path";
 import { randomUUID } from "crypto";
+import { existsSync } from "fs";
+import { mkdir, readdir, readFile, unlink, writeFile } from "fs/promises";
+import { join } from "path";
 import { getConfigDir } from "../config/settings.ts";
 
 // ── Types ────────────────────────────────────────────────────────────
 
-export type CheckpointType =
-  | "auth_gate"
-  | "user_decision"
-  | "review"
-  | "approval"
-  | "custom";
+export type CheckpointType = "auth_gate" | "user_decision" | "review" | "approval" | "custom";
 
 export interface Checkpoint {
   /** Unique checkpoint ID */
@@ -35,7 +30,14 @@ export interface Checkpoint {
   /** Question or prompt to show the user */
   prompt: string;
   /** Tasks that were already completed before the checkpoint */
-  completedTasks: Array<{ id: string; description: string; role: string; readOnly?: boolean; files?: string[]; dependsOn?: string[] }>;
+  completedTasks: Array<{
+    id: string;
+    description: string;
+    role: string;
+    readOnly?: boolean;
+    files?: string[];
+    dependsOn?: string[];
+  }>;
   /** Results from completed tasks */
   completedResults: Array<{
     taskId: string;
@@ -44,7 +46,14 @@ export interface Checkpoint {
     summary: string;
   }>;
   /** Tasks that are pending (after the checkpoint) */
-  pendingTasks: Array<{ id: string; description: string; role: string; readOnly?: boolean; files?: string[]; dependsOn?: string[] }>;
+  pendingTasks: Array<{
+    id: string;
+    description: string;
+    role: string;
+    readOnly?: boolean;
+    files?: string[];
+    dependsOn?: string[];
+  }>;
   /** Arbitrary serialized context the coordinator needs to resume */
   context: Record<string, unknown>;
   /** The original user goal */
@@ -72,7 +81,9 @@ function getCheckpointPath(id: string): string {
 /**
  * Save a checkpoint to disk. Returns the checkpoint ID.
  */
-export async function saveCheckpoint(checkpoint: Omit<Checkpoint, "id" | "createdAt" | "resumed">): Promise<Checkpoint> {
+export async function saveCheckpoint(
+  checkpoint: Omit<Checkpoint, "id" | "createdAt" | "resumed">,
+): Promise<Checkpoint> {
   const dir = getCheckpointDir();
   await mkdir(dir, { recursive: true });
 
@@ -185,9 +196,7 @@ export function buildResumePrompt(checkpoint: Checkpoint): string {
     .map((r) => `  - ${r.taskId}: ${r.success ? "✓" : "✗"} ${r.summary}`)
     .join("\n");
 
-  const pendingList = checkpoint.pendingTasks
-    .map((t) => `  - ${t.id}: ${t.description} (${t.role})`)
-    .join("\n");
+  const pendingList = checkpoint.pendingTasks.map((t) => `  - ${t.id}: ${t.description} (${t.role})`).join("\n");
 
   return `You are resuming a coordinator workflow from a checkpoint.
 

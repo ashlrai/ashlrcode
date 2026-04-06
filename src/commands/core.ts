@@ -5,8 +5,8 @@
  * remote, bridge, bug.
  */
 
-import type { Command, CommandContext } from "./types.ts";
 import { theme } from "../ui/theme.ts";
+import type { Command, CommandContext } from "./types.ts";
 
 export function coreCommands(deps: {
   registry: { formatHelp: () => string };
@@ -129,7 +129,11 @@ export function coreCommands(deps: {
           try {
             const { installSkill } = await import("../skills/marketplace.ts");
             const result = await installSkill(subArg);
-            ctx.addOutput(theme.success(`  ✓ Installed ${result.package.name} v${result.package.version} (${result.skills.length} skills)\n`));
+            ctx.addOutput(
+              theme.success(
+                `  ✓ Installed ${result.package.name} v${result.package.version} (${result.skills.length} skills)\n`,
+              ),
+            );
             for (const w of result.warnings) ctx.addOutput(theme.warning(`  ⚠ ${w}`));
             ctx.addOutput(theme.tertiary("  Restart to load new skills.\n"));
           } catch (err: any) {
@@ -171,9 +175,11 @@ export function coreCommands(deps: {
           }
           const { removeSkill } = await import("../skills/marketplace.ts");
           const removed = await removeSkill(subArg);
-          ctx.addOutput(removed
-            ? theme.success(`\n  ✓ Removed ${subArg}\n`)
-            : theme.error(`\n  Package "${subArg}" not installed.\n`));
+          ctx.addOutput(
+            removed
+              ? theme.success(`\n  ✓ Removed ${subArg}\n`)
+              : theme.error(`\n  Package "${subArg}" not installed.\n`),
+          );
           return true;
         }
 
@@ -261,9 +267,7 @@ export function coreCommands(deps: {
       description: "Set model effort level",
       category: "tools",
       handler: async (args, ctx) => {
-        const { cycleEffort, getEffort, getEffortConfig, getEffortEmoji, setEffort } = await import(
-          "../ui/effort.ts"
-        );
+        const { cycleEffort, getEffort, getEffortConfig, getEffortEmoji, setEffort } = await import("../ui/effort.ts");
         const effortAliases: Record<string, string> = {
           fast: "low",
           low: "low",
@@ -358,7 +362,9 @@ export function coreCommands(deps: {
         ctx.state.history = contextCollapse(ctx.state.history);
         ctx.state.history = snipCompact(ctx.state.history);
         ctx.state.history = await autoCompact(ctx.state.history, ctx.state.router);
-        await ctx.state.session.insertCompactBoundary(ctx.buildCompactSummary(), ctx.state.history.length).catch(() => {});
+        await ctx.state.session
+          .insertCompactBoundary(ctx.buildCompactSummary(), ctx.state.history.length)
+          .catch(() => {});
         ctx.addOutput(theme.success(`\n  ✓ Compacted to ${ctx.state.history.length} messages\n`));
         return true;
       },
@@ -459,9 +465,7 @@ export function coreCommands(deps: {
         const { isUndercoverMode, setUndercoverMode } = await import("../config/undercover.ts");
         setUndercoverMode(!isUndercoverMode());
         ctx.addOutput(
-          isUndercoverMode()
-            ? theme.warning("\n  🕶 Undercover mode ON\n")
-            : theme.success("\n  Undercover mode OFF\n"),
+          isUndercoverMode() ? theme.warning("\n  🕶 Undercover mode ON\n") : theme.success("\n  Undercover mode OFF\n"),
         );
         return true;
       },
@@ -547,7 +551,9 @@ export function coreCommands(deps: {
         if (isRecording()) {
           ctx.addOutput(theme.accent("  Transcribing...\n"));
           const voiceConfig = {
-            sttProvider: (process.env.OPENAI_API_KEY ? "whisper-api" : "whisper-local") as "whisper-api" | "whisper-local",
+            sttProvider: (process.env.OPENAI_API_KEY ? "whisper-api" : "whisper-local") as
+              | "whisper-api"
+              | "whisper-local",
             whisperApiKey: process.env.OPENAI_API_KEY,
           };
           try {
@@ -574,7 +580,9 @@ export function coreCommands(deps: {
       category: "session",
       handler: async (args, ctx) => {
         if (!args) {
-          ctx.addOutput(theme.tertiary("\n  Usage: /search <pattern>\n  Searches output history for matching lines.\n"));
+          ctx.addOutput(
+            theme.tertiary("\n  Usage: /search <pattern>\n  Searches output history for matching lines.\n"),
+          );
           return true;
         }
         let regex: RegExp;
@@ -615,9 +623,7 @@ export function coreCommands(deps: {
         if (matches.length === 0) {
           ctx.addOutput(theme.tertiary(`\n  No matches for: ${args}\n`));
         } else {
-          ctx.addOutput(
-            "\n" + theme.accentBold(`  Search results for "${args}" (${matches.length} matches):`) + "\n",
-          );
+          ctx.addOutput("\n" + theme.accentBold(`  Search results for "${args}" (${matches.length} matches):`) + "\n");
           for (const m of matches.slice(0, 50)) {
             ctx.addOutput(theme.muted(`  --- line ${m.lineNum} ---`));
             for (const l of m.lines) {

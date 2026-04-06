@@ -2,8 +2,8 @@
  * Session commands — /sync, /btw is in agent.ts since it spawns sub-agents.
  */
 
-import type { Command } from "./types.ts";
 import { theme } from "../ui/theme.ts";
+import type { Command } from "./types.ts";
 
 export function sessionCommands(): Command[] {
   return [

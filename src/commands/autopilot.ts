@@ -5,8 +5,8 @@
 
 import { existsSync } from "fs";
 import { join } from "path";
-import type { Command, CommandContext } from "./types.ts";
 import { theme } from "../ui/theme.ts";
+import type { Command, CommandContext } from "./types.ts";
 
 /** Shared autopilot progress handler to avoid duplicating the 20-line switch. */
 function autopilotProgressHandler(ctx: CommandContext) {
@@ -110,9 +110,7 @@ export function autopilotCommands(deps: {
               searchFiles: async (pattern: string, path?: string) => {
                 const fg = await import("fast-glob");
                 const files = await fg.default(pattern, {
-                  cwd: path
-                    ? `${ctx.state.toolContext.cwd}/${path}`
-                    : ctx.state.toolContext.cwd,
+                  cwd: path ? `${ctx.state.toolContext.cwd}/${path}` : ctx.state.toolContext.cwd,
                   absolute: false,
                   ignore: ["**/node_modules/**", "**/.git/**"],
                 });
@@ -133,9 +131,7 @@ export function autopilotCommands(deps: {
             await wq.save();
 
             const stats = wq.getStats();
-            ctx.addOutput(
-              theme.success(`  ✓ Scan complete: ${discovered.length} issues found, ${added} new\n`),
-            );
+            ctx.addOutput(theme.success(`  ✓ Scan complete: ${discovered.length} issues found, ${added} new\n`));
 
             const byType = new Map<string, number>();
             for (const item of discovered) {
@@ -149,13 +145,9 @@ export function autopilotCommands(deps: {
                 `\n  Queue: ${stats.discovered ?? 0} pending · ${stats.approved ?? 0} approved · ${stats.completed ?? 0} done`,
               ),
             );
-            ctx.addOutput(
-              theme.tertiary("  Use /autopilot queue to see items, /autopilot approve all to approve\n"),
-            );
+            ctx.addOutput(theme.tertiary("  Use /autopilot queue to see items, /autopilot approve all to approve\n"));
           } catch (err) {
-            ctx.addOutput(
-              theme.error(`  Scan failed: ${err instanceof Error ? err.message : String(err)}\n`),
-            );
+            ctx.addOutput(theme.error(`  Scan failed: ${err instanceof Error ? err.message : String(err)}\n`));
           }
 
           ctx.setProcessing(false);
@@ -181,15 +173,10 @@ export function autopilotCommands(deps: {
             ctx.addOutput(theme.primary("  Pending (needs approval):"));
             for (const item of pending.slice(0, 15)) {
               const pColor =
-                item.priority === "critical"
-                  ? theme.error
-                  : item.priority === "high"
-                    ? theme.warning
-                    : theme.secondary;
+                item.priority === "critical" ? theme.error : item.priority === "high" ? theme.warning : theme.secondary;
               ctx.addOutput(`  ${pColor(`[${item.priority}]`)} ${theme.accent(item.id)} ${item.title}`);
             }
-            if (pending.length > 15)
-              ctx.addOutput(theme.tertiary(`  ... and ${pending.length - 15} more`));
+            if (pending.length > 15) ctx.addOutput(theme.tertiary(`  ... and ${pending.length - 15} more`));
           }
 
           if (approved.length > 0) {
@@ -222,9 +209,7 @@ export function autopilotCommands(deps: {
                 : theme.error(`\n  Item ${target} not found or already approved\n`),
             );
           } else {
-            ctx.addOutput(
-              theme.tertiary("\n  Usage: /autopilot approve <id> or /autopilot approve all\n"),
-            );
+            ctx.addOutput(theme.tertiary("\n  Usage: /autopilot approve <id> or /autopilot approve all\n"));
           }
           return true;
         }
@@ -235,9 +220,7 @@ export function autopilotCommands(deps: {
           const next = wq.getNextApproved();
           if (!next) {
             ctx.addOutput(
-              theme.tertiary(
-                "\n  No approved items to execute. Run /autopilot scan then /autopilot approve all\n",
-              ),
+              theme.tertiary("\n  No approved items to execute. Run /autopilot scan then /autopilot approve all\n"),
             );
             return true;
           }
@@ -255,9 +238,7 @@ export function autopilotCommands(deps: {
 
           const remaining = wq.getByStatus("approved").length;
           if (remaining > 0) {
-            ctx.addOutput(
-              theme.tertiary(`  ${remaining} more approved items. /autopilot run to continue\n`),
-            );
+            ctx.addOutput(theme.tertiary(`  ${remaining} more approved items. /autopilot run to continue\n`));
           }
           return true;
         }
@@ -296,23 +277,16 @@ export function autopilotCommands(deps: {
               ctx.addOutput(theme.tertiary("  Stashed uncommitted changes"));
             }
 
-            const testCheck = await run(
-              "command -v bun >/dev/null 2>&1 && echo ok || echo missing",
-            );
+            const testCheck = await run("command -v bun >/dev/null 2>&1 && echo ok || echo missing");
             const hasTestRunner = testCheck.out.includes("ok");
             if (!hasTestRunner) {
               ctx.addOutput(theme.warning("  ⚠ bun not found — tests will be skipped\n"));
             }
 
-            const ghCheck = await run(
-              "command -v gh >/dev/null 2>&1 && echo ok || echo missing",
-            );
+            const ghCheck = await run("command -v gh >/dev/null 2>&1 && echo ok || echo missing");
             const hasGhCli = ghCheck.out.includes("ok");
 
-            const timestamp = new Date()
-              .toISOString()
-              .replace(/[:.]/g, "-")
-              .slice(0, 19);
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
             const branch = `autopilot/${timestamp}`;
             await git("checkout", "-b", branch);
             ctx.addOutput(theme.secondary(`  Branch: ${branch}`));
@@ -344,9 +318,7 @@ export function autopilotCommands(deps: {
             wq.addItems(discovered);
             const totalApproved = wq.approveAll();
             await wq.save();
-            ctx.addOutput(
-              theme.success(`  Found ${discovered.length} issues, approved ${totalApproved}\n`),
-            );
+            ctx.addOutput(theme.success(`  Found ${discovered.length} issues, approved ${totalApproved}\n`));
 
             if (totalApproved === 0) {
               ctx.addOutput(theme.success("  ✨ Codebase is clean! Nothing to fix.\n"));
@@ -417,10 +389,11 @@ export function autopilotCommands(deps: {
                 .slice(-fixed)
                 .map((i) => `- ${i.title}`)
                 .join("\n")}\n\nGenerated by AshlrCode Autopilot.`;
-              const prProc = Bun.spawn(
-                ["gh", "pr", "create", "--title", prTitle, "--body", prBody],
-                { cwd, stdout: "pipe", stderr: "pipe" },
-              );
+              const prProc = Bun.spawn(["gh", "pr", "create", "--title", prTitle, "--body", prBody], {
+                cwd,
+                stdout: "pipe",
+                stderr: "pipe",
+              });
               const prResult = (await new Response(prProc.stdout).text()).trim();
               await prProc.exited;
 
@@ -443,9 +416,7 @@ export function autopilotCommands(deps: {
               }
             } else if (fixed > 0 && !hasGhCli) {
               ctx.addOutput(
-                theme.warning(
-                  "\n  ⚠ gh CLI not found — skipping PR creation. Install: https://cli.github.com",
-                ),
+                theme.warning("\n  ⚠ gh CLI not found — skipping PR creation. Install: https://cli.github.com"),
               );
               ctx.addOutput(theme.secondary(`  Changes committed on branch: ${branch}\n`));
             }
@@ -467,11 +438,7 @@ export function autopilotCommands(deps: {
             }
             ctx.addOutput("");
           } catch (err) {
-            ctx.addOutput(
-              theme.error(
-                `\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`,
-              ),
-            );
+            ctx.addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
             try {
               const proc = Bun.spawn(["git", "checkout", originalBranch], {
                 cwd: ctx.state.toolContext.cwd,
@@ -516,9 +483,7 @@ export function autopilotCommands(deps: {
             ctx.addOutput(theme.tertiary("\n  No autopilot running.\n"));
             return true;
           }
-          ctx.addOutput(
-            theme.warning("\n  🎁 Wrapping up autopilot (finishing current item, then PR)...\n"),
-          );
+          ctx.addOutput(theme.warning("\n  🎁 Wrapping up autopilot (finishing current item, then PR)...\n"));
           loop.requestWrapUp();
           return true;
         }
@@ -528,9 +493,7 @@ export function autopilotCommands(deps: {
           const cwd = ctx.state.toolContext.cwd;
           const vPath = join(cwd, ".ashlrcode", "vision.md");
           if (!existsSync(vPath)) {
-            ctx.addOutput(
-              theme.error("\n  No existing vision found. Start with /autopilot <your goal>\n"),
-            );
+            ctx.addOutput(theme.error("\n  No existing vision found. Start with /autopilot <your goal>\n"));
             return true;
           }
           const vision = await deps.loadVision(cwd);
@@ -557,11 +520,7 @@ export function autopilotCommands(deps: {
             })
             .catch((err: unknown) => {
               ctx.setAutopilotRunning(false);
-              ctx.addOutput(
-                theme.error(
-                  `\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`,
-                ),
-              );
+              ctx.addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
               ctx.update();
             });
           return true;
@@ -596,9 +555,7 @@ export function autopilotCommands(deps: {
           }
           const loop = ctx.getAutopilotLoop();
           if (!loop || !ctx.getAutopilotRunning()) {
-            ctx.addOutput(
-              theme.tertiary("\n  No autopilot running. Start with /autopilot <goal>\n"),
-            );
+            ctx.addOutput(theme.tertiary("\n  No autopilot running. Start with /autopilot <goal>\n"));
             return true;
           }
           loop.queueUserMessage(`focus on ${focusArea}`);
@@ -629,9 +586,7 @@ export function autopilotCommands(deps: {
             for (const entry of vision.progress.slice(-10)) {
               const date = entry.timestamp.split("T")[0];
               ctx.addOutput(
-                theme.tertiary(
-                  `    [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`,
-                ),
+                theme.tertiary(`    [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`),
               );
             }
           }
@@ -655,9 +610,7 @@ export function autopilotCommands(deps: {
           const cwd = ctx.state.toolContext.cwd;
           const vPath = join(cwd, ".ashlrcode", "vision.md");
           if (!existsSync(vPath)) {
-            ctx.addOutput(
-              theme.tertiary("\n  No vision history. Start with /autopilot <goal>\n"),
-            );
+            ctx.addOutput(theme.tertiary("\n  No vision history. Start with /autopilot <goal>\n"));
             return true;
           }
           const vision = await deps.loadVision(cwd);
@@ -669,9 +622,7 @@ export function autopilotCommands(deps: {
           for (const entry of vision.progress) {
             const date = entry.timestamp.split("T")[0];
             ctx.addOutput(
-              theme.secondary(
-                `  [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`,
-              ),
+              theme.secondary(`  [${date}] ${entry.summary} (+${entry.itemsCompleted}, -${entry.itemsFailed})`),
             );
           }
           ctx.addOutput("");
@@ -718,11 +669,7 @@ export function autopilotCommands(deps: {
             })
             .catch((err: unknown) => {
               ctx.setAutopilotRunning(false);
-              ctx.addOutput(
-                theme.error(
-                  `\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`,
-                ),
-              );
+              ctx.addOutput(theme.error(`\n  Autopilot error: ${err instanceof Error ? err.message : String(err)}\n`));
               ctx.update();
             });
           return true;
@@ -746,9 +693,7 @@ export function autopilotCommands(deps: {
           ctx.addOutput(theme.secondary("  /autopilot queue        — show work queue"));
           ctx.addOutput(theme.secondary("  /autopilot approve all  — approve all discovered items"));
           ctx.addOutput(theme.secondary("  /autopilot run          — execute next approved item"));
-          ctx.addOutput(
-            theme.secondary("  /autopilot auto         — FULL AUTO: scan → fix → test → PR → merge"),
-          );
+          ctx.addOutput(theme.secondary("  /autopilot auto         — FULL AUTO: scan → fix → test → PR → merge"));
           ctx.addOutput("");
           return true;
         }
@@ -768,9 +713,7 @@ export function autopilotCommands(deps: {
         if (status.wrapUpRequested) {
           ctx.addOutput(theme.warning("  Wrap-up requested"));
         }
-        ctx.addOutput(
-          theme.tertiary("\n  /autopilot stop — stop | /autopilot wrap — finish & PR\n"),
-        );
+        ctx.addOutput(theme.tertiary("\n  /autopilot stop — stop | /autopilot wrap — finish & PR\n"));
         return true;
       },
     },

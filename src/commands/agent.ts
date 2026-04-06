@@ -2,8 +2,8 @@
  * Agent commands — /verify, /coordinate, /kairos, /ship, /btw, /cancel, /trigger.
  */
 
-import type { Command, CommandContext } from "./types.ts";
 import { theme } from "../ui/theme.ts";
+import type { Command, CommandContext } from "./types.ts";
 
 export function agentCommands(): Command[] {
   return [
@@ -48,9 +48,7 @@ export function agentCommands(): Command[] {
       handler: async (args, ctx) => {
         if (!args) {
           ctx.addOutput(
-            theme.warning(
-              "\n  Usage: /coordinate <goal>\n  Example: /coordinate Refactor auth module to use JWT\n",
-            ),
+            theme.warning("\n  Usage: /coordinate <goal>\n  Example: /coordinate Refactor auth module to use JWT\n"),
           );
           return true;
         }
@@ -72,7 +70,9 @@ export function agentCommands(): Command[] {
             if (pending.length > 0) {
               ctx.addOutput(theme.tertiary("  Available checkpoints:"));
               for (const cp of pending) {
-                ctx.addOutput(`    ${theme.accent(cp.id)} — ${cp.reason} (${new Date(cp.createdAt).toLocaleDateString()})`);
+                ctx.addOutput(
+                  `    ${theme.accent(cp.id)} — ${cp.reason} (${new Date(cp.createdAt).toLocaleDateString()})`,
+                );
               }
             }
             ctx.addOutput("");
@@ -89,12 +89,33 @@ export function agentCommands(): Command[] {
             autoVerify: true,
             onProgress: (event) => {
               switch (event.type) {
-                case "planning": ctx.addOutput(theme.tertiary(`  📋 ${event.message}\n`)); break;
-                case "dispatching": ctx.addOutput(theme.accent(`  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`)); break;
-                case "agent_complete": ctx.addOutput(event.success ? theme.success(`  ✓ ${event.agentName} completed\n`) : theme.error(`  ✗ ${event.agentName} failed\n`)); break;
-                case "verifying": ctx.addOutput(theme.tertiary("  🔍 Running verification...\n")); break;
-                case "checkpoint": ctx.addOutput(theme.warning(`\n  ⏸ Checkpoint: ${(event as any).checkpoint.reason}`)); ctx.addOutput(theme.accent(`  Resume with: /coordinate resume ${(event as any).checkpoint.id}\n`)); break;
-                case "complete": ctx.addOutput(theme.success(`  ✅ ${event.summary}\n`)); break;
+                case "planning":
+                  ctx.addOutput(theme.tertiary(`  📋 ${event.message}\n`));
+                  break;
+                case "dispatching":
+                  ctx.addOutput(
+                    theme.accent(
+                      `  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`,
+                    ),
+                  );
+                  break;
+                case "agent_complete":
+                  ctx.addOutput(
+                    event.success
+                      ? theme.success(`  ✓ ${event.agentName} completed\n`)
+                      : theme.error(`  ✗ ${event.agentName} failed\n`),
+                  );
+                  break;
+                case "verifying":
+                  ctx.addOutput(theme.tertiary("  🔍 Running verification...\n"));
+                  break;
+                case "checkpoint":
+                  ctx.addOutput(theme.warning(`\n  ⏸ Checkpoint: ${(event as any).checkpoint.reason}`));
+                  ctx.addOutput(theme.accent(`  Resume with: /coordinate resume ${(event as any).checkpoint.id}\n`));
+                  break;
+                case "complete":
+                  ctx.addOutput(theme.success(`  ✅ ${event.summary}\n`));
+                  break;
               }
               ctx.update();
             },
@@ -113,7 +134,11 @@ export function agentCommands(): Command[] {
             ctx.addOutput(theme.accent(`\n  ⏸ ${pending.length} pending checkpoint(s):\n`));
             for (const cp of pending) {
               ctx.addOutput(`  ${theme.accent(cp.id)} — ${cp.reason}`);
-              ctx.addOutput(theme.muted(`    Type: ${cp.type} · Created: ${new Date(cp.createdAt).toLocaleDateString()} · Goal: ${cp.goal.slice(0, 60)}`));
+              ctx.addOutput(
+                theme.muted(
+                  `    Type: ${cp.type} · Created: ${new Date(cp.createdAt).toLocaleDateString()} · Goal: ${cp.goal.slice(0, 60)}`,
+                ),
+              );
             }
             ctx.addOutput(theme.tertiary("\n  /coordinate resume <id> to resume\n"));
           }
@@ -135,9 +160,7 @@ export function agentCommands(): Command[] {
                 break;
               case "dispatching":
                 ctx.addOutput(
-                  theme.accent(
-                    `  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`,
-                  ),
+                  theme.accent(`  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`),
                 );
                 break;
               case "agent_complete":
@@ -224,9 +247,7 @@ export function agentCommands(): Command[] {
             ctx.update();
           },
           onToolEnd: (_name, result, isError) => {
-            ctx.addOutput(
-              isError ? `  x ${result.slice(0, 80)}` : `  > ${result.split("\n")[0]?.slice(0, 80)}`,
-            );
+            ctx.addOutput(isError ? `  x ${result.slice(0, 80)}` : `  > ${result.split("\n")[0]?.slice(0, 80)}`);
             ctx.update();
           },
         });
@@ -399,8 +420,7 @@ export function agentCommands(): Command[] {
           } else {
             const lines = ["", theme.accentBold("  Active Background Operations"), ""];
             for (const op of allOps) {
-              const elapsed =
-                op.startedAt > 0 ? `${Math.round((Date.now() - op.startedAt) / 1000)}s ago` : "running";
+              const elapsed = op.startedAt > 0 ? `${Math.round((Date.now() - op.startedAt) / 1000)}s ago` : "running";
               lines.push(`    ${theme.accent(op.id)}  ${op.name}  ${theme.muted(`(${elapsed})`)}`);
             }
             lines.push("");
@@ -456,12 +476,7 @@ export function agentCommands(): Command[] {
             return true;
           }
           try {
-            const t = await createTrigger(
-              "trigger",
-              schedule!,
-              promptParts.join(" "),
-              ctx.state.toolContext.cwd,
-            );
+            const t = await createTrigger("trigger", schedule!, promptParts.join(" "), ctx.state.toolContext.cwd);
             ctx.addOutput(theme.success(`\n  Trigger created: ${t.id} (every ${t.schedule})\n`));
           } catch (e: any) {
             ctx.addOutput(theme.error(`\n  ${e.message}\n`));
@@ -479,9 +494,7 @@ export function agentCommands(): Command[] {
           for (const t of triggers) {
             const status = t.enabled ? theme.success("●") : theme.error("○");
             const lastInfo = t.lastRun ? ` (ran ${t.runCount}x)` : " (never ran)";
-            ctx.addOutput(
-              `  ${status} ${t.id} — every ${t.schedule} — ${t.prompt.slice(0, 50)}${lastInfo}`,
-            );
+            ctx.addOutput(`  ${status} ${t.id} — every ${t.schedule} — ${t.prompt.slice(0, 50)}${lastInfo}`);
           }
           ctx.addOutput("");
           return true;

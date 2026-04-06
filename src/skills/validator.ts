@@ -16,10 +16,7 @@ export interface ValidationResult {
 /**
  * Validate a skill definition.
  */
-export function validateSkill(
-  skill: Partial<SkillDefinition>,
-  existingTriggers?: Set<string>,
-): ValidationResult {
+export function validateSkill(skill: Partial<SkillDefinition>, existingTriggers?: Set<string>): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 

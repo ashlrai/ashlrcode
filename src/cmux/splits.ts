@@ -8,7 +8,7 @@
  * Falls back to in-process execution when cmux is not available.
  */
 
-import { isCmuxAvailable, createSplit, sendText, type SplitOptions } from "./client.ts";
+import { createSplit, isCmuxAvailable, type SplitOptions, sendText } from "./client.ts";
 
 export interface CmuxAgentSplit {
   surfaceId: string;

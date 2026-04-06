@@ -10,8 +10,8 @@
  *   Response: { id: "req-1", ok: true, result: { ... } }
  */
 
-import { connect, type Socket } from "net";
 import { existsSync } from "fs";
+import { connect, type Socket } from "net";
 
 // ── Types ────────────────────────────────────────────────────────────
 
