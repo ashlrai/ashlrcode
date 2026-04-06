@@ -1,7 +1,7 @@
 # AshlrCode v2.1
 
 Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
-45+ tools, 18 skills, 39 built-in commands, 6 providers, 452 tests. Ink-based terminal UI with buddy system.
+45+ tools, 18 skills, 39 built-in commands, 6 providers, 555 tests. Ink-based terminal UI with buddy system.
 
 ## v2.0 Additions
 - **Verification Agent** (`src/agent/verification.ts`): Auto-validates multi-file changes via read-only sub-agent. Manual `/verify` command. Auto-suggest after 2+ file edits.
@@ -15,16 +15,24 @@ Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
 - **12 Model Patches**: Expanded from 7 to 12 — specific patches for Llama3, CodeLlama, Mistral, DeepSeek Coder, Qwen, small models.
 - **Ollama Context Limits**: Provider-aware (32K default) + 12 free pricing entries for common local models.
 
+## v2.1 Additions
+- **cmux Integration** (`src/cmux/`): Socket client for cmux terminal app JSON-RPC API. 9 lifecycle hooks (session start/end, agent idle, needs input, tool start/end, prompt submit, notify, error). Split spawning dispatches sub-agents to visible cmux panes. Auto-detects via `$CMUX_SOCKET_PATH`, all hooks are no-ops outside cmux.
+- **Command Registry** (`src/commands/`): Centralized command system replacing inline switch statement. 6 command files with `CommandContext` interface, auto-generated autocomplete, and category-based help grouping.
+- **Checkpoint Workflows** (`src/agent/checkpoint.ts`): Coordinator can pause at checkpoint tasks. State serialized to `~/.ashlrcode/checkpoints/<id>.json`. Resume with `/coordinate resume <id>`, list with `/coordinate list`. Auto-cleanup after 7 days.
+- **Skill Marketplace** (`src/skills/marketplace.ts`, `src/skills/validator.ts`): Install/update/remove skill packages from registry or URL. Git clone and tarball extraction. Skill validation (frontmatter schema, trigger conflicts, size limits). Commands: `/skills install`, `/skills search`, `/skills update`, `/skills remove`, `/skills info`.
+
 ## Architecture
 
 - **Runtime**: Bun (TypeScript, no build step, strict mode)
-- **Entry point**: `src/cli.ts` — Ink-based REPL, commands, state management, global error handlers (uncaughtException, unhandledRejection, SIGINT)
+- **Entry point**: `src/cli.ts` — Ink-based REPL, state management, global error handlers (uncaughtException, unhandledRejection, SIGINT)
+- **Commands**: `src/commands/` — centralized command registry with category grouping, auto-generated autocomplete
+- **cmux**: `src/cmux/` — socket client for cmux terminal app, lifecycle hooks, split spawning
 - **UI**: `src/ui/` — Ink components (React terminal rendering), `BuddyPanel.tsx` with animation hooks, `SlashInput.tsx` for colored slash command input, `message-renderer.ts` for bordered tool result formatting, `PermissionPrompt.tsx`
-- **Agent loop**: `src/agent/loop.ts` — AsyncGenerator streaming, tool dispatch
+- **Agent loop**: `src/agent/loop.ts` — AsyncGenerator streaming, tool dispatch, checkpoint support
 - **Providers**: `src/providers/` — 6 providers (xAI, Anthropic, OpenAI, Ollama, Groq, DeepSeek), auto-failover with retry
 - **Tools**: `src/tools/` — 42 tools including PowerShell for Windows, with registry pattern (validate -> permissions -> hooks -> execute)
 - **MCP**: `src/mcp/` — stdio + SSE transport client (chrome extension support), auto-discovery of MCP server tools
-- **Skills**: `src/skills/` — slash command loader + registry, templates in `prompts/skills/`
+- **Skills**: `src/skills/` — slash command loader + registry + marketplace, templates in `prompts/skills/`
 - **Planning**: `src/planning/` — plan mode (read-only enforcement), plan file management
 - **Persistence**: `src/persistence/` — JSONL sessions, per-project memory
 - **Config**: `src/config/` — settings, hooks, permissions, git context
@@ -48,7 +56,7 @@ Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
 ```bash
 bun run start           # Run CLI
 bun run dev             # Watch mode
-bun test                # Run 452 tests
+bun test                # Run 555 tests
 bunx tsc --noEmit       # Type check
 ```
 
@@ -57,25 +65,28 @@ bunx tsc --noEmit       # Type check
 - `XAI_API_KEY` — xAI API key (primary provider, required)
 - `ANTHROPIC_API_KEY` — Anthropic Claude API key (fallback, optional)
 - `AC_MODEL` — Override model (default: grok-4-1-fast-reasoning)
+- `CMUX_SOCKET_PATH` — cmux terminal app socket path (auto-detected, enables lifecycle hooks)
 
 ## Key Directories
 
 ```
 src/
-├── cli.ts                 # Entry point, Ink UI, REPL, 25+ commands, global error handlers
-├── repl.tsx               # Ink REPL component, input handling
-├── agent/                 # Loop, context, sub-agents, verification, coordinator, KAIROS, dreams, speculation
+├── cli.ts                 # Entry point, Ink UI, REPL, global error handlers
+├── repl.tsx               # Ink REPL component, input handling, cmux status reporting
+├── agent/                 # Loop, context, sub-agents, verification, coordinator, checkpoints, KAIROS, dreams, speculation
+├── commands/              # Centralized command registry (core, agent, git, session, autopilot), auto-autocomplete
+├── cmux/                  # cmux terminal app integration (socket client, lifecycle hooks, split spawning)
 ├── providers/             # 6 providers with retry logic, cost budgeting
 ├── tools/                 # 43 tools (file ops, search, exec, PowerShell, planning, memory, git, teams, workflows, verify)
 ├── mcp/                   # MCP client + manager (stdio + SSE transport)
-├── skills/                # Skill loader + registry (18 slash commands)
+├── skills/                # Skill loader + registry + marketplace + validator (18 slash commands)
 ├── planning/              # Plan mode + tools
 ├── persistence/           # Sessions (JSONL) + memory (markdown)
 ├── config/                # Settings, hooks, permissions, git context
 ├── state/                 # File history (snapshot/undo)
 ├── ui/                    # Ink components: BuddyPanel, SlashInput, PermissionPrompt, message-renderer, theme
 ├── voice/                 # Voice mode input
-└── __tests__/             # 35 test files, 452 tests
+└── __tests__/             # 41 test files, 555 tests
 ```
 
 ## Tool Interface
@@ -117,6 +128,8 @@ The full prompt template. Use {{args}} for user-provided arguments.
 
 Skills are auto-loaded from `prompts/skills/`, `~/.ashlrcode/skills/`, and `.ashlrcode/skills/`.
 
+Skills can also be installed from the marketplace: `/skills install <name>`, `/skills search <query>`, `/skills update`, `/skills remove <name>`, `/skills info <name>`.
+
 ## Provider Behavior
 
 - **Primary**: xAI Grok 4.1 Fast ($0.20/$0.50 per M tokens, 2M context)
@@ -142,13 +155,14 @@ Skills are auto-loaded from `prompts/skills/`, `~/.ashlrcode/skills/`, and `.ash
 - **Memory**: `~/.ashlrcode/memory/<project-hash>/*.md`
 - **Permissions**: `~/.ashlrcode/permissions.json`
 - **Plans**: `~/.ashlrcode/plans/<name>.md`
+- **Checkpoints**: `~/.ashlrcode/checkpoints/<id>.json` (coordinator pause/resume state, auto-cleaned after 7 days)
 - **Settings**: `~/.ashlrcode/settings.json`
 
 ## Testing
 
 ```bash
-bun test              # All 452 tests
+bun test              # All 555 tests
 bun test --watch      # Watch mode
 ```
 
-Tests cover: tool registry, context compression, tool executor, sessions, skill registry, hooks, permissions, router costs, file history, error handler, keybindings, project config, workflows, telemetry, speculation, model patches, branded types, cron, undercover, retry, tasks, dreams, features, ring buffer, mailbox, coordinator, MCP client.
+Tests cover: tool registry, context compression, tool executor, sessions, skill registry, hooks, permissions, router costs, file history, error handler, keybindings, project config, workflows, telemetry, speculation, model patches, branded types, cron, undercover, retry, tasks, dreams, features, ring buffer, mailbox, coordinator, MCP client, cmux, commands, checkpoints, marketplace, validator.

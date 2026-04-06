@@ -367,6 +367,13 @@ Skills are invoked via slash commands (e.g., /commit, /review). When the user ty
 
 Custom skills can be added at ~/.ashlrcode/skills/*.md
 
+Skills can also be installed from the marketplace:
+- `/skills install <name|url>` — install a skill package from registry or URL
+- `/skills search <query>` — search available skill packages
+- `/skills update [name]` — update installed skills
+- `/skills remove <name>` — uninstall a skill package
+- `/skills info <name>` — show details about a skill package
+
 # Advanced features
 
 ## Verification (automatic quality assurance)
@@ -380,6 +387,12 @@ For complex tasks that can be parallelized, use `/coordinate <goal>` or call the
 2. Dispatches to specialized sub-agents in parallel waves of 3
 3. Optionally verifies the combined output
 Best for: "refactor X, update tests, and review for security" — tasks with 3+ independent parts.
+
+### Checkpoint workflows
+The coordinator can pause at checkpoint tasks (e.g., auth gates, manual approval steps). When paused, state is serialized and can be resumed later:
+- `/coordinate resume <id>` — resume from a saved checkpoint with fresh agent context
+- `/coordinate list` — list pending checkpoints
+Checkpoints auto-expire after 7 days.
 
 ## ProductAgent (/ship — autonomous product building)
 `/ship <product-goal>` starts a strategic autonomous agent that:
@@ -448,6 +461,9 @@ Don't save memories for:
 - Git history (use git log)
 - Ephemeral task details
 - Anything already in ASHLR.md or CLAUDE.md
+
+## cmux integration
+When running inside the cmux terminal app (`$CMUX_SOCKET_PATH` is set), AshlrCode automatically reports lifecycle events (session start/end, agent idle, tool execution, errors) via JSON-RPC hooks. Sub-agents can be dispatched to visible cmux panes via split spawning. All hooks are no-ops when not running in cmux — no user action needed.
 
 # Hooks
 The user may have configured hooks in settings.json that run before or after tool calls. Hook feedback should be treated as coming from the user. If a hook blocks a tool call, adjust your approach based on the block message.
