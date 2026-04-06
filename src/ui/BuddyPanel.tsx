@@ -6,10 +6,10 @@
  * re-renders on frame ticks — prevents ghost lines from full-app rerenders.
  */
 
-import React from "react";
 import { Box, Text } from "ink";
+import React from "react";
+import { type BuddyData, getBuddyArt } from "./buddy.ts";
 import { renderBuddyWithBubble } from "./speech-bubble.ts";
-import { getBuddyArt, type BuddyData } from "./buddy.ts";
 
 interface Props {
   buddy: BuddyData;
@@ -27,7 +27,9 @@ function getBuddyHeight(): number {
 // Module-level frame counter — incremented by the buddy animation in buddy.ts
 // No setInterval here to avoid triggering full Ink re-renders (causes duplicate separator lines)
 let _buddyFrame = 0;
-export function tickBuddyFrame() { _buddyFrame++; }
+export function tickBuddyFrame() {
+  _buddyFrame++;
+}
 
 export function BuddyPanel({ buddy, quip, quipType }: Props) {
   const height = getBuddyHeight();
@@ -37,7 +39,11 @@ export function BuddyPanel({ buddy, quip, quipType }: Props) {
 
   return (
     <Box flexDirection="column" alignItems="flex-end" height={height} flexShrink={0}>
-      {lines.map((line, i) => <Text key={i} color="cyan">{line}</Text>)}
+      {lines.map((line, i) => (
+        <Text key={i} color="cyan">
+          {line}
+        </Text>
+      ))}
     </Box>
   );
 }

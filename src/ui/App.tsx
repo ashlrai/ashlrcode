@@ -368,7 +368,9 @@ export function App({
         otherMode ? (
           /* "Other" text input mode */
           <Box>
-            <Text color="cyan" bold>✎ </Text>
+            <Text color="cyan" bold>
+              ✎{" "}
+            </Text>
             <SlashInput
               key={inputKey + 9000}
               value={input}
@@ -390,7 +392,7 @@ export function App({
         ) : (
           /* Arrow-key selection mode */
           <Box flexDirection="column">
-            <Text dimColor>  ↑↓ select · Enter confirm · 1-{pendingQuestionOptionCount} instant</Text>
+            <Text dimColor> ↑↓ select · Enter confirm · 1-{pendingQuestionOptionCount} instant</Text>
             {pendingQuestionLabels.map((label, i) => (
               <Text key={i}>
                 {i === selectedOption
