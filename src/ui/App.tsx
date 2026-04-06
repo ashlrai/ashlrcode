@@ -9,7 +9,7 @@ import chalk from "chalk";
 import { readdirSync } from "fs";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import { basename, dirname, join, resolve } from "path";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BuddyData } from "../ui/buddy.ts";
 import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
@@ -141,7 +141,9 @@ export function App({
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
   const [lastCtrlC, setLastCtrlC] = useState(0); // Track double Ctrl+C for force exit
-  const [selectedOption, setSelectedOption] = useState(0); // Arrow-key selection for questions
+  const [selectedOption, setSelectedOption] = useState(0);
+  const selectedRef = useRef(0); // Ref avoids stale closure in useInput
+  const [otherMode, setOtherMode] = useState(false); // True when "Other" is selected and user types
   const [termWidth, setTermWidth] = useState(process.stdout.columns || 80);
   const { exit } = useApp();
 
@@ -206,27 +208,52 @@ export function App({
 
         // When AskUser question is pending, handle arrow-key selection and number keys
         if (pendingQuestionOptionCount > 0) {
+          // "Other" mode — show text input, Enter submits typed text
+          if (otherMode) {
+            if (key.escape) {
+              setOtherMode(false);
+              return;
+            }
+            // Let normal text input handle everything in other mode
+            return;
+          }
+
           const totalOpts = pendingQuestionOptionCount + 1; // +1 for "Other"
           if (key.upArrow) {
-            setSelectedOption((s) => (s - 1 + totalOpts) % totalOpts);
+            setSelectedOption((s) => {
+              const next = (s - 1 + totalOpts) % totalOpts;
+              selectedRef.current = next;
+              return next;
+            });
             return;
           }
           if (key.downArrow) {
-            setSelectedOption((s) => (s + 1) % totalOpts);
+            setSelectedOption((s) => {
+              const next = (s + 1) % totalOpts;
+              selectedRef.current = next;
+              return next;
+            });
             return;
           }
           if (key.return) {
-            // Enter selects the currently highlighted option
-            onSubmit(String(selectedOption + 1));
+            const sel = selectedRef.current;
+            // Last option = "Other" → switch to text input mode
+            if (sel === pendingQuestionOptionCount) {
+              setOtherMode(true);
+              return;
+            }
+            onSubmit(String(sel + 1));
             setSelectedOption(0);
+            selectedRef.current = 0;
             return;
           }
           // Number keys for instant selection
           if (!key.ctrl && !key.shift && !key.meta) {
             const num = parseInt(ch, 10);
-            if (num >= 1 && num <= totalOpts) {
+            if (num >= 1 && num <= pendingQuestionOptionCount) {
               onSubmit(String(num));
               setSelectedOption(0);
+              selectedRef.current = 0;
               return;
             }
           }
@@ -316,6 +343,7 @@ export function App({
         onClearScreen,
         onVoiceToggle,
         pendingQuestionOptionCount,
+        otherMode,
       ],
     ),
   );
@@ -337,21 +365,46 @@ export function App({
       <Text dimColor>{"─".repeat(termWidth)}</Text>
       {pendingQuestionOptionCount > 0 ? (
         /* Question selection UI — replaces input when a question is pending */
-        <Box flexDirection="column">
-          <Text dimColor> Use ↑↓ arrows + Enter to select, or press 1-{pendingQuestionOptionCount + 1}:</Text>
-          {pendingQuestionLabels.map((label, i) => (
-            <Text key={i}>
-              {i === selectedOption
-                ? `  ${chalk.cyan.bold("❯")} ${chalk.cyan.bold(`${i + 1}`)} ${chalk.cyan.bold(label)}`
-                : `    ${chalk.dim(`${i + 1}`)} ${label}`}
+        otherMode ? (
+          /* "Other" text input mode */
+          <Box>
+            <Text color="cyan" bold>✎ </Text>
+            <SlashInput
+              key={inputKey + 9000}
+              value={input}
+              onChange={setInput}
+              onSubmit={(val: string) => {
+                const text = val.trim();
+                if (text) {
+                  onSubmit(text);
+                  setInput("");
+                  setInputKey((k) => k + 1);
+                  setOtherMode(false);
+                  setSelectedOption(0);
+                  selectedRef.current = 0;
+                }
+              }}
+              placeholder="Type your answer... (Esc to go back)"
+            />
+          </Box>
+        ) : (
+          /* Arrow-key selection mode */
+          <Box flexDirection="column">
+            <Text dimColor>  ↑↓ select · Enter confirm · 1-{pendingQuestionOptionCount} instant</Text>
+            {pendingQuestionLabels.map((label, i) => (
+              <Text key={i}>
+                {i === selectedOption
+                  ? `  ${chalk.cyan.bold("❯")} ${chalk.cyan.bold(`${i + 1}`)} ${chalk.cyan.bold(label)}`
+                  : `    ${chalk.dim(`${i + 1}`)} ${label}`}
+              </Text>
+            ))}
+            <Text>
+              {pendingQuestionOptionCount === selectedOption
+                ? `  ${chalk.cyan.bold("❯")} ${chalk.cyan.bold(`${pendingQuestionOptionCount + 1}`)} ${chalk.cyan.bold("Other (type your own)")}`
+                : `    ${chalk.dim(`${pendingQuestionOptionCount + 1}`)} ${chalk.dim("Other (type your own)")}`}
             </Text>
-          ))}
-          <Text>
-            {pendingQuestionOptionCount === selectedOption
-              ? `  ${chalk.cyan.bold("❯")} ${chalk.cyan.bold(`${pendingQuestionOptionCount + 1}`)} ${chalk.cyan.bold("Other (type your own)")}`
-              : `    ${chalk.dim(`${pendingQuestionOptionCount + 1}`)} ${chalk.dim("Other (type your own)")}`}
-          </Text>
-        </Box>
+          </Box>
+        )
       ) : (
         <Box>
           <Text color={modeColor} bold>
