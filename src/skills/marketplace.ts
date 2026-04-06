@@ -103,6 +103,10 @@ export async function installSkill(nameOrUrl: string): Promise<{
         .pop()
         ?.replace(/\.tar\.gz$/, "")
         .replace(/\.git$/, "") ?? "unknown";
+    // Sanitize URL-derived name against path traversal
+    if (packageName.includes("..") || packageName.includes("/") || packageName.includes("\\") || packageName.startsWith(".")) {
+      throw new Error(`Unsafe package name derived from URL: ${packageName}`);
+    }
   } else {
     // Look up in registry
     const registry = await loadRegistry();
@@ -147,7 +151,11 @@ export async function installSkill(nameOrUrl: string): Promise<{
       stdout: "pipe",
       stderr: "pipe",
     });
-    await proc.exited;
+    const cloneExit = await proc.exited;
+    if (cloneExit !== 0) {
+      await rm(destDir, { recursive: true }).catch(() => {});
+      throw new Error(`git clone failed (exit ${cloneExit}): ${validatedUrl}`);
+    }
   } else {
     // Download and extract tarball
     const response = await fetch(url);
@@ -163,7 +171,11 @@ export async function installSkill(nameOrUrl: string): Promise<{
       stdout: "pipe",
       stderr: "pipe",
     });
-    await proc.exited;
+    const tarExit = await proc.exited;
+    if (tarExit !== 0) {
+      await rm(destDir, { recursive: true }).catch(() => {});
+      throw new Error(`tar extraction failed (exit ${tarExit})`);
+    }
     await rm(tmpTar).catch(() => {});
   }
 
@@ -222,9 +234,15 @@ export async function updateSkill(name: string): Promise<{
     const gitDir = join(dir, ".git");
     if (existsSync(gitDir)) {
       const proc = Bun.spawn(["git", "pull"], { cwd: dir, stdout: "pipe", stderr: "pipe" });
-      await proc.exited;
-      // Re-read package info
-      return installSkill(name);
+      const exitCode = await proc.exited;
+      if (exitCode !== 0) return null;
+      // Re-read package info directly (don't call installSkill which requires registry)
+      const pkgPath = join(dir, "package.json");
+      const pkg = existsSync(pkgPath)
+        ? (JSON.parse(await readFile(pkgPath, "utf-8")) as SkillPackage)
+        : { name, version: "0.0.0", description: "Git-installed package", skills: [] };
+      const mdFiles = (await readdir(dir)).filter((f) => f.endsWith(".md"));
+      return { package: pkg, skills: mdFiles, warnings: [] };
     }
     return null;
   }

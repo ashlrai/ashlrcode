@@ -115,7 +115,6 @@ export class CommandRegistry {
 
       lines.push(theme.accentBold(`  ${categoryLabels[cat]}`));
       for (const cmd of cmds) {
-        const name = cmd.name.padEnd(22);
         const dots = ".".repeat(Math.max(1, 22 - cmd.name.length));
         lines.push(`    ${cmd.name} ${theme.muted(dots)} ${cmd.description}`);
       }

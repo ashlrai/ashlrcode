@@ -254,4 +254,5 @@ export async function ping(): Promise<boolean> {
 /** Reset cached availability (useful after reconnect). */
 export function resetAvailability(): void {
   _available = null;
+  _socketPath = null;
 }

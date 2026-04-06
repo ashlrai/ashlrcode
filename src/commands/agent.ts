@@ -55,9 +55,11 @@ export function agentCommands(): Command[] {
 
         // Handle resume subcommand
         if (args.startsWith("resume ")) {
-          const checkpointId = args.replace("resume ", "").trim();
+          const resumeParts = args.replace("resume ", "").trim().split(" ");
+          const checkpointId = resumeParts[0];
+          const userResponse = resumeParts.slice(1).join(" ").trim() || "User approved to continue";
           if (!checkpointId) {
-            ctx.addOutput(theme.warning("\n  Usage: /coordinate resume <checkpoint-id>\n"));
+            ctx.addOutput(theme.warning("\n  Usage: /coordinate resume <checkpoint-id> [response]\n"));
             return true;
           }
           const { loadCheckpoint } = await import("../agent/checkpoint.ts");
@@ -81,7 +83,7 @@ export function agentCommands(): Command[] {
 
           ctx.addOutput(theme.accent(`\n  🔄 Resuming from checkpoint: ${checkpoint.reason}\n`));
           const { coordinateResume } = await import("../agent/coordinator.ts");
-          const result = await coordinateResume(checkpointId, "User approved to continue", {
+          const result = await coordinateResume(checkpointId, userResponse, {
             router: ctx.state.router,
             toolRegistry: ctx.state.registry,
             toolContext: ctx.state.toolContext,
