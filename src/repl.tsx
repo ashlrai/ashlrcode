@@ -339,6 +339,9 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
     update();
   });
 
+  // Wire Agent tool to use REPL output (avoids console.log conflicting with Ink)
+  import("./tools/agent.ts").then(({ setAgentOutputFn }) => setAgentOutputFn(addOutput));
+
   // Check for upgrades (fire and forget)
   checkForUpgrade(VERSION)
     .then((newVersion) => {

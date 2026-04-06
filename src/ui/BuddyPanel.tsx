@@ -6,7 +6,7 @@
  * re-renders on frame ticks — prevents ghost lines from full-app rerenders.
  */
 
-import React, { useState, useEffect } from "react";
+import React from "react";
 import { Box, Text } from "ink";
 import { renderBuddyWithBubble } from "./speech-bubble.ts";
 import { getBuddyArt, type BuddyData } from "./buddy.ts";
@@ -24,16 +24,14 @@ function getBuddyHeight(): number {
   return Math.min(6, Math.floor(rows * 0.15));
 }
 
+// Module-level frame counter — incremented by the buddy animation in buddy.ts
+// No setInterval here to avoid triggering full Ink re-renders (causes duplicate separator lines)
+let _buddyFrame = 0;
+export function tickBuddyFrame() { _buddyFrame++; }
+
 export function BuddyPanel({ buddy, quip, quipType }: Props) {
-  const [frame, setFrame] = useState(0);
-
-  useEffect(() => {
-    const id = setInterval(() => setFrame(f => f + 1), 1500);
-    return () => clearInterval(id);
-  }, []);
-
   const height = getBuddyHeight();
-  const art = getBuddyArt(buddy, frame);
+  const art = getBuddyArt(buddy, _buddyFrame);
   const bubbleText = quipType === "suggestion" ? `💡 ${quip}` : quip;
   const lines = renderBuddyWithBubble(bubbleText, art, buddy.name, 1, height);
 

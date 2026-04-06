@@ -15,11 +15,17 @@ import type { Tool, ToolContext } from "./types.ts";
 let _router: ProviderRouter | null = null;
 let _registry: ToolRegistry | null = null;
 let _systemPrompt: string = "";
+let _outputFn: ((text: string) => void) | null = null;
 
 export function initAgentTool(router: ProviderRouter, registry: ToolRegistry, systemPrompt: string) {
   _router = router;
   _registry = registry;
   _systemPrompt = systemPrompt;
+}
+
+/** Wire agent tool to the REPL's output function (Ink-safe). */
+export function setAgentOutputFn(fn: (text: string) => void) {
+  _outputFn = fn;
 }
 
 export const agentTool: Tool = {
@@ -94,7 +100,8 @@ The sub-agent's findings are returned as text. Provide a clear, specific prompt 
     const mode = (input.mode as SubAgentConfig["mode"]) ?? "in_process";
 
     const modeLabel = mode === "worktree" ? " [worktree]" : "";
-    console.log(chalk.dim(`  ◈ Spawning agent${modeLabel}: ${description}`));
+    const output = _outputFn ?? console.log;
+    output(chalk.dim(`  ◈ Spawning agent${modeLabel}: ${description}`));
 
     const result = await runSubAgent({
       name: description,
