@@ -11,6 +11,7 @@
 import chalk from "chalk";
 import { createInterface } from "readline";
 import { isBypassMode } from "../config/permissions.ts";
+import { cmuxNeedsInput } from "../cmux/hooks.ts";
 import { theme } from "../ui/theme.ts";
 import type { Tool, ToolContext } from "./types.ts";
 
@@ -141,6 +142,9 @@ The user can always type a custom answer beyond the provided options.`;
       // Auto-accept first option in bypass/automated mode
       return `Auto-selected: ${options[0]?.label ?? "yes"} (bypass mode)`;
     }
+
+    // Notify cmux that we need user input
+    cmuxNeedsInput();
 
     // Use Ink-mode rendering if pendingQuestionResolve is wired (REPL active),
     // otherwise fall back to CLI readline prompt
