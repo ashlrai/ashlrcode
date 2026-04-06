@@ -20,6 +20,7 @@
 import { runSubAgent, runSubAgentsParallel, type SubAgentConfig, type SubAgentResult } from "./sub-agent.ts";
 import { loadTeam, pickTeammateForTask, recordTeammateActivity, type Team, type Teammate } from "./team.ts";
 import { runVerification, type VerificationConfig } from "./verification.ts";
+import { saveCheckpoint, buildResumePrompt, loadCheckpoint, markCheckpointResumed, type Checkpoint, type CheckpointType } from "./checkpoint.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
@@ -46,6 +47,7 @@ export type CoordinatorEvent =
   | { type: "dispatching"; taskIndex: number; totalTasks: number; agentName: string }
   | { type: "agent_complete"; taskIndex: number; agentName: string; success: boolean; summary: string }
   | { type: "wave_complete"; waveIndex: number; successCount: number; failCount: number }
+  | { type: "checkpoint"; checkpoint: Checkpoint }
   | { type: "verifying" }
   | { type: "complete"; summary: string };
 
@@ -57,6 +59,8 @@ export interface SubTask {
   files?: string[];
   /** Task IDs that must complete before this one starts */
   dependsOn?: string[];
+  /** Task type — "checkpoint:*" tasks pause the workflow for human input */
+  type?: "implementation" | "test" | "exploration" | `checkpoint:${CheckpointType}`;
 }
 
 export interface CoordinatorResult {
@@ -303,6 +307,8 @@ async function dispatchTasks(
   tasks: SubTask[],
   config: CoordinatorConfig,
   team?: Team | null,
+  /** Original goal for checkpoint context — if omitted, falls back to first task description */
+  goal?: string,
 ): Promise<CoordinatorResult["tasks"]> {
   const maxParallel = config.maxParallel ?? 3;
   const results: CoordinatorResult["tasks"] = [];
@@ -325,6 +331,43 @@ async function dispatchTasks(
     });
 
     const waveStartIdx = results.length;
+
+    // Check for checkpoint tasks in this wave — they pause the entire workflow
+    const checkpointTasks = wave.filter((t) => t.type?.startsWith("checkpoint:"));
+    if (checkpointTasks.length > 0) {
+      const cpTask = checkpointTasks[0]!;
+      const cpType = cpTask.type!.replace("checkpoint:", "") as CheckpointType;
+      const remainingWaves = waves.slice(waveIdx + 1).flat();
+      const allRemaining = [...wave.filter((t) => t !== cpTask), ...remainingWaves];
+
+      // Match completed tasks by ID (not description, which may not be unique)
+      const completedDescriptions = new Set(results.map((r) => r.description));
+      const completedTaskList = tasks.filter((t) => completedDescriptions.has(t.description));
+
+      const checkpoint = await saveCheckpoint({
+        coordinatorId: config.toolContext.cwd,
+        type: cpType,
+        reason: cpTask.description,
+        prompt: cpTask.description,
+        completedTasks: completedTaskList,
+        completedResults: results.map((r) => ({
+          taskId: completedTaskList.find((t) => t.description === r.description)?.id ?? r.description,
+          agentName: r.agentName,
+          success: r.success,
+          summary: r.summary,
+        })),
+        pendingTasks: allRemaining,
+        context: {},
+        goal: goal ?? tasks[0]?.description ?? "unknown",
+        cwd: config.toolContext.cwd,
+      });
+
+      config.onProgress?.({ type: "checkpoint", checkpoint });
+
+      // Return partial results — the workflow is paused
+      const summary = `Paused at checkpoint: ${cpTask.description} (ID: ${checkpoint.id}). Resume with /coordinate resume ${checkpoint.id}`;
+      return results;
+    }
 
     // Process wave in batches of maxParallel
     for (let batch = 0; batch < wave.length; batch += maxParallel) {
@@ -433,7 +476,7 @@ export async function coordinate(
   }
 
   // Step 4: Dispatch in dependency-aware waves
-  const taskResults = await dispatchTasks(subtasks, config, team);
+  const taskResults = await dispatchTasks(subtasks, config, team, goal);
 
   // Step 5: Optional verification
   let verificationPassed: boolean | undefined;
@@ -459,6 +502,47 @@ export async function coordinate(
   config.onProgress?.({ type: "complete", summary });
 
   return { tasks: taskResults, verificationPassed, summary };
+}
+
+/**
+ * Resume a coordinator from a checkpoint.
+ * Loads the checkpoint, applies the user's response, and re-dispatches pending tasks.
+ */
+export async function coordinateResume(
+  checkpointId: string,
+  userResponse: string,
+  config: CoordinatorConfig,
+): Promise<CoordinatorResult> {
+  const checkpoint = await markCheckpointResumed(checkpointId, userResponse);
+  if (!checkpoint) {
+    return { tasks: [], summary: `Checkpoint ${checkpointId} not found` };
+  }
+
+  // Build a resume prompt that gives the fresh agent full context
+  const resumePrompt = buildResumePrompt(checkpoint);
+
+  // Re-dispatch pending tasks with the resume context
+  config.onProgress?.({ type: "planning", message: `Resuming from checkpoint: ${checkpoint.reason}` });
+
+  // If there are explicit pending tasks, dispatch them directly.
+  // Remove dependsOn references to already-completed tasks so buildWaves resolves correctly.
+  if (checkpoint.pendingTasks.length > 0) {
+    const completedIds = new Set(checkpoint.completedTasks.map((t) => t.id));
+    const adjustedTasks = checkpoint.pendingTasks.map((t) => ({
+      ...t,
+      dependsOn: (t.dependsOn ?? []).filter((dep) => !completedIds.has(dep)),
+    }));
+
+    const taskResults = await dispatchTasks(adjustedTasks, config, null, checkpoint.goal);
+
+    const successCount = taskResults.filter((t) => t.success).length;
+    const summary = `Resumed from checkpoint "${checkpoint.reason}": ${successCount}/${taskResults.length} tasks succeeded`;
+    config.onProgress?.({ type: "complete", summary });
+    return { tasks: taskResults, summary };
+  }
+
+  // Otherwise, use the resume prompt as a new coordination goal
+  return coordinate(resumePrompt, config);
 }
 
 /**
