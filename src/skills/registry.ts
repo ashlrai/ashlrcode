@@ -75,4 +75,24 @@ export class SkillRegistry {
     }
     return skills;
   }
+
+  /**
+   * Search skills by name or description.
+   */
+  search(query: string): SkillDefinition[] {
+    const q = query.toLowerCase();
+    return this.getAll().filter(
+      (s) =>
+        s.name.toLowerCase().includes(q) ||
+        s.description.toLowerCase().includes(q) ||
+        s.trigger.toLowerCase().includes(q),
+    );
+  }
+
+  /**
+   * Get a skill's detailed info including source and version.
+   */
+  getInfo(nameOrTrigger: string): SkillDefinition | undefined {
+    return this.skills.get(nameOrTrigger) ?? this.skills.get(`/${nameOrTrigger}`);
+  }
 }

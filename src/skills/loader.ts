@@ -12,6 +12,7 @@ import { readdir, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import { getConfigDir } from "../config/settings.ts";
 import type { SkillDefinition } from "./types.ts";
+import { loadMarketplaceSkills } from "./marketplace.ts";
 
 // Find the package root by looking for package.json — works with bun link/symlinks
 function findPackageRoot(): string {
@@ -31,10 +32,15 @@ export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
   const skills: SkillDefinition[] = [];
   const seen = new Set<string>();
 
-  // Load from all sources (project overrides user overrides built-in)
-  const dirs = [BUILT_IN_DIR, join(getConfigDir(), "skills"), join(cwd, ".ashlrcode", "skills")];
+  // Source labels for tracking where each skill came from
+  const sources: Array<{ dir: string; source: SkillDefinition["source"] }> = [
+    { dir: BUILT_IN_DIR, source: "built-in" },
+    { dir: join(getConfigDir(), "skills"), source: "user" },
+    { dir: join(cwd, ".ashlrcode", "skills"), source: "project" },
+  ];
 
-  for (const dir of dirs) {
+  // Load from all directory sources (project overrides user overrides built-in)
+  for (const { dir, source } of sources) {
     if (!existsSync(dir)) continue;
 
     const files = await readdir(dir);
@@ -44,6 +50,7 @@ export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
       const content = await readFile(join(dir, file), "utf-8");
       const skill = parseSkillFile(content);
       if (skill) {
+        skill.source = source;
         // Later sources override earlier ones
         if (seen.has(skill.name)) {
           const idx = skills.findIndex((s) => s.name === skill.name);
@@ -54,6 +61,19 @@ export async function loadSkills(cwd: string): Promise<SkillDefinition[]> {
         }
       }
     }
+  }
+
+  // Load marketplace skills (lowest priority — overridden by all others)
+  try {
+    const marketplaceSkills = await loadMarketplaceSkills();
+    for (const skill of marketplaceSkills) {
+      if (!seen.has(skill.name)) {
+        seen.add(skill.name);
+        skills.push(skill);
+      }
+    }
+  } catch {
+    // Marketplace loading is non-critical
   }
 
   return skills;
