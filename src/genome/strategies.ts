@@ -236,8 +236,7 @@ export async function suggestStrategy(cwd: string, category: StrategyCategory): 
     const successRate = successes / records.length;
     const avgDuration = records.reduce((sum, r) => sum + r.outcome.duration, 0) / records.length;
     const avgTestImprovement =
-      records.reduce((sum, r) => sum + (r.outcome.testsPassedAfter - r.outcome.testsPassedBefore), 0) /
-      records.length;
+      records.reduce((sum, r) => sum + (r.outcome.testsPassedAfter - r.outcome.testsPassedBefore), 0) / records.length;
 
     const entry: LeaderboardEntry = {
       name,
@@ -274,7 +273,8 @@ export function formatLeaderboard(leaderboards: CategoryLeaderboard[]): string {
 
     for (const entry of board.entries) {
       const rate = `${(entry.successRate * 100).toFixed(0)}%`;
-      const testDelta = entry.avgTestImprovement >= 0 ? `+${entry.avgTestImprovement.toFixed(1)}` : entry.avgTestImprovement.toFixed(1);
+      const testDelta =
+        entry.avgTestImprovement >= 0 ? `+${entry.avgTestImprovement.toFixed(1)}` : entry.avgTestImprovement.toFixed(1);
       const name = entry.name.length > 27 ? entry.name.slice(0, 24) + "..." : entry.name;
       lines.push(`  ${name.padEnd(28)} ${rate.padEnd(8)} ${String(entry.uses).padEnd(6)} ${testDelta}`);
     }

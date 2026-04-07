@@ -201,11 +201,7 @@ async function packSections(cwd: string, scored: ScoredSection[], maxTokens: num
  * to embedding-based search when a local Ollama instance is running with
  * cached embeddings, and degrades gracefully to keyword search otherwise.
  */
-export async function retrieveSectionsV2(
-  cwd: string,
-  query: string,
-  maxTokens: number,
-): Promise<RetrievedSection[]> {
+export async function retrieveSectionsV2(cwd: string, query: string, maxTokens: number): Promise<RetrievedSection[]> {
   // Only attempt semantic search for non-empty queries
   if (query.trim().length > 0) {
     try {

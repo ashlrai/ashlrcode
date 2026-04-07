@@ -7,6 +7,7 @@
  */
 
 export { genomeCommands } from "./commands.ts";
+export { isOllamaAvailable, semanticSearch, updateEmbeddings } from "./embeddings.ts";
 export { compareFitness, type FitnessMetrics, measureFitness } from "./fitness.ts";
 export { endGeneration, evaluateGeneration, startGeneration } from "./generations.ts";
 export { initGenome, initGenomeFromClaudeMd } from "./init.ts";
@@ -19,15 +20,14 @@ export {
   type SectionMeta,
   saveManifest,
 } from "./manifest.ts";
-export { isOllamaAvailable, semanticSearch, updateEmbeddings } from "./embeddings.ts";
 export { formatGenomeForPrompt, injectGenomeContext, retrieveSections, retrieveSectionsV2 } from "./retriever.ts";
 export { consolidateProposals, loadMutations, loadMutationsForGeneration, proposeUpdate } from "./scribe.ts";
 export {
-  type StrategyRecord,
   formatLeaderboard,
   getAgentProfile,
   getStrategyLeaderboard,
   loadStrategies,
   recordStrategy,
+  type StrategyRecord,
   suggestStrategy,
 } from "./strategies.ts";

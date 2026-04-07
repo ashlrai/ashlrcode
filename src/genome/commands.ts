@@ -11,7 +11,18 @@ export function genomeCommands(): Command[] {
       name: "/genome",
       description: "Manage the genetic AI development loop",
       category: "agent",
-      subcommands: ["init", "status", "sections", "read", "evolve", "propose", "history", "diff", "embeddings", "strategies"],
+      subcommands: [
+        "init",
+        "status",
+        "sections",
+        "read",
+        "evolve",
+        "propose",
+        "history",
+        "diff",
+        "embeddings",
+        "strategies",
+      ],
       handler: async (args, ctx) => {
         const [sub, ...rest] = (args ?? "").split(" ");
         const subArgs = rest.join(" ").trim();
@@ -443,22 +454,28 @@ async function handleStrategies(args: string, ctx: CommandContext): Promise<bool
     if (!suggestion) {
       ctx.addOutput(theme.tertiary(`\n  No strategy suggestions for "${category}" (need 2+ recorded uses).\n`));
     } else {
-      ctx.addOutput(theme.success(`\n  Suggested: ${suggestion.name} (${(suggestion.successRate * 100).toFixed(0)}% success, ${suggestion.uses}x used)\n`));
+      ctx.addOutput(
+        theme.success(
+          `\n  Suggested: ${suggestion.name} (${(suggestion.successRate * 100).toFixed(0)}% success, ${suggestion.uses}x used)\n`,
+        ),
+      );
     }
     return true;
   }
 
-  ctx.addOutput([
-    "",
-    theme.accentBold("  Strategy Tracking"),
-    "",
-    `  ${theme.accent("/genome strategies")}             Show leaderboard`,
-    `  ${theme.accent("/genome strategies agent <id>")}  Agent profile`,
-    `  ${theme.accent("/genome strategies suggest <cat>")} Suggest best strategy`,
-    "",
-    theme.muted("  Categories: testing, implementation, refactoring, debugging, architecture, other"),
-    "",
-  ].join("\n"));
+  ctx.addOutput(
+    [
+      "",
+      theme.accentBold("  Strategy Tracking"),
+      "",
+      `  ${theme.accent("/genome strategies")}             Show leaderboard`,
+      `  ${theme.accent("/genome strategies agent <id>")}  Agent profile`,
+      `  ${theme.accent("/genome strategies suggest <cat>")} Suggest best strategy`,
+      "",
+      theme.muted("  Categories: testing, implementation, refactoring, debugging, architecture, other"),
+      "",
+    ].join("\n"),
+  );
   return true;
 }
 
