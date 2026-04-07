@@ -6,7 +6,7 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, readdir } from "fs/promises";
+import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { genomeDir, loadManifest, readSection } from "./manifest.ts";
 import { loadMutations } from "./scribe.ts";
@@ -36,14 +36,13 @@ export interface FitnessMetrics {
  * Measure fitness metrics for the current project state.
  */
 export async function measureFitness(cwd: string): Promise<FitnessMetrics> {
-  const [testsPassRate, codeQuality, milestoneProgress, costEfficiency, strategySuccessRate] =
-    await Promise.all([
-      measureTestPassRate(cwd),
-      measureCodeQuality(cwd),
-      measureMilestoneProgress(cwd),
-      measureCostEfficiency(cwd),
-      measureStrategySuccessRate(cwd),
-    ]);
+  const [testsPassRate, codeQuality, milestoneProgress, costEfficiency, strategySuccessRate] = await Promise.all([
+    measureTestPassRate(cwd),
+    measureCodeQuality(cwd),
+    measureMilestoneProgress(cwd),
+    measureCostEfficiency(cwd),
+    measureStrategySuccessRate(cwd),
+  ]);
 
   return {
     testsPassRate,
@@ -96,10 +95,7 @@ async function measureTestPassRate(cwd: string): Promise<number> {
       env: { ...process.env, CI: "true" },
     });
 
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
+    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
     const exitCode = await proc.exited;
 
     // Parse test results from output
@@ -147,10 +143,7 @@ async function measureCodeQuality(cwd: string): Promise<number> {
   }
 }
 
-async function countMarkersRecursive(
-  dir: string,
-  callback: (lines: number, markers: number) => void,
-): Promise<void> {
+async function countMarkersRecursive(dir: string, callback: (lines: number, markers: number) => void): Promise<void> {
   const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const fullPath = join(dir, entry.name);
@@ -195,9 +188,7 @@ async function measureCostEfficiency(cwd: string): Promise<number> {
   if (!manifest) return 0;
 
   const mutations = await loadMutations(cwd);
-  const genMutations = mutations.filter(
-    (m) => m.generation === manifest.generation.number,
-  );
+  const genMutations = mutations.filter((m) => m.generation === manifest.generation.number);
 
   // Normalize: 10+ mutations = 1.0
   return Math.min(1, genMutations.length / 10);

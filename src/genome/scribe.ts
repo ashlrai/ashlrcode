@@ -9,10 +9,10 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, writeFile, appendFile, mkdir } from "fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
-import { genomeDir, readSection, updateManifest, writeSection, type SectionMeta } from "./manifest.ts";
 import type { ProviderRouter } from "../providers/router.ts";
+import { genomeDir, readSection, type SectionMeta, updateManifest, writeSection } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -61,10 +61,7 @@ function mutationsPath(cwd: string): string {
  * Queue a genome update proposal from an agent.
  * Fire-and-forget — doesn't block the agent.
  */
-export async function proposeUpdate(
-  cwd: string,
-  proposal: Omit<GenomeProposal, "id" | "timestamp">,
-): Promise<string> {
+export async function proposeUpdate(cwd: string, proposal: Omit<GenomeProposal, "id" | "timestamp">): Promise<string> {
   const dir = join(genomeDir(cwd), "evolution");
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
@@ -124,10 +121,7 @@ async function logMutation(cwd: string, mutation: MutationRecord): Promise<void>
 /**
  * Load mutation history.
  */
-export async function loadMutations(
-  cwd: string,
-  limit?: number,
-): Promise<MutationRecord[]> {
+export async function loadMutations(cwd: string, limit?: number): Promise<MutationRecord[]> {
   const path = mutationsPath(cwd);
   if (!existsSync(path)) return [];
 
@@ -168,7 +162,7 @@ export async function consolidateProposals(
   }
 
   let applied = 0;
-  let skipped = 0;
+  const skipped = 0;
 
   for (const [section, sectionProposals] of bySection) {
     const existing = await readSection(cwd, section);
@@ -176,9 +170,7 @@ export async function consolidateProposals(
     if (sectionProposals.length === 1 && sectionProposals[0]!.operation !== "update") {
       // Simple append or create — apply directly
       const p = sectionProposals[0]!;
-      const newContent = p.operation === "append" && existing
-        ? existing + "\n\n" + p.content
-        : p.content;
+      const newContent = p.operation === "append" && existing ? existing + "\n\n" + p.content : p.content;
 
       await writeSectionFromProposal(cwd, section, newContent, p);
       applied++;
@@ -187,11 +179,7 @@ export async function consolidateProposals(
 
     // Multiple proposals or updates — use LLM to merge if available
     if (router && sectionProposals.length > 1) {
-      const merged = await mergeProposalsWithLLM(
-        existing ?? "",
-        sectionProposals,
-        router,
-      );
+      const merged = await mergeProposalsWithLLM(existing ?? "", sectionProposals, router);
       if (merged) {
         await writeSectionFromProposal(cwd, section, merged, sectionProposals[0]!);
         applied++;
@@ -202,9 +190,7 @@ export async function consolidateProposals(
     // Fallback: apply proposals sequentially (last write wins for updates)
     for (const p of sectionProposals) {
       const current = await readSection(cwd, section);
-      const newContent = p.operation === "append" && current
-        ? current + "\n\n" + p.content
-        : p.content;
+      const newContent = p.operation === "append" && current ? current + "\n\n" + p.content : p.content;
 
       await writeSectionFromProposal(cwd, section, newContent, p);
       applied++;
@@ -226,9 +212,7 @@ async function writeSectionFromProposal(
 ): Promise<void> {
   // Derive title and tags from section path
   const parts = sectionPath.replace(".md", "").split("/");
-  const title = parts[parts.length - 1]!
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const title = parts[parts.length - 1]!.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const category = parts[0] ?? "other";
 
   await writeSection(cwd, sectionPath, content, {
@@ -258,7 +242,10 @@ async function mergeProposalsWithLLM(
   router: ProviderRouter,
 ): Promise<string | null> {
   const proposalText = proposals
-    .map((p, i) => `--- Proposal ${i + 1} (by ${p.agentId}, ${p.operation}) ---\nRationale: ${p.rationale}\n\n${p.content}`)
+    .map(
+      (p, i) =>
+        `--- Proposal ${i + 1} (by ${p.agentId}, ${p.operation}) ---\nRationale: ${p.rationale}\n\n${p.content}`,
+    )
     .join("\n\n");
 
   const prompt = `You are merging multiple proposed updates to a genome section (a project knowledge document).

@@ -1,43 +1,25 @@
-import { test, expect, describe, beforeEach, afterEach } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "fs";
-import { readFile, writeFile, mkdir } from "fs/promises";
-import { join } from "path";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { tmpdir } from "os";
-
+import { join } from "path";
+import { compareFitness, type FitnessMetrics } from "../genome/fitness.ts";
+import { initGenome } from "../genome/init.ts";
 import {
   createEmptyManifest,
+  estimateTokens,
+  type GenomeManifest,
   genomeDir,
   genomeExists,
   loadManifest,
-  saveManifest,
-  updateManifest,
   readSection,
-  writeSection,
+  saveManifest,
   totalGenomeTokens,
-  estimateTokens,
-  type GenomeManifest,
+  updateManifest,
+  writeSection,
 } from "../genome/manifest.ts";
-
-import {
-  retrieveSections,
-  formatGenomeForPrompt,
-} from "../genome/retriever.ts";
-
-import {
-  proposeUpdate,
-  loadPendingProposals,
-  loadMutations,
-  consolidateProposals,
-} from "../genome/scribe.ts";
-
-import {
-  initGenome,
-} from "../genome/init.ts";
-
-import {
-  compareFitness,
-  type FitnessMetrics,
-} from "../genome/fitness.ts";
+import { formatGenomeForPrompt, retrieveSections } from "../genome/retriever.ts";
+import { consolidateProposals, loadMutations, loadPendingProposals, proposeUpdate } from "../genome/scribe.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -108,9 +90,7 @@ describe("Genome Manifest", () => {
   });
 
   test("updateManifest throws if no genome", async () => {
-    expect(
-      updateManifest(tmpDir, () => {}),
-    ).rejects.toThrow("No genome found");
+    expect(updateManifest(tmpDir, () => {})).rejects.toThrow("No genome found");
   });
 
   test("writeSection creates file and updates manifest", async () => {
@@ -199,11 +179,16 @@ describe("Genome Retriever", () => {
     const m = createEmptyManifest("proj");
     await saveManifest(tmpDir, m);
 
-    await writeSection(tmpDir, "vision/north-star.md", "# North Star\n\nBuild an API gateway with auth and rate limiting.", {
-      title: "North Star Vision",
-      summary: "Build API gateway with authentication and rate limiting",
-      tags: ["vision", "api", "gateway", "auth", "rate-limiting"],
-    });
+    await writeSection(
+      tmpDir,
+      "vision/north-star.md",
+      "# North Star\n\nBuild an API gateway with auth and rate limiting.",
+      {
+        title: "North Star Vision",
+        summary: "Build API gateway with authentication and rate limiting",
+        tags: ["vision", "api", "gateway", "auth", "rate-limiting"],
+      },
+    );
 
     await writeSection(tmpDir, "milestones/current.md", "# Auth Module\n\nImplement JWT authentication.", {
       title: "Current Milestone",
@@ -211,17 +196,27 @@ describe("Genome Retriever", () => {
       tags: ["milestone", "auth", "jwt", "authentication"],
     });
 
-    await writeSection(tmpDir, "strategies/active.md", "# Active Strategies\n\n- Test-driven development\n- Small PRs", {
-      title: "Active Strategies",
-      summary: "TDD and small PR approach",
-      tags: ["strategies", "tdd", "testing"],
-    });
+    await writeSection(
+      tmpDir,
+      "strategies/active.md",
+      "# Active Strategies\n\n- Test-driven development\n- Small PRs",
+      {
+        title: "Active Strategies",
+        summary: "TDD and small PR approach",
+        tags: ["strategies", "tdd", "testing"],
+      },
+    );
 
-    await writeSection(tmpDir, "knowledge/dependencies.md", "# Dependencies\n\n- Express.js for HTTP\n- Redis for caching", {
-      title: "Dependencies",
-      summary: "External dependencies and integrations",
-      tags: ["knowledge", "dependencies", "express", "redis", "http"],
-    });
+    await writeSection(
+      tmpDir,
+      "knowledge/dependencies.md",
+      "# Dependencies\n\n- Express.js for HTTP\n- Redis for caching",
+      {
+        title: "Dependencies",
+        summary: "External dependencies and integrations",
+        tags: ["knowledge", "dependencies", "express", "redis", "http"],
+      },
+    );
   }
 
   test("retrieveSections returns relevant sections for query", async () => {
@@ -517,18 +512,12 @@ describe("Genome Integration", () => {
     });
 
     // 2. Retrieve sections for a task
-    const sections = await retrieveSections(
-      tmpDir,
-      "implement OAuth2 token exchange",
-      10_000,
-    );
+    const sections = await retrieveSections(tmpDir, "implement OAuth2 token exchange", 10_000);
     expect(sections.length).toBeGreaterThan(0);
 
     // Should find auth-related sections
     const titles = sections.map((s) => s.title);
-    const hasRelevant = titles.some(
-      (t) => t.includes("North Star") || t.includes("Milestone") || t.includes("Anti"),
-    );
+    const hasRelevant = titles.some((t) => t.includes("North Star") || t.includes("Milestone") || t.includes("Anti"));
     expect(hasRelevant).toBe(true);
 
     // 3. Propose a genome update

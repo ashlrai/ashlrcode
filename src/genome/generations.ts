@@ -7,19 +7,12 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, writeFile, mkdir, rename } from "fs/promises";
+import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import { join } from "path";
-import {
-  genomeDir,
-  loadManifest,
-  readSection,
-  saveManifest,
-  writeSection,
-  type GenomeManifest,
-} from "./manifest.ts";
-import { consolidateProposals, loadMutations } from "./scribe.ts";
-import { measureFitness, type FitnessMetrics } from "./fitness.ts";
 import type { ProviderRouter } from "../providers/router.ts";
+import { type FitnessMetrics, measureFitness } from "./fitness.ts";
+import { type GenomeManifest, genomeDir, loadManifest, readSection, saveManifest, writeSection } from "./manifest.ts";
+import { consolidateProposals, loadMutations } from "./scribe.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -43,10 +36,7 @@ export interface GenerationReport {
  * Start a new generation for the given milestone.
  * Snapshots current genome state and resets the generation counter.
  */
-export async function startGeneration(
-  cwd: string,
-  milestone: string,
-): Promise<number> {
+export async function startGeneration(cwd: string, milestone: string): Promise<number> {
   const manifest = await loadManifest(cwd);
   if (!manifest) throw new Error("No genome found. Run /genome init first.");
 
@@ -61,11 +51,16 @@ export async function startGeneration(
   // Ensure milestone section exists
   const currentMilestone = await readSection(cwd, "milestones/current.md");
   if (!currentMilestone || !currentMilestone.includes(milestone)) {
-    await writeSection(cwd, "milestones/current.md", `# ${milestone}\n\nStatus: In Progress\nGeneration: ${manifest.generation.number}\n`, {
-      title: "Current Milestone",
-      summary: milestone,
-      tags: ["milestone", "current", "active"],
-    });
+    await writeSection(
+      cwd,
+      "milestones/current.md",
+      `# ${milestone}\n\nStatus: In Progress\nGeneration: ${manifest.generation.number}\n`,
+      {
+        title: "Current Milestone",
+        summary: milestone,
+        tags: ["milestone", "current", "active"],
+      },
+    );
   }
 
   return manifest.generation.number;
@@ -74,10 +69,7 @@ export async function startGeneration(
 /**
  * Evaluate the current generation — measure fitness, assess progress.
  */
-export async function evaluateGeneration(
-  cwd: string,
-  router?: ProviderRouter,
-): Promise<GenerationReport> {
+export async function evaluateGeneration(cwd: string, router?: ProviderRouter): Promise<GenerationReport> {
   const manifest = await loadManifest(cwd);
   if (!manifest) throw new Error("No genome found.");
 
@@ -89,9 +81,7 @@ export async function evaluateGeneration(
 
   // Count mutations this generation
   const mutations = await loadMutations(cwd);
-  const genMutations = mutations.filter(
-    (m) => m.generation === manifest.generation.number,
-  );
+  const genMutations = mutations.filter((m) => m.generation === manifest.generation.number);
 
   // Evolve strategies if router available
   let promotedStrategies: string[] = [];
@@ -126,9 +116,7 @@ export async function evaluateGeneration(
 /**
  * End the current generation — archive milestone, prepare for next.
  */
-export async function endGeneration(
-  cwd: string,
-): Promise<void> {
+export async function endGeneration(cwd: string): Promise<void> {
   const manifest = await loadManifest(cwd);
   if (!manifest) throw new Error("No genome found.");
 
@@ -170,9 +158,9 @@ async function evolveStrategies(
   mutationCount: number,
   router: ProviderRouter,
 ): Promise<{ promoted: string[]; retired: string[]; experiments: string[] }> {
-  const activeStrategies = await readSection(cwd, "strategies/active.md") ?? "";
-  const experiments = await readSection(cwd, "strategies/experiments.md") ?? "";
-  const graveyard = await readSection(cwd, "strategies/graveyard.md") ?? "";
+  const activeStrategies = (await readSection(cwd, "strategies/active.md")) ?? "";
+  const experiments = (await readSection(cwd, "strategies/experiments.md")) ?? "";
+  const graveyard = (await readSection(cwd, "strategies/graveyard.md")) ?? "";
 
   const prompt = `You are evolving the development strategies for an AI agent swarm.
 
@@ -212,7 +200,10 @@ Respond in this exact JSON format (no markdown, no code fences):
   }
 
   try {
-    const cleaned = response.trim().replace(/^```json?\n?/, "").replace(/\n?```$/, "");
+    const cleaned = response
+      .trim()
+      .replace(/^```json?\n?/, "")
+      .replace(/\n?```$/, "");
     const result = JSON.parse(cleaned);
 
     // Apply strategy updates
@@ -233,17 +224,14 @@ Respond in this exact JSON format (no markdown, no code fences):
     }
 
     if (result.graveyardAppend && result.graveyardAppend.trim()) {
-      const currentGraveyard = await readSection(cwd, "strategies/graveyard.md") ?? "# Strategy Graveyard\n\nFailed approaches and why they didn't work.\n";
-      await writeSection(
-        cwd,
-        "strategies/graveyard.md",
-        currentGraveyard + "\n\n" + result.graveyardAppend,
-        {
-          title: "Strategy Graveyard",
-          summary: "Failed approaches with post-mortems",
-          tags: ["strategies", "graveyard", "failed", "lessons"],
-        },
-      );
+      const currentGraveyard =
+        (await readSection(cwd, "strategies/graveyard.md")) ??
+        "# Strategy Graveyard\n\nFailed approaches and why they didn't work.\n";
+      await writeSection(cwd, "strategies/graveyard.md", currentGraveyard + "\n\n" + result.graveyardAppend, {
+        title: "Strategy Graveyard",
+        summary: "Failed approaches with post-mortems",
+        tags: ["strategies", "graveyard", "failed", "lessons"],
+      });
     }
 
     return {
@@ -283,13 +271,9 @@ async function updateLineage(cwd: string, manifest: GenomeManifest): Promise<voi
   }
 
   const mutations = await loadMutations(cwd);
-  const genMutations = mutations.filter(
-    (m) => m.generation === manifest.generation.number,
-  );
+  const genMutations = mutations.filter((m) => m.generation === manifest.generation.number);
 
-  const fitnessEntry = manifest.fitnessHistory.find(
-    (f) => f.generation === manifest.generation.number,
-  );
+  const fitnessEntry = manifest.fitnessHistory.find((f) => f.generation === manifest.generation.number);
 
   lineage.push({
     generation: manifest.generation.number,

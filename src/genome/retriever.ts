@@ -6,16 +6,10 @@
  * Uses TF-IDF-inspired scoring against section tags, summaries, and titles.
  */
 
-import { readFile } from "fs/promises";
-import {
-  type GenomeManifest,
-  type SectionMeta,
-  estimateTokens,
-  genomeDir,
-  loadManifest,
-} from "./manifest.ts";
-import { join } from "path";
 import { existsSync } from "fs";
+import { readFile } from "fs/promises";
+import { join } from "path";
+import { estimateTokens, type GenomeManifest, genomeDir, loadManifest, type SectionMeta } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
 // Scoring
@@ -46,11 +40,7 @@ function tokenize(text: string): string[] {
  *  - Summary match: 1 point per term found in summary
  *  - IDF boost:     rarer terms (fewer section matches) score higher
  */
-function scoreSection(
-  section: SectionMeta,
-  queryTerms: string[],
-  idf: Map<string, number>,
-): number {
+function scoreSection(section: SectionMeta, queryTerms: string[], idf: Map<string, number>): number {
   let score = 0;
 
   const tagSet = new Set(section.tags.map((t) => t.toLowerCase()));
@@ -76,11 +66,7 @@ function buildIDF(sections: SectionMeta[]): Map<string, number> {
   const n = sections.length;
 
   for (const s of sections) {
-    const allTerms = new Set([
-      ...s.tags.map((t) => t.toLowerCase()),
-      ...tokenize(s.title),
-      ...tokenize(s.summary),
-    ]);
+    const allTerms = new Set([...s.tags.map((t) => t.toLowerCase()), ...tokenize(s.title), ...tokenize(s.summary)]);
     for (const term of allTerms) {
       docFreq.set(term, (docFreq.get(term) ?? 0) + 1);
     }
@@ -113,11 +99,7 @@ export interface RetrievedSection {
  * Returns sections sorted by relevance score (descending), including content.
  * Sections with score 0 are excluded.
  */
-export async function retrieveSections(
-  cwd: string,
-  query: string,
-  maxTokens: number,
-): Promise<RetrievedSection[]> {
+export async function retrieveSections(cwd: string, query: string, maxTokens: number): Promise<RetrievedSection[]> {
   const manifest = await loadManifest(cwd);
   if (!manifest || manifest.sections.length === 0) return [];
 
@@ -151,11 +133,7 @@ async function retrieveCoreSections(
   manifest: GenomeManifest,
   maxTokens: number,
 ): Promise<RetrievedSection[]> {
-  const corePaths = [
-    "vision/north-star.md",
-    "milestones/current.md",
-    "strategies/active.md",
-  ];
+  const corePaths = ["vision/north-star.md", "milestones/current.md", "strategies/active.md"];
 
   const coreScored: ScoredSection[] = manifest.sections
     .filter((s) => corePaths.includes(s.path))
@@ -167,11 +145,7 @@ async function retrieveCoreSections(
 /**
  * Pack scored sections into the token budget, reading content from disk.
  */
-async function packSections(
-  cwd: string,
-  scored: ScoredSection[],
-  maxTokens: number,
-): Promise<RetrievedSection[]> {
+async function packSections(cwd: string, scored: ScoredSection[], maxTokens: number): Promise<RetrievedSection[]> {
   const results: RetrievedSection[] = [];
   let usedTokens = 0;
   const dir = genomeDir(cwd);
@@ -222,9 +196,7 @@ async function packSections(
 export function formatGenomeForPrompt(sections: RetrievedSection[]): string {
   if (sections.length === 0) return "";
 
-  const formatted = sections.map(
-    (s) => `### ${s.title} (${s.path})\n${s.content}`,
-  );
+  const formatted = sections.map((s) => `### ${s.title} (${s.path})\n${s.content}`);
 
   return `## Project Genome\n\n${formatted.join("\n\n---\n\n")}`;
 }

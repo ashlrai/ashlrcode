@@ -4,15 +4,9 @@
  */
 
 import { existsSync } from "fs";
-import { readFile, mkdir } from "fs/promises";
+import { mkdir, readFile } from "fs/promises";
 import { join } from "path";
-import {
-  createEmptyManifest,
-  genomeDir,
-  genomeExists,
-  saveManifest,
-  writeSection,
-} from "./manifest.ts";
+import { createEmptyManifest, genomeDir, genomeExists, saveManifest, writeSection } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -39,10 +33,7 @@ export interface GenomeInitOptions {
  * Initialize a genome for the project.
  * Creates the directory structure, manifest, and initial section files.
  */
-export async function initGenome(
-  cwd: string,
-  options: GenomeInitOptions,
-): Promise<{ sectionsCreated: number }> {
+export async function initGenome(cwd: string, options: GenomeInitOptions): Promise<{ sectionsCreated: number }> {
   if (genomeExists(cwd)) {
     throw new Error("Genome already exists. Use /genome status to view it.");
   }
@@ -50,15 +41,7 @@ export async function initGenome(
   const dir = genomeDir(cwd);
 
   // Create directory structure
-  const dirs = [
-    "",
-    "vision",
-    "milestones",
-    "milestones/completed",
-    "strategies",
-    "knowledge",
-    "evolution",
-  ];
+  const dirs = ["", "vision", "milestones", "milestones/completed", "strategies", "knowledge", "evolution"];
   for (const sub of dirs) {
     const fullDir = join(dir, sub);
     if (!existsSync(fullDir)) {
@@ -82,11 +65,16 @@ export async function initGenome(
   });
   created++;
 
-  await writeSection(cwd, "vision/architecture.md", `# Architecture\n\nArchitectural decisions and system design will be documented here as agents discover and refine the optimal approach.\n`, {
-    title: "Architecture",
-    summary: "System architecture decisions and design",
-    tags: ["vision", "architecture", "design", "system"],
-  });
+  await writeSection(
+    cwd,
+    "vision/architecture.md",
+    `# Architecture\n\nArchitectural decisions and system design will be documented here as agents discover and refine the optimal approach.\n`,
+    {
+      title: "Architecture",
+      summary: "System architecture decisions and design",
+      tags: ["vision", "architecture", "design", "system"],
+    },
+  );
   created++;
 
   await writeSection(cwd, "vision/principles.md", formatPrinciples(options.principles), {
@@ -104,62 +92,102 @@ export async function initGenome(
   created++;
 
   // Milestones
-  await writeSection(cwd, "milestones/current.md", `# ${options.milestone}\n\nStatus: In Progress\nGeneration: 1\n\n## Success Criteria\n\n- [ ] Define success criteria for this milestone\n`, {
-    title: "Current Milestone",
-    summary: options.milestone,
-    tags: ["milestone", "current", "active"],
-  });
+  await writeSection(
+    cwd,
+    "milestones/current.md",
+    `# ${options.milestone}\n\nStatus: In Progress\nGeneration: 1\n\n## Success Criteria\n\n- [ ] Define success criteria for this milestone\n`,
+    {
+      title: "Current Milestone",
+      summary: options.milestone,
+      tags: ["milestone", "current", "active"],
+    },
+  );
   created++;
 
-  await writeSection(cwd, "milestones/backlog.md", "# Milestone Backlog\n\nFuture milestones will be added here as the project evolves.\n", {
-    title: "Milestone Backlog",
-    summary: "Future milestones ordered by priority",
-    tags: ["milestone", "backlog", "future", "planning"],
-  });
+  await writeSection(
+    cwd,
+    "milestones/backlog.md",
+    "# Milestone Backlog\n\nFuture milestones will be added here as the project evolves.\n",
+    {
+      title: "Milestone Backlog",
+      summary: "Future milestones ordered by priority",
+      tags: ["milestone", "backlog", "future", "planning"],
+    },
+  );
   created++;
 
   // Strategies
-  await writeSection(cwd, "strategies/active.md", "# Active Strategies\n\nDevelopment approaches that have proven effective.\n\n- Explore existing codebase patterns before writing new code\n- Write tests alongside implementation\n- Keep changes small and reviewable\n", {
-    title: "Active Strategies",
-    summary: "Currently winning development approaches",
-    tags: ["strategies", "active", "current", "methodology"],
-  });
+  await writeSection(
+    cwd,
+    "strategies/active.md",
+    "# Active Strategies\n\nDevelopment approaches that have proven effective.\n\n- Explore existing codebase patterns before writing new code\n- Write tests alongside implementation\n- Keep changes small and reviewable\n",
+    {
+      title: "Active Strategies",
+      summary: "Currently winning development approaches",
+      tags: ["strategies", "active", "current", "methodology"],
+    },
+  );
   created++;
 
-  await writeSection(cwd, "strategies/graveyard.md", "# Strategy Graveyard\n\nFailed approaches and why they didn't work.\n", {
-    title: "Strategy Graveyard",
-    summary: "Failed approaches with post-mortems",
-    tags: ["strategies", "graveyard", "failed", "lessons"],
-  });
+  await writeSection(
+    cwd,
+    "strategies/graveyard.md",
+    "# Strategy Graveyard\n\nFailed approaches and why they didn't work.\n",
+    {
+      title: "Strategy Graveyard",
+      summary: "Failed approaches with post-mortems",
+      tags: ["strategies", "graveyard", "failed", "lessons"],
+    },
+  );
   created++;
 
-  await writeSection(cwd, "strategies/experiments.md", "# Experimental Strategies\n\nApproaches being tested this generation.\n", {
-    title: "Experimental Strategies",
-    summary: "Approaches being tested this generation",
-    tags: ["strategies", "experiments", "testing"],
-  });
+  await writeSection(
+    cwd,
+    "strategies/experiments.md",
+    "# Experimental Strategies\n\nApproaches being tested this generation.\n",
+    {
+      title: "Experimental Strategies",
+      summary: "Approaches being tested this generation",
+      tags: ["strategies", "experiments", "testing"],
+    },
+  );
   created++;
 
   // Knowledge
-  await writeSection(cwd, "knowledge/decisions.md", "# Architectural Decision Records\n\nKey decisions and their rationale.\n", {
-    title: "Decisions",
-    summary: "Architectural decision records with rationale",
-    tags: ["knowledge", "decisions", "adr", "rationale"],
-  });
+  await writeSection(
+    cwd,
+    "knowledge/decisions.md",
+    "# Architectural Decision Records\n\nKey decisions and their rationale.\n",
+    {
+      title: "Decisions",
+      summary: "Architectural decision records with rationale",
+      tags: ["knowledge", "decisions", "adr", "rationale"],
+    },
+  );
   created++;
 
-  await writeSection(cwd, "knowledge/discoveries.md", "# Discoveries\n\nThings agents have learned about the codebase and domain.\n", {
-    title: "Discoveries",
-    summary: "Agent-discovered codebase and domain knowledge",
-    tags: ["knowledge", "discoveries", "learned", "codebase"],
-  });
+  await writeSection(
+    cwd,
+    "knowledge/discoveries.md",
+    "# Discoveries\n\nThings agents have learned about the codebase and domain.\n",
+    {
+      title: "Discoveries",
+      summary: "Agent-discovered codebase and domain knowledge",
+      tags: ["knowledge", "discoveries", "learned", "codebase"],
+    },
+  );
   created++;
 
-  await writeSection(cwd, "knowledge/dependencies.md", "# Dependencies\n\nExternal dependencies, API contracts, and gotchas.\n", {
-    title: "Dependencies",
-    summary: "External deps, API contracts, integration notes",
-    tags: ["knowledge", "dependencies", "external", "api"],
-  });
+  await writeSection(
+    cwd,
+    "knowledge/dependencies.md",
+    "# Dependencies\n\nExternal dependencies, API contracts, and gotchas.\n",
+    {
+      title: "Dependencies",
+      summary: "External deps, API contracts, integration notes",
+      tags: ["knowledge", "dependencies", "external", "api"],
+    },
+  );
   created++;
 
   return { sectionsCreated: created };
@@ -168,10 +196,7 @@ export async function initGenome(
 /**
  * Initialize a genome by migrating content from existing CLAUDE.md.
  */
-export async function initGenomeFromClaudeMd(
-  cwd: string,
-  project: string,
-): Promise<{ sectionsCreated: number }> {
+export async function initGenomeFromClaudeMd(cwd: string, project: string): Promise<{ sectionsCreated: number }> {
   const claudeMdPath = join(cwd, "CLAUDE.md");
   const altPath = join(cwd, ".ashlrcode", "CLAUDE.md");
   const content = existsSync(claudeMdPath)

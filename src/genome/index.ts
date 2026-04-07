@@ -6,11 +6,18 @@
  * Both the vision document and agent strategies co-evolve.
  */
 
-export { type GenomeManifest, type SectionMeta, type GenerationMeta } from "./manifest.ts";
-export { loadManifest, saveManifest, genomeExists, genomeDir } from "./manifest.ts";
-export { retrieveSections, injectGenomeContext, formatGenomeForPrompt } from "./retriever.ts";
-export { proposeUpdate, consolidateProposals, loadMutations } from "./scribe.ts";
-export { startGeneration, evaluateGeneration, endGeneration } from "./generations.ts";
-export { measureFitness, compareFitness, type FitnessMetrics } from "./fitness.ts";
-export { initGenome, initGenomeFromClaudeMd } from "./init.ts";
 export { genomeCommands } from "./commands.ts";
+export { compareFitness, type FitnessMetrics, measureFitness } from "./fitness.ts";
+export { endGeneration, evaluateGeneration, startGeneration } from "./generations.ts";
+export { initGenome, initGenomeFromClaudeMd } from "./init.ts";
+export {
+  type GenerationMeta,
+  type GenomeManifest,
+  genomeDir,
+  genomeExists,
+  loadManifest,
+  type SectionMeta,
+  saveManifest,
+} from "./manifest.ts";
+export { formatGenomeForPrompt, injectGenomeContext, retrieveSections } from "./retriever.ts";
+export { consolidateProposals, loadMutations, proposeUpdate } from "./scribe.ts";

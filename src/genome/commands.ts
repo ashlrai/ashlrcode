@@ -2,8 +2,8 @@
  * Genome commands — /genome subcommands for managing the genetic development loop.
  */
 
-import { theme } from "../ui/theme.ts";
 import type { Command, CommandContext } from "../commands/types.ts";
+import { theme } from "../ui/theme.ts";
 
 export function genomeCommands(): Command[] {
   return [
@@ -59,7 +59,9 @@ async function handleInit(args: string, ctx: CommandContext): Promise<boolean> {
     const { initGenomeFromClaudeMd } = await import("./init.ts");
     try {
       const result = await initGenomeFromClaudeMd(cwd, getProjectName(cwd));
-      ctx.addOutput(theme.success(`\n  Genome initialized from CLAUDE.md (${result.sectionsCreated} sections created)\n`));
+      ctx.addOutput(
+        theme.success(`\n  Genome initialized from CLAUDE.md (${result.sectionsCreated} sections created)\n`),
+      );
       ctx.addOutput(theme.tertiary("  Run /genome status to see the genome overview.\n"));
     } catch (e: any) {
       ctx.addOutput(theme.error(`\n  ${e.message}\n`));
@@ -69,18 +71,20 @@ async function handleInit(args: string, ctx: CommandContext): Promise<boolean> {
 
   // Interactive init: use LLM to gather vision from user
   if (!args) {
-    ctx.addOutput([
-      "",
-      theme.accentBold("  Genome — Genetic AI Development Loop"),
-      "",
-      `  ${theme.accent("Usage:")}`,
-      "    /genome init <vision>           Initialize with a vision statement",
-      "    /genome init --from-claude-md   Migrate from existing CLAUDE.md",
-      "",
-      `  ${theme.accent("Example:")}`,
-      "    /genome init Build a production-ready API gateway with auth, rate limiting, and monitoring",
-      "",
-    ].join("\n"));
+    ctx.addOutput(
+      [
+        "",
+        theme.accentBold("  Genome — Genetic AI Development Loop"),
+        "",
+        `  ${theme.accent("Usage:")}`,
+        "    /genome init <vision>           Initialize with a vision statement",
+        "    /genome init --from-claude-md   Migrate from existing CLAUDE.md",
+        "",
+        `  ${theme.accent("Example:")}`,
+        "    /genome init Build a production-ready API gateway with auth, rate limiting, and monitoring",
+        "",
+      ].join("\n"),
+    );
     return true;
   }
 
@@ -122,7 +126,7 @@ async function handleStatus(ctx: CommandContext): Promise<boolean> {
     `  ${theme.accent("Milestone:")}   ${gen.milestone || "(none)"}`,
     `  ${theme.accent("Started:")}     ${gen.startedAt.split("T")[0]}`,
     `  ${theme.accent("Sections:")}    ${manifest.sections.length}`,
-    `  ${theme.accent("Tokens:")}      ${tokens.toLocaleString()} (~${(tokens * 4 / 1024).toFixed(0)}KB)`,
+    `  ${theme.accent("Tokens:")}      ${tokens.toLocaleString()} (~${((tokens * 4) / 1024).toFixed(0)}KB)`,
   ];
 
   if (manifest.fitnessHistory.length > 0) {
@@ -180,7 +184,9 @@ async function handleSections(ctx: CommandContext): Promise<boolean> {
 
 async function handleRead(sectionPath: string, ctx: CommandContext): Promise<boolean> {
   if (!sectionPath) {
-    ctx.addOutput(theme.tertiary("\n  Usage: /genome read <section-path>\n  Example: /genome read vision/north-star.md\n"));
+    ctx.addOutput(
+      theme.tertiary("\n  Usage: /genome read <section-path>\n  Example: /genome read vision/north-star.md\n"),
+    );
     return true;
   }
 
@@ -221,7 +227,11 @@ async function handleEvolve(ctx: CommandContext): Promise<boolean> {
 
 async function handlePropose(args: string, ctx: CommandContext): Promise<boolean> {
   if (!args) {
-    ctx.addOutput(theme.tertiary("\n  Usage: /genome propose <section> <change-description>\n  Example: /genome propose knowledge/discoveries.md Found that auth uses JWT not sessions\n"));
+    ctx.addOutput(
+      theme.tertiary(
+        "\n  Usage: /genome propose <section> <change-description>\n  Example: /genome propose knowledge/discoveries.md Found that auth uses JWT not sessions\n",
+      ),
+    );
     return true;
   }
 
