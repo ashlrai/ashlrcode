@@ -9,9 +9,10 @@
  */
 
 import { existsSync } from "fs";
-import { appendFile, mkdir, readFile, writeFile } from "fs/promises";
-import { dirname, join } from "path";
+import { writeFile } from "fs/promises";
+import { join } from "path";
 import type { ProviderRouter } from "../providers/router.ts";
+import { appendJsonl, readJsonl } from "./jsonl.ts";
 import { genomeDir, readSection, type SectionMeta, updateManifest, writeSection } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
@@ -55,35 +56,6 @@ function pendingPath(cwd: string): string {
 
 function mutationsPath(cwd: string): string {
   return join(evolutionDir(cwd), "mutations.jsonl");
-}
-
-/**
- * Ensure the evolution directory exists, then append a JSONL line.
- */
-async function appendJsonl(path: string, data: unknown): Promise<void> {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-  await appendFile(path, JSON.stringify(data) + "\n", "utf-8");
-}
-
-/**
- * Read a JSONL file and parse each line.
- */
-async function readJsonl<T>(path: string): Promise<T[]> {
-  if (!existsSync(path)) return [];
-  const raw = await readFile(path, "utf-8");
-  const results: T[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      results.push(JSON.parse(line) as T);
-    } catch {
-      // Skip corrupt JSONL lines — partial writes from crashes
-    }
-  }
-  return results;
 }
 
 // ---------------------------------------------------------------------------

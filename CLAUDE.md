@@ -46,6 +46,10 @@ The genome is a self-evolving project specification that agents read via RAG and
 - `/genome propose <section> <text>` — Queue a genome update proposal
 - `/genome history` — Generation fitness trends
 - `/genome diff [gen]` — Show mutations for a generation
+- `/genome strategies` — Strategy leaderboard (Darwinian selection)
+- `/genome strategies agent <id>` — Agent strategy profile
+- `/genome embeddings` — Update Ollama embeddings for semantic search
+- `/genome embeddings status` — Show embedding cache status
 
 ### How It Works
 1. Agents receive task-relevant genome sections via keyword RAG (priority 25 in system prompt, up to 30% of budget)

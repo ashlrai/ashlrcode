@@ -87,7 +87,7 @@ async function measureTestPassRate(cwd: string): Promise<number> {
     const pkg = JSON.parse(await readFile(pkgPath, "utf-8"));
     if (!pkg.scripts?.test) return 0.5;
 
-    // Run tests with bun
+    // Run tests with bun (30s timeout to prevent hanging)
     const proc = Bun.spawn(["bun", "test", "--bail", "0"], {
       cwd,
       stdout: "pipe",
@@ -95,8 +95,15 @@ async function measureTestPassRate(cwd: string): Promise<number> {
       env: { ...process.env, CI: "true" },
     });
 
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        proc.kill();
+        reject(new Error("Test timeout"));
+      }, 30_000),
+    );
+
     const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const exitCode = await proc.exited;
+    const exitCode = await Promise.race([proc.exited, timeout]);
 
     // Parse test results from output
     const output = stdout + stderr;

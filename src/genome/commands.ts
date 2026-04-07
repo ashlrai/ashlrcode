@@ -11,7 +11,7 @@ export function genomeCommands(): Command[] {
       name: "/genome",
       description: "Manage the genetic AI development loop",
       category: "agent",
-      subcommands: ["init", "status", "sections", "read", "evolve", "propose", "history", "diff", "embeddings"],
+      subcommands: ["init", "status", "sections", "read", "evolve", "propose", "history", "diff", "embeddings", "strategies"],
       handler: async (args, ctx) => {
         const [sub, ...rest] = (args ?? "").split(" ");
         const subArgs = rest.join(" ").trim();
@@ -35,6 +35,8 @@ export function genomeCommands(): Command[] {
             return handleDiff(subArgs, ctx);
           case "embeddings":
             return handleEmbeddings(subArgs, ctx);
+          case "strategies":
+            return handleStrategies(subArgs, ctx);
           default:
             ctx.addOutput(formatHelp());
             return true;
@@ -394,6 +396,72 @@ async function handleEmbeddings(args: string, ctx: CommandContext): Promise<bool
 // Helpers
 // ---------------------------------------------------------------------------
 
+async function handleStrategies(args: string, ctx: CommandContext): Promise<boolean> {
+  const cwd = ctx.state.toolContext.cwd;
+
+  if (args === "leaderboard" || !args) {
+    const { getStrategyLeaderboard, formatLeaderboard } = await import("./strategies.ts");
+    const leaderboard = await getStrategyLeaderboard(cwd);
+    if (leaderboard.length === 0) {
+      ctx.addOutput(theme.tertiary("\n  No strategy data yet. Strategies are recorded as agents work.\n"));
+      return true;
+    }
+    ctx.addOutput("\n" + formatLeaderboard(leaderboard) + "\n");
+    return true;
+  }
+
+  if (args.startsWith("agent ")) {
+    const agentId = args.replace("agent ", "").trim();
+    if (!agentId) {
+      ctx.addOutput(theme.tertiary("\n  Usage: /genome strategies agent <agent-id>\n"));
+      return true;
+    }
+    const { getAgentProfile } = await import("./strategies.ts");
+    const profile = await getAgentProfile(cwd, agentId);
+    const lines = [
+      "",
+      theme.accentBold(`  Agent: ${agentId}`),
+      `  Total strategies: ${profile.totalStrategies}`,
+      `  Success rate: ${(profile.successRate * 100).toFixed(0)}%`,
+      "",
+    ];
+    if (profile.topStrategies.length > 0) {
+      lines.push("  Top strategies:");
+      for (const s of profile.topStrategies) {
+        lines.push(`    ${s.name} — ${s.uses}x used, ${(s.successRate * 100).toFixed(0)}% success`);
+      }
+    }
+    lines.push("");
+    ctx.addOutput(lines.join("\n"));
+    return true;
+  }
+
+  if (args.startsWith("suggest ")) {
+    const category = args.replace("suggest ", "").trim();
+    const { suggestStrategy } = await import("./strategies.ts");
+    const suggestion = await suggestStrategy(cwd, category as any);
+    if (!suggestion) {
+      ctx.addOutput(theme.tertiary(`\n  No strategy suggestions for "${category}" (need 2+ recorded uses).\n`));
+    } else {
+      ctx.addOutput(theme.success(`\n  Suggested: ${suggestion.name} (${(suggestion.successRate * 100).toFixed(0)}% success, ${suggestion.uses}x used)\n`));
+    }
+    return true;
+  }
+
+  ctx.addOutput([
+    "",
+    theme.accentBold("  Strategy Tracking"),
+    "",
+    `  ${theme.accent("/genome strategies")}             Show leaderboard`,
+    `  ${theme.accent("/genome strategies agent <id>")}  Agent profile`,
+    `  ${theme.accent("/genome strategies suggest <cat>")} Suggest best strategy`,
+    "",
+    theme.muted("  Categories: testing, implementation, refactoring, debugging, architecture, other"),
+    "",
+  ].join("\n"));
+  return true;
+}
+
 function getProjectName(cwd: string): string {
   const parts = cwd.split("/");
   return parts[parts.length - 1] ?? "project";
@@ -413,6 +481,8 @@ function formatHelp(): string {
     `  ${theme.accent("/genome propose <s> <text>")}  Propose a genome update`,
     `  ${theme.accent("/genome history")}             Generation fitness trends`,
     `  ${theme.accent("/genome diff [gen]")}          Show mutations`,
+    `  ${theme.accent("/genome strategies")}           Strategy leaderboard`,
+    `  ${theme.accent("/genome strategies agent <id>")} Agent strategy profile`,
     `  ${theme.accent("/genome embeddings")}          Update Ollama embeddings`,
     `  ${theme.accent("/genome embeddings status")}   Show embedding cache status`,
     "",

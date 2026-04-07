@@ -22,3 +22,12 @@ export {
 export { isOllamaAvailable, semanticSearch, updateEmbeddings } from "./embeddings.ts";
 export { formatGenomeForPrompt, injectGenomeContext, retrieveSections, retrieveSectionsV2 } from "./retriever.ts";
 export { consolidateProposals, loadMutations, loadMutationsForGeneration, proposeUpdate } from "./scribe.ts";
+export {
+  type StrategyRecord,
+  formatLeaderboard,
+  getAgentProfile,
+  getStrategyLeaderboard,
+  loadStrategies,
+  recordStrategy,
+  suggestStrategy,
+} from "./strategies.ts";

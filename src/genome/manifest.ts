@@ -67,7 +67,13 @@ export function manifestPath(cwd: string): string {
 }
 
 export function sectionPath(cwd: string, relativePath: string): string {
-  return join(genomeDir(cwd), relativePath);
+  const resolved = join(genomeDir(cwd), relativePath);
+  // Prevent path traversal — resolved path must stay within genome dir
+  const gDir = genomeDir(cwd);
+  if (!resolved.startsWith(gDir)) {
+    throw new Error(`Invalid section path: ${relativePath} escapes genome directory`);
+  }
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,8 +114,15 @@ export async function saveManifest(cwd: string, manifest: GenomeManifest): Promi
   // Atomic write: write to temp file then rename (safe on POSIX)
   const target = manifestPath(cwd);
   const tmp = target + ".tmp";
-  await writeFile(tmp, JSON.stringify(manifest, null, 2), "utf-8");
-  await rename(tmp, target);
+  try {
+    await writeFile(tmp, JSON.stringify(manifest, null, 2), "utf-8");
+    await rename(tmp, target);
+  } catch (e) {
+    // Clean up orphaned temp file on failure (e.g., disk full)
+    const { unlink } = await import("fs/promises");
+    await unlink(tmp).catch(() => {});
+    throw e;
+  }
 }
 
 // Serialize manifest writes to prevent concurrent read-modify-write races.
@@ -135,10 +148,12 @@ export async function updateManifest(
     return manifest;
   });
 
-  manifestLocks.set(
-    key,
-    current.catch(() => {}),
-  );
+  const settled = current.catch(() => {});
+  manifestLocks.set(key, settled);
+  // Clean up lock entry when chain settles to prevent unbounded growth
+  settled.then(() => {
+    if (manifestLocks.get(key) === settled) manifestLocks.delete(key);
+  });
   return current;
 }
 

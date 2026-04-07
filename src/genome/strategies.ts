@@ -6,9 +6,8 @@
  * append-only durability (same pattern as scribe.ts mutations).
  */
 
-import { existsSync } from "fs";
-import { appendFile, mkdir, readFile } from "fs/promises";
-import { dirname, join } from "path";
+import { join } from "path";
+import { appendJsonl, readJsonl } from "./jsonl.ts";
 import { genomeDir } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
@@ -73,33 +72,6 @@ export interface AgentProfile {
 
 function strategiesPath(cwd: string): string {
   return join(genomeDir(cwd), "evolution", "strategies.jsonl");
-}
-
-// ---------------------------------------------------------------------------
-// JSONL helpers (mirrors scribe.ts pattern)
-// ---------------------------------------------------------------------------
-
-async function appendJsonl(path: string, data: unknown): Promise<void> {
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-  await appendFile(path, JSON.stringify(data) + "\n", "utf-8");
-}
-
-async function readJsonl<T>(path: string): Promise<T[]> {
-  if (!existsSync(path)) return [];
-  const raw = await readFile(path, "utf-8");
-  const results: T[] = [];
-  for (const line of raw.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      results.push(JSON.parse(line) as T);
-    } catch {
-      // Skip corrupt JSONL lines — partial writes from crashes
-    }
-  }
-  return results;
 }
 
 // ---------------------------------------------------------------------------

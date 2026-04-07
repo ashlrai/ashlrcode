@@ -154,9 +154,12 @@ async function packSections(cwd: string, scored: ScoredSection[], maxTokens: num
     if (usedTokens >= maxTokens) break;
 
     const fullPath = join(dir, section.path);
-    if (!existsSync(fullPath)) continue;
-
-    const content = await readFile(fullPath, "utf-8");
+    let content: string;
+    try {
+      content = await readFile(fullPath, "utf-8");
+    } catch {
+      continue; // File missing or unreadable — skip
+    }
     const tokens = estimateTokens(content);
 
     if (usedTokens + tokens > maxTokens) {
