@@ -11,6 +11,7 @@ import { coreCommands } from "./core.ts";
 import { gitCommands } from "./git.ts";
 import { CommandRegistry } from "./registry.ts";
 import { sessionCommands } from "./session.ts";
+import { genomeCommands } from "../genome/commands.ts";
 
 /**
  * Create a fully populated command registry with all built-in commands.
@@ -56,6 +57,8 @@ export function createCommandRegistry(deps: {
       loadVision: deps.loadVision,
     }),
   );
+
+  registry.registerAll(genomeCommands());
 
   return registry;
 }

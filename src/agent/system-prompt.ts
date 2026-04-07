@@ -64,6 +64,17 @@ export class SystemPromptBuilder {
     return this.addPart("permissions", content, 20);
   }
 
+  /** Load and add relevant genome sections for the current task */
+  async addGenomeContext(projectDir: string, taskDescription: string, maxTokens: number): Promise<this> {
+    try {
+      const { injectGenomeContext } = await import("../genome/retriever.ts");
+      await injectGenomeContext(this, projectDir, taskDescription, maxTokens);
+    } catch {
+      // Genome not available — skip silently
+    }
+    return this;
+  }
+
   /** Load and add knowledge files (CLAUDE.md equivalent) from project dir */
   async addKnowledgeFiles(projectDir: string): Promise<this> {
     const knowledgeDir = join(projectDir, ".ashlrcode");
@@ -223,6 +234,7 @@ export async function buildSystemPrompt(options: {
   planFile?: string;
   modelName?: string;
   maxTokens?: number;
+  taskDescription?: string;
 }): Promise<AssembledPrompt> {
   const builder = new SystemPromptBuilder();
 
@@ -235,6 +247,9 @@ export async function buildSystemPrompt(options: {
   }
 
   if (options.projectDir) {
+    // Genome sections at priority 25 (before knowledge files at 30)
+    const genomeBudget = options.maxTokens ? Math.floor(options.maxTokens * 0.3) : 15_000;
+    await builder.addGenomeContext(options.projectDir, options.taskDescription ?? "", genomeBudget);
     await builder.addKnowledgeFiles(options.projectDir);
   }
 
