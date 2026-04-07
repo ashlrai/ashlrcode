@@ -1,7 +1,7 @@
 # AshlrCode v2.1
 
 Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
-45+ tools, 18 skills, 39 built-in commands, 6 providers, 642 tests. Ink-based terminal UI with buddy system.
+45+ tools, 18 skills, 39 built-in commands, 6 providers, 689 tests. Ink-based terminal UI with buddy system.
 
 ## v2.0 Additions
 - **Verification Agent** (`src/agent/verification.ts`): Auto-validates multi-file changes via read-only sub-agent. Manual `/verify` command. Auto-suggest after 2+ file edits.
@@ -99,7 +99,7 @@ The genome is a self-evolving project specification that agents read via RAG and
 ```bash
 bun run start           # Run CLI
 bun run dev             # Watch mode
-bun test                # Run 642 tests
+bun test                # Run 689 tests
 bunx tsc --noEmit       # Type check
 ```
 
@@ -130,7 +130,7 @@ src/
 ├── ui/                    # Ink components: BuddyPanel, SlashInput, PermissionPrompt, message-renderer, theme
 ├── genome/                # Genome system: manifest, retriever, scribe, generations, fitness, init, commands
 ├── voice/                 # Voice mode input
-└── __tests__/             # 47 test files, 642 tests
+└── __tests__/             # 47 test files, 689 tests
 ```
 
 ## Tool Interface
@@ -205,7 +205,7 @@ Skills can also be installed from the marketplace: `/skills install <name>`, `/s
 ## Testing
 
 ```bash
-bun test              # All 642 tests
+bun test              # All 689 tests
 bun test --watch      # Watch mode
 ```
 
