@@ -11,7 +11,7 @@ export function genomeCommands(): Command[] {
       name: "/genome",
       description: "Manage the genetic AI development loop",
       category: "agent",
-      subcommands: ["init", "status", "sections", "read", "evolve", "propose", "history", "diff"],
+      subcommands: ["init", "status", "sections", "read", "evolve", "propose", "history", "diff", "embeddings"],
       handler: async (args, ctx) => {
         const [sub, ...rest] = (args ?? "").split(" ");
         const subArgs = rest.join(" ").trim();
@@ -33,6 +33,8 @@ export function genomeCommands(): Command[] {
             return handleHistory(ctx);
           case "diff":
             return handleDiff(subArgs, ctx);
+          case "embeddings":
+            return handleEmbeddings(subArgs, ctx);
           default:
             ctx.addOutput(formatHelp());
             return true;
@@ -327,6 +329,67 @@ async function handleDiff(args: string, ctx: CommandContext): Promise<boolean> {
   return true;
 }
 
+async function handleEmbeddings(args: string, ctx: CommandContext): Promise<boolean> {
+  const { genomeExists } = await import("./manifest.ts");
+  const cwd = ctx.state.toolContext.cwd;
+
+  if (!genomeExists(cwd)) {
+    ctx.addOutput(theme.tertiary("\n  No genome found. Run /genome init first.\n"));
+    return true;
+  }
+
+  const { isOllamaAvailable, updateEmbeddings, loadEmbeddingCache } = await import("./embeddings.ts");
+
+  if (args === "status") {
+    const available = await isOllamaAvailable();
+    const cache = await loadEmbeddingCache(cwd);
+    const lines = [
+      "",
+      theme.accentBold("  Embedding Status"),
+      "",
+      `  ${theme.accent("Ollama:")}      ${available ? theme.success("available") : theme.error("not available")}`,
+      `  ${theme.accent("Cached:")}      ${cache.length} section${cache.length !== 1 ? "s" : ""}`,
+    ];
+    if (cache.length > 0) {
+      const oldest = cache.reduce((min, c) => (c.updatedAt < min ? c.updatedAt : min), cache[0]!.updatedAt);
+      const newest = cache.reduce((max, c) => (c.updatedAt > max ? c.updatedAt : max), cache[0]!.updatedAt);
+      lines.push(`  ${theme.accent("Oldest:")}      ${oldest.split("T")[0]}`);
+      lines.push(`  ${theme.accent("Newest:")}      ${newest.split("T")[0]}`);
+    }
+    lines.push("");
+    ctx.addOutput(lines.join("\n"));
+    return true;
+  }
+
+  // Default: update embeddings
+  const available = await isOllamaAvailable();
+  if (!available) {
+    ctx.addOutput(
+      theme.error("\n  Ollama is not available. Start Ollama to generate embeddings.") +
+        "\n" +
+        theme.tertiary("  Install: https://ollama.ai — then run: ollama pull nomic-embed-text\n"),
+    );
+    return true;
+  }
+
+  const model = args || undefined;
+  ctx.addOutput(theme.accent(`\n  Generating embeddings${model ? ` with model ${model}` : ""}...\n`));
+
+  const result = await updateEmbeddings(cwd, model);
+
+  const lines = [
+    theme.success(`  Embeddings updated`),
+    `    ${theme.accent("Updated:")}  ${result.updated}`,
+    `    ${theme.accent("Skipped:")}  ${result.skipped} (already cached)`,
+  ];
+  if (result.failed > 0) {
+    lines.push(`    ${theme.warning("Failed:")}   ${result.failed}`);
+  }
+  lines.push("");
+  ctx.addOutput(lines.join("\n"));
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -350,6 +413,8 @@ function formatHelp(): string {
     `  ${theme.accent("/genome propose <s> <text>")}  Propose a genome update`,
     `  ${theme.accent("/genome history")}             Generation fitness trends`,
     `  ${theme.accent("/genome diff [gen]")}          Show mutations`,
+    `  ${theme.accent("/genome embeddings")}          Update Ollama embeddings`,
+    `  ${theme.accent("/genome embeddings status")}   Show embedding cache status`,
     "",
     theme.muted("  The genome is a living specification that agents read and evolve."),
     theme.muted("  It replaces static CLAUDE.md with a two-layer system:"),

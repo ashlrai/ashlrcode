@@ -191,6 +191,36 @@ async function packSections(cwd: string, scored: ScoredSection[], maxTokens: num
 }
 
 /**
+ * Retrieve sections using semantic search (Ollama embeddings) when available,
+ * falling back to keyword-based TF-IDF search.
+ *
+ * This is the preferred entry point for retrieval — it transparently upgrades
+ * to embedding-based search when a local Ollama instance is running with
+ * cached embeddings, and degrades gracefully to keyword search otherwise.
+ */
+export async function retrieveSectionsV2(
+  cwd: string,
+  query: string,
+  maxTokens: number,
+): Promise<RetrievedSection[]> {
+  // Only attempt semantic search for non-empty queries
+  if (query.trim().length > 0) {
+    try {
+      const { isOllamaAvailable, semanticSearch } = await import("./embeddings.ts");
+      if (await isOllamaAvailable()) {
+        const results = await semanticSearch(cwd, query, maxTokens);
+        if (results.length > 0) return results;
+      }
+    } catch {
+      // Embedding module unavailable or errored — fall through to keyword search
+    }
+  }
+
+  // Fall back to keyword search
+  return retrieveSections(cwd, query, maxTokens);
+}
+
+/**
  * Format retrieved sections for injection into the system prompt.
  */
 export function formatGenomeForPrompt(sections: RetrievedSection[]): string {

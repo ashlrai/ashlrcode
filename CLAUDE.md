@@ -1,7 +1,7 @@
 # AshlrCode v2.1
 
 Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
-45+ tools, 18 skills, 39 built-in commands, 6 providers, 555 tests. Ink-based terminal UI with buddy system.
+45+ tools, 18 skills, 39 built-in commands, 6 providers, 642 tests. Ink-based terminal UI with buddy system.
 
 ## v2.0 Additions
 - **Verification Agent** (`src/agent/verification.ts`): Auto-validates multi-file changes via read-only sub-agent. Manual `/verify` command. Auto-suggest after 2+ file edits.
@@ -20,6 +20,49 @@ Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
 - **Command Registry** (`src/commands/`): Centralized command system replacing inline switch statement. 6 command files with `CommandContext` interface, auto-generated autocomplete, and category-based help grouping.
 - **Checkpoint Workflows** (`src/agent/checkpoint.ts`): Coordinator can pause at checkpoint tasks. State serialized to `~/.ashlrcode/checkpoints/<id>.json`. Resume with `/coordinate resume <id>`, list with `/coordinate list`. Auto-cleanup after 7 days.
 - **Skill Marketplace** (`src/skills/marketplace.ts`, `src/skills/validator.ts`): Install/update/remove skill packages from registry or URL. Git clone and tarball extraction. Skill validation (frontmatter schema, trigger conflicts, size limits). Commands: `/skills install`, `/skills search`, `/skills update`, `/skills remove`, `/skills info`.
+
+## Genome System (Genetic AI Development Loop)
+
+The genome is a self-evolving project specification that agents read via RAG and evolve via a scribe protocol. It replaces static CLAUDE.md-style instructions with a living, sectioned knowledge base.
+
+### Directory Structure
+```
+.ashlrcode/genome/
+├── manifest.json           # Section index, generation metadata, fitness history
+├── vision/                 # North star, architecture, principles, anti-patterns
+├── milestones/             # Current milestone, backlog, completed/
+├── strategies/             # Active, graveyard, experiments (co-evolution)
+├── knowledge/              # Decisions, discoveries, dependencies
+└── evolution/              # Fitness scores, mutation log, lineage, pending proposals
+```
+
+### Commands
+- `/genome init <vision>` — Initialize genome with vision statement
+- `/genome init --from-claude-md` — Migrate from existing CLAUDE.md
+- `/genome status` — Current generation, milestone, fitness scores
+- `/genome sections` — List all sections with token counts
+- `/genome read <section>` — Display a genome section
+- `/genome evolve` — Evaluate generation fitness and evolve strategies
+- `/genome propose <section> <text>` — Queue a genome update proposal
+- `/genome history` — Generation fitness trends
+- `/genome diff [gen]` — Show mutations for a generation
+
+### How It Works
+1. Agents receive task-relevant genome sections via keyword RAG (priority 25 in system prompt, up to 30% of budget)
+2. Agents propose updates to genome sections as they learn (fire-and-forget via scribe)
+3. Scribe consolidates proposals with LLM-powered merging for conflicts
+4. Fitness is measured: test pass rate, code quality, milestone progress, cost efficiency, strategy success
+5. Strategies evolve: winning approaches promoted, failing approaches retired with post-mortems
+6. Generation advances when milestone completes — genome snapshot archived
+
+### Key Files
+- `src/genome/manifest.ts` — Types, section CRUD, serialized write lock
+- `src/genome/retriever.ts` — Keyword-based RAG for system prompt injection
+- `src/genome/scribe.ts` — Agent proposals, LLM consolidation, mutation audit trail
+- `src/genome/generations.ts` — Generation lifecycle with strategy evolution
+- `src/genome/fitness.ts` — 5-metric fitness measurement
+- `src/genome/init.ts` — Genome initialization (12 sections)
+- `src/genome/commands.ts` — 8 `/genome` subcommands
 
 ## Architecture
 
@@ -56,7 +99,7 @@ Multi-provider AI coding agent CLI. Open-source (MIT), npm publish-ready.
 ```bash
 bun run start           # Run CLI
 bun run dev             # Watch mode
-bun test                # Run 555 tests
+bun test                # Run 642 tests
 bunx tsc --noEmit       # Type check
 ```
 
@@ -85,8 +128,9 @@ src/
 ├── config/                # Settings, hooks, permissions, git context
 ├── state/                 # File history (snapshot/undo)
 ├── ui/                    # Ink components: BuddyPanel, SlashInput, PermissionPrompt, message-renderer, theme
+├── genome/                # Genome system: manifest, retriever, scribe, generations, fitness, init, commands
 ├── voice/                 # Voice mode input
-└── __tests__/             # 41 test files, 555 tests
+└── __tests__/             # 47 test files, 642 tests
 ```
 
 ## Tool Interface
@@ -161,8 +205,8 @@ Skills can also be installed from the marketplace: `/skills install <name>`, `/s
 ## Testing
 
 ```bash
-bun test              # All 555 tests
+bun test              # All 642 tests
 bun test --watch      # Watch mode
 ```
 
-Tests cover: tool registry, context compression, tool executor, sessions, skill registry, hooks, permissions, router costs, file history, error handler, keybindings, project config, workflows, telemetry, speculation, model patches, branded types, cron, undercover, retry, tasks, dreams, features, ring buffer, mailbox, coordinator, MCP client, cmux, commands, checkpoints, marketplace, validator.
+Tests cover: tool registry, context compression, tool executor, sessions, skill registry, hooks, permissions, router costs, file history, error handler, keybindings, project config, workflows, telemetry, speculation, model patches, branded types, cron, undercover, retry, tasks, dreams, features, ring buffer, mailbox, coordinator, MCP client, cmux, commands, checkpoints, marketplace, validator, genome manifest, genome retriever, genome scribe, genome generations, genome fitness, genome init, genome commands.

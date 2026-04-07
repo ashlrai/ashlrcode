@@ -19,5 +19,6 @@ export {
   type SectionMeta,
   saveManifest,
 } from "./manifest.ts";
-export { formatGenomeForPrompt, injectGenomeContext, retrieveSections } from "./retriever.ts";
+export { isOllamaAvailable, semanticSearch, updateEmbeddings } from "./embeddings.ts";
+export { formatGenomeForPrompt, injectGenomeContext, retrieveSections, retrieveSectionsV2 } from "./retriever.ts";
 export { consolidateProposals, loadMutations, loadMutationsForGeneration, proposeUpdate } from "./scribe.ts";
