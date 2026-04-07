@@ -27,6 +27,7 @@ import { sleep } from "./error-handler.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
+import type { GenomeManifest } from "../genome/manifest.ts";
 
 /* ── Vision interface (inline until vision.ts exists) ──────────── */
 
@@ -176,6 +177,7 @@ export class AutopilotLoop {
   private config!: AutopilotConfig;
   private lastScanHash = "";
   private focusState: FocusState = "unknown";
+  private genome: GenomeManifest | null = null;
 
   /* ── Public API ────────────────────────────────────────────── */
 
@@ -192,6 +194,14 @@ export class AutopilotLoop {
     this.abortController = new AbortController();
     this.queue = new WorkQueue(config.toolContext.cwd);
     await this.queue.load();
+
+    // Load genome if available — enhances agent context and enables auto-evolution
+    try {
+      const { loadManifest } = await import("../genome/manifest.ts");
+      this.genome = await loadManifest(config.toolContext.cwd);
+    } catch {
+      this.genome = null;
+    }
 
     config.onProgress?.({ type: "started", goal: vision.goal });
 
@@ -263,12 +273,21 @@ export class AutopilotLoop {
           break;
         }
 
-        // Step 3: Re-assess vision (every 5 ticks)
+        // Step 3: Re-assess vision (every 5 ticks) + genome evolution
         if (this.tickNumber % 5 === 0) {
           const complete = await this.assessVision();
           if (complete) {
+            // If genome exists, end generation and advance before wrapping up
+            if (this.genome) {
+              await this.advanceGeneration();
+            }
             this.wrapUpRequested = true;
             continue; // Next iteration will handle wrap-up
+          }
+
+          // Evaluate genome fitness periodically (every 10 ticks)
+          if (this.genome && this.tickNumber % 10 === 0) {
+            await this.evaluateGenomeFitness();
           }
         }
 
@@ -639,10 +658,27 @@ Reply with JSON only: {"focusAreas": ["..."], "assessment": "...", "isComplete":
       itemDescription: item.title,
     });
 
+    // Build context with genome sections if available
+    let genomeContext = "";
+    if (this.genome) {
+      try {
+        const { retrieveSections, formatGenomeForPrompt } = await import("../genome/retriever.ts");
+        const sections = await retrieveSections(
+          this.config.toolContext.cwd,
+          `${item.title} ${item.description}`,
+          4000,
+        );
+        genomeContext = formatGenomeForPrompt(sections);
+      } catch {
+        // Genome retrieval failed — continue without
+      }
+    }
+
     const contextPrompt = [
       `## Vision`,
       `Goal: ${this.vision.goal}`,
       `Focus areas: ${this.vision.focusAreas.join(", ") || "none"}`,
+      genomeContext ? `\n${genomeContext}` : "",
       ``,
       `## Task`,
       `${item.title}: ${item.description}`,
@@ -791,6 +827,23 @@ Reply with JSON only: {"focusAreas": ["..."], "assessment": "...", "isComplete":
       if (this.vision.progress.length > 50) {
         this.vision.progress = this.vision.progress.slice(-50);
       }
+
+      // Propose genome progress update if genome exists
+      if (this.genome) {
+        try {
+          const { proposeUpdate } = await import("../genome/scribe.ts");
+          await proposeUpdate(this.config.toolContext.cwd, {
+            agentId: "autopilot",
+            section: "knowledge/discoveries.md",
+            operation: "append",
+            content: `- [${new Date().toISOString().split("T")[0]}] Tick ${this.tickNumber}: ${this.itemsCompleted} completed, ${this.itemsFailed} failed`,
+            rationale: "Autopilot progress update",
+            generation: this.genome.generation.number,
+          });
+        } catch {
+          // Genome proposal failed — not critical
+        }
+      }
     }
 
     // Notify user if terminal unfocused
@@ -802,6 +855,64 @@ Reply with JSON only: {"focusAreas": ["..."], "assessment": "...", "isComplete":
         body,
       });
       await sendNotification("AshlrCode — Autopilot", body);
+    }
+  }
+
+  /* ── Genome integration ──────────────────────────────────────── */
+
+  /**
+   * Evaluate genome fitness and consolidate pending proposals.
+   */
+  private async evaluateGenomeFitness(): Promise<void> {
+    try {
+      const { evaluateGeneration, formatGenerationReport } = await import("../genome/generations.ts");
+      const { consolidateProposals } = await import("../genome/scribe.ts");
+      const cwd = this.config.toolContext.cwd;
+
+      // First consolidate any pending proposals
+      await consolidateProposals(cwd, this.config.router);
+
+      // Then evaluate fitness
+      const report = await evaluateGeneration(cwd, this.config.router);
+
+      this.config.onProgress?.({
+        type: "notification",
+        title: "Genome Fitness",
+        body: `Gen ${report.generation}: ${(report.fitness.milestoneProgress * 100).toFixed(0)}% milestone, ${report.mutations} mutations`,
+      });
+    } catch {
+      // Genome evaluation failed — not critical
+    }
+  }
+
+  /**
+   * End the current generation and start the next one.
+   */
+  private async advanceGeneration(): Promise<void> {
+    try {
+      const { endGeneration, startGeneration } = await import("../genome/generations.ts");
+      const { loadManifest } = await import("../genome/manifest.ts");
+      const { readSection } = await import("../genome/manifest.ts");
+      const cwd = this.config.toolContext.cwd;
+
+      await endGeneration(cwd);
+
+      // Check backlog for next milestone
+      const backlog = await readSection(cwd, "milestones/backlog.md");
+      const nextMilestone = backlog
+        ? extractFirstMilestone(backlog)
+        : "Continue development";
+
+      const genNum = await startGeneration(cwd, nextMilestone);
+      this.genome = await loadManifest(cwd);
+
+      this.config.onProgress?.({
+        type: "notification",
+        title: "Generation Advanced",
+        body: `Generation ${genNum}: ${nextMilestone}`,
+      });
+    } catch {
+      // Generation advance failed — not critical
     }
   }
 
@@ -832,4 +943,18 @@ export function getAutopilotLoop(): AutopilotLoop | null {
 export function createAutopilotLoop(): AutopilotLoop {
   _instance = new AutopilotLoop();
   return _instance;
+}
+
+/**
+ * Extract the first milestone from a backlog markdown file.
+ * Looks for the first ## heading or first bullet point.
+ */
+function extractFirstMilestone(backlog: string): string {
+  for (const line of backlog.split("\n")) {
+    const heading = line.match(/^##\s+(.+)/);
+    if (heading) return heading[1]!.trim();
+    const bullet = line.match(/^[-*]\s+(.+)/);
+    if (bullet) return bullet[1]!.trim();
+  }
+  return "Continue development";
 }

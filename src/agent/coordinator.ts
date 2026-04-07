@@ -373,6 +373,20 @@ async function dispatchTasks(
     for (let batch = 0; batch < wave.length; batch += maxParallel) {
       const batchTasks = wave.slice(batch, batch + maxParallel);
 
+      // Retrieve genome context for task-relevant section injection
+      let genomeContext = "";
+      try {
+        const { genomeExists } = await import("../genome/manifest.ts");
+        if (genomeExists(config.toolContext.cwd)) {
+          const { retrieveSections, formatGenomeForPrompt } = await import("../genome/retriever.ts");
+          const taskDescriptions = batchTasks.map((t) => t.description).join(" ");
+          const sections = await retrieveSections(config.toolContext.cwd, taskDescriptions, 3000);
+          genomeContext = formatGenomeForPrompt(sections);
+        }
+      } catch {
+        // Genome not available — continue without
+      }
+
       const agentConfigs: SubAgentConfig[] = batchTasks.map((task) => {
         const teammate = team ? pickTeammateForTask(team, task.role) : null;
         const agentName = teammate?.name ?? `${task.role}-${task.id}`;
@@ -386,10 +400,13 @@ async function dispatchTasks(
           agentName,
         });
 
+        const promptParts = [config.systemPrompt, agentPrompt];
+        if (genomeContext) promptParts.push(genomeContext);
+
         return {
           name: agentName,
           prompt: task.description,
-          systemPrompt: config.systemPrompt + "\n\n" + agentPrompt,
+          systemPrompt: promptParts.join("\n\n"),
           router: config.router,
           toolRegistry: config.toolRegistry,
           toolContext: config.toolContext,
@@ -500,6 +517,33 @@ export async function coordinate(
   const summary = `Coordinator completed: ${successCount}/${taskResults.length} tasks succeeded${verificationPassed !== undefined ? `, verification ${verificationPassed ? "passed" : "failed"}` : ""}`;
 
   config.onProgress?.({ type: "complete", summary });
+
+  // Propose genome update with coordinator findings
+  try {
+    const { genomeExists, loadManifest } = await import("../genome/manifest.ts");
+    if (genomeExists(config.toolContext.cwd)) {
+      const { proposeUpdate } = await import("../genome/scribe.ts");
+      const manifest = await loadManifest(config.toolContext.cwd);
+      if (manifest) {
+        const findings = taskResults
+          .filter((t) => t.success)
+          .map((t) => `- ${t.summary?.slice(0, 100) ?? "Task completed"}`)
+          .join("\n");
+        if (findings) {
+          await proposeUpdate(config.toolContext.cwd, {
+            agentId: "coordinator",
+            section: "knowledge/discoveries.md",
+            operation: "append",
+            content: `## Coordinator run: ${goal.slice(0, 80)}\n${findings}`,
+            rationale: `Coordinator completed ${successCount}/${taskResults.length} tasks for: ${goal.slice(0, 100)}`,
+            generation: manifest.generation.number,
+          });
+        }
+      }
+    }
+  } catch {
+    // Genome proposal failed — not critical
+  }
 
   return { tasks: taskResults, verificationPassed, summary };
 }
