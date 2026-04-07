@@ -96,11 +96,7 @@ async function measureTestPassRate(cwd: string): Promise<number> {
     });
 
     // Race entire I/O + exit against timeout (prevents hang when stdout blocks)
-    const dataPromise = Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
+    const dataPromise = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => {
         proc.kill();

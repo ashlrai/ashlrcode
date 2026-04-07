@@ -7,7 +7,14 @@
  */
 
 import { readFile } from "fs/promises";
-import { estimateTokens, type GenomeManifest, genomeDir, loadManifest, sectionPath, type SectionMeta } from "./manifest.ts";
+import {
+  estimateTokens,
+  type GenomeManifest,
+  genomeDir,
+  loadManifest,
+  type SectionMeta,
+  sectionPath,
+} from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
 // Scoring
