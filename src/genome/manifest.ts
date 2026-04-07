@@ -135,7 +135,10 @@ export async function updateManifest(
     return manifest;
   });
 
-  manifestLocks.set(key, current.catch(() => {}));
+  manifestLocks.set(
+    key,
+    current.catch(() => {}),
+  );
   return current;
 }
 
