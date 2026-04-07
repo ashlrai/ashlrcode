@@ -13,7 +13,7 @@ import { writeFile } from "fs/promises";
 import { join } from "path";
 import type { ProviderRouter } from "../providers/router.ts";
 import { appendJsonl, readJsonl } from "./jsonl.ts";
-import { genomeDir, readSection, type SectionMeta, updateManifest, writeSection } from "./manifest.ts";
+import { genomeDir, readSection, writeSection } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
 // Types

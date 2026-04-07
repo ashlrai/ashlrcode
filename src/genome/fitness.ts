@@ -8,7 +8,7 @@
 import { existsSync } from "fs";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
-import { genomeDir, loadManifest, readSection } from "./manifest.ts";
+import { loadManifest, readSection } from "./manifest.ts";
 import { loadMutationsForGeneration } from "./scribe.ts";
 
 // ---------------------------------------------------------------------------
@@ -95,15 +95,19 @@ async function measureTestPassRate(cwd: string): Promise<number> {
       env: { ...process.env, CI: "true" },
     });
 
+    // Race entire I/O + exit against timeout (prevents hang when stdout blocks)
+    const dataPromise = Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+      proc.exited,
+    ]);
     const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => {
         proc.kill();
         reject(new Error("Test timeout"));
       }, 30_000),
     );
-
-    const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
-    const exitCode = await Promise.race([proc.exited, timeout]);
+    const [stdout, stderr, exitCode] = await Promise.race([dataPromise, timeout]);
 
     // Parse test results from output
     const output = stdout + stderr;

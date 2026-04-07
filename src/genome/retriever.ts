@@ -6,10 +6,8 @@
  * Uses TF-IDF-inspired scoring against section tags, summaries, and titles.
  */
 
-import { existsSync } from "fs";
 import { readFile } from "fs/promises";
-import { join } from "path";
-import { estimateTokens, type GenomeManifest, genomeDir, loadManifest, type SectionMeta } from "./manifest.ts";
+import { estimateTokens, type GenomeManifest, genomeDir, loadManifest, sectionPath, type SectionMeta } from "./manifest.ts";
 
 // ---------------------------------------------------------------------------
 // Scoring
@@ -148,17 +146,17 @@ async function retrieveCoreSections(
 async function packSections(cwd: string, scored: ScoredSection[], maxTokens: number): Promise<RetrievedSection[]> {
   const results: RetrievedSection[] = [];
   let usedTokens = 0;
-  const dir = genomeDir(cwd);
 
   for (const { section, score } of scored) {
     if (usedTokens >= maxTokens) break;
 
-    const fullPath = join(dir, section.path);
     let content: string;
     try {
+      // Use sectionPath for path traversal validation at read time
+      const fullPath = sectionPath(cwd, section.path);
       content = await readFile(fullPath, "utf-8");
     } catch {
-      continue; // File missing or unreadable — skip
+      continue; // File missing, unreadable, or invalid path — skip
     }
     const tokens = estimateTokens(content);
 

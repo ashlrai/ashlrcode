@@ -11,7 +11,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import type { ProviderRouter } from "../providers/router.ts";
 import { type FitnessMetrics, measureFitness } from "./fitness.ts";
-import { type GenomeManifest, genomeDir, loadManifest, readSection, saveManifest, writeSection } from "./manifest.ts";
+import { type GenomeManifest, genomeDir, loadManifest, readSection, updateManifest, writeSection } from "./manifest.ts";
 import { consolidateProposals, loadMutationsForGeneration } from "./scribe.ts";
 
 // ---------------------------------------------------------------------------
@@ -37,16 +37,13 @@ export interface GenerationReport {
  * Snapshots current genome state and resets the generation counter.
  */
 export async function startGeneration(cwd: string, milestone: string): Promise<number> {
-  const manifest = await loadManifest(cwd);
-  if (!manifest) throw new Error("No genome found. Run /genome init first.");
-
-  manifest.generation = {
-    number: manifest.generation.number + 1,
-    milestone,
-    startedAt: new Date().toISOString(),
-  };
-
-  await saveManifest(cwd, manifest);
+  const manifest = await updateManifest(cwd, (m) => {
+    m.generation = {
+      number: m.generation.number + 1,
+      milestone,
+      startedAt: new Date().toISOString(),
+    };
+  });
 
   // Ensure milestone section exists
   const currentMilestone = await readSection(cwd, "milestones/current.md");
@@ -94,16 +91,19 @@ export async function evaluateGeneration(cwd: string, router?: ProviderRouter): 
     newExperiments = evolution.experiments;
   }
 
-  // Record fitness
-  manifest.fitnessHistory.push({
-    generation: manifest.generation.number,
-    scores: { ...fitness },
+  // Record fitness via serialized update
+  const genNumber = manifest.generation.number;
+  const milestoneName = manifest.generation.milestone;
+  await updateManifest(cwd, (m) => {
+    m.fitnessHistory.push({
+      generation: genNumber,
+      scores: { ...fitness },
+    });
   });
-  await saveManifest(cwd, manifest);
 
   return {
-    generation: manifest.generation.number,
-    milestone: manifest.generation.milestone,
+    generation: genNumber,
+    milestone: milestoneName,
     fitness,
     mutations: genMutations.length,
     promotedStrategies,
@@ -116,19 +116,19 @@ export async function evaluateGeneration(cwd: string, router?: ProviderRouter): 
  * End the current generation — archive milestone, prepare for next.
  */
 export async function endGeneration(cwd: string): Promise<void> {
+  // Read manifest to get generation info (updateManifest used for writes below)
   const manifest = await loadManifest(cwd);
   if (!manifest) throw new Error("No genome found.");
-
   const genNum = manifest.generation.number;
 
   // Ensure fitness was evaluated before archiving
   const hasEvaluation = manifest.fitnessHistory.some((f) => f.generation === genNum);
   if (!hasEvaluation) {
     const fitness = await measureFitness(cwd);
-    manifest.fitnessHistory.push({ generation: genNum, scores: { ...fitness } });
+    await updateManifest(cwd, (m) => {
+      m.fitnessHistory.push({ generation: genNum, scores: { ...fitness } });
+    });
   }
-
-  manifest.generation.endedAt = new Date().toISOString();
 
   // Archive current milestone
   const currentMilestone = await readSection(cwd, "milestones/current.md");
@@ -146,10 +146,13 @@ export async function endGeneration(cwd: string): Promise<void> {
     });
   }
 
-  // Update lineage
-  await updateLineage(cwd, manifest);
+  // Update lineage and mark generation ended — via serialized update
+  const lineageManifest = await loadManifest(cwd);
+  if (lineageManifest) await updateLineage(cwd, lineageManifest);
 
-  await saveManifest(cwd, manifest);
+  await updateManifest(cwd, (m) => {
+    m.generation.endedAt = new Date().toISOString();
+  });
 }
 
 // ---------------------------------------------------------------------------
