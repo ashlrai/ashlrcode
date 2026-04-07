@@ -77,18 +77,36 @@ export async function initGenome(cwd: string, options: GenomeInitOptions): Promi
   );
   created++;
 
-  await writeSection(cwd, "vision/principles.md", formatPrinciples(options.principles), {
-    title: "Design Principles",
-    summary: "Core design principles and constraints",
-    tags: ["vision", "principles", "constraints", "rules"],
-  });
+  await writeSection(
+    cwd,
+    "vision/principles.md",
+    formatListSection(
+      "Design Principles",
+      "Core principles will be documented here as the project evolves.",
+      options.principles,
+    ),
+    {
+      title: "Design Principles",
+      summary: "Core design principles and constraints",
+      tags: ["vision", "principles", "constraints", "rules"],
+    },
+  );
   created++;
 
-  await writeSection(cwd, "vision/anti-patterns.md", formatAntiPatterns(options.antiPatterns), {
-    title: "Anti-Patterns",
-    summary: "Approaches to avoid, learned from failures",
-    tags: ["vision", "anti-patterns", "avoid", "failures", "lessons"],
-  });
+  await writeSection(
+    cwd,
+    "vision/anti-patterns.md",
+    formatListSection(
+      "Anti-Patterns",
+      "Approaches to avoid will be documented here as agents learn from failures.",
+      options.antiPatterns,
+    ),
+    {
+      title: "Anti-Patterns",
+      summary: "Approaches to avoid, learned from failures",
+      tags: ["vision", "anti-patterns", "avoid", "failures", "lessons"],
+    },
+  );
   created++;
 
   // Milestones
@@ -245,20 +263,12 @@ export async function initGenomeFromClaudeMd(cwd: string, project: string): Prom
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatPrinciples(principles?: string[]): string {
-  if (!principles || principles.length === 0) {
-    return "# Design Principles\n\nCore principles will be documented here as the project evolves.\n";
+function formatListSection(title: string, placeholder: string, items?: string[]): string {
+  if (!items || items.length === 0) {
+    return `# ${title}\n\n${placeholder}\n`;
   }
-  const items = principles.map((p) => `- ${p}`).join("\n");
-  return `# Design Principles\n\n${items}\n`;
-}
-
-function formatAntiPatterns(patterns?: string[]): string {
-  if (!patterns || patterns.length === 0) {
-    return "# Anti-Patterns\n\nApproaches to avoid will be documented here as agents learn from failures.\n";
-  }
-  const items = patterns.map((p) => `- ${p}`).join("\n");
-  return `# Anti-Patterns\n\n${items}\n`;
+  const list = items.map((item) => `- ${item}`).join("\n");
+  return `# ${title}\n\n${list}\n`;
 }
 
 /**

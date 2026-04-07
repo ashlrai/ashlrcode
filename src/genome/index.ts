@@ -20,4 +20,4 @@ export {
   saveManifest,
 } from "./manifest.ts";
 export { formatGenomeForPrompt, injectGenomeContext, retrieveSections } from "./retriever.ts";
-export { consolidateProposals, loadMutations, proposeUpdate } from "./scribe.ts";
+export { consolidateProposals, loadMutations, loadMutationsForGeneration, proposeUpdate } from "./scribe.ts";

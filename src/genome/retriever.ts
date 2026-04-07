@@ -137,7 +137,7 @@ async function retrieveCoreSections(
 
   const coreScored: ScoredSection[] = manifest.sections
     .filter((s) => corePaths.includes(s.path))
-    .map((section, i) => ({ section, score: corePaths.length - i }));
+    .map((section) => ({ section, score: corePaths.length - corePaths.indexOf(section.path) }));
 
   return packSections(cwd, coreScored, maxTokens);
 }

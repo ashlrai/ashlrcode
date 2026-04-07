@@ -134,10 +134,11 @@ async function handleStatus(ctx: CommandContext): Promise<boolean> {
     lines.push("");
     lines.push(`  ${theme.accent("Latest Fitness (Gen " + latest.generation + "):")}`);
     for (const [key, value] of Object.entries(latest.scores)) {
+      const score = value as number;
       const label = key.replace(/([A-Z])/g, " $1").trim();
-      const pct = ((value as number) * 100).toFixed(0);
-      const bar = "█".repeat(Math.round((value as number) * 10)) + "░".repeat(10 - Math.round((value as number) * 10));
-      lines.push(`    ${label.padEnd(22)} ${bar} ${pct}%`);
+      const filled = Math.round(score * 10);
+      const bar = "█".repeat(filled) + "░".repeat(10 - filled);
+      lines.push(`    ${label.padEnd(22)} ${bar} ${(score * 100).toFixed(0)}%`);
     }
   }
 

@@ -6,8 +6,8 @@
  */
 
 import { existsSync } from "fs";
-import { mkdir, readFile, writeFile } from "fs/promises";
-import { join } from "path";
+import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { dirname, join } from "path";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -90,8 +90,13 @@ export async function loadManifest(cwd: string): Promise<GenomeManifest | null> 
   const path = manifestPath(cwd);
   if (!existsSync(path)) return null;
 
-  const raw = await readFile(path, "utf-8");
-  return JSON.parse(raw) as GenomeManifest;
+  try {
+    const raw = await readFile(path, "utf-8");
+    return JSON.parse(raw) as GenomeManifest;
+  } catch {
+    // Corrupt or partially written manifest — treat as missing
+    return null;
+  }
 }
 
 export async function saveManifest(cwd: string, manifest: GenomeManifest): Promise<void> {
@@ -100,21 +105,38 @@ export async function saveManifest(cwd: string, manifest: GenomeManifest): Promi
     await mkdir(dir, { recursive: true });
   }
   manifest.updatedAt = new Date().toISOString();
-  await writeFile(manifestPath(cwd), JSON.stringify(manifest, null, 2), "utf-8");
+  // Atomic write: write to temp file then rename (safe on POSIX)
+  const target = manifestPath(cwd);
+  const tmp = target + ".tmp";
+  await writeFile(tmp, JSON.stringify(manifest, null, 2), "utf-8");
+  await rename(tmp, target);
 }
+
+// Serialize manifest writes to prevent concurrent read-modify-write races.
+// Keyed by cwd so different projects don't block each other.
+const manifestLocks = new Map<string, Promise<unknown>>();
 
 /**
  * Update specific fields of the manifest atomically (read-modify-write).
+ * Serialized: concurrent calls for the same cwd wait in queue.
  */
 export async function updateManifest(
   cwd: string,
   updater: (manifest: GenomeManifest) => void,
 ): Promise<GenomeManifest> {
-  const manifest = await loadManifest(cwd);
-  if (!manifest) throw new Error("No genome found. Run /genome init first.");
-  updater(manifest);
-  await saveManifest(cwd, manifest);
-  return manifest;
+  const key = genomeDir(cwd);
+  const prev = manifestLocks.get(key) ?? Promise.resolve();
+
+  const current = prev.then(async () => {
+    const manifest = await loadManifest(cwd);
+    if (!manifest) throw new Error("No genome found. Run /genome init first.");
+    updater(manifest);
+    await saveManifest(cwd, manifest);
+    return manifest;
+  });
+
+  manifestLocks.set(key, current.catch(() => {}));
+  return current;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +162,7 @@ export async function writeSection(
   meta: Omit<SectionMeta, "path" | "tokens" | "updatedAt">,
 ): Promise<void> {
   const fullPath = sectionPath(cwd, relativePath);
-  const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
+  const dir = dirname(fullPath);
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }

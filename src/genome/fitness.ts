@@ -9,7 +9,7 @@ import { existsSync } from "fs";
 import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { genomeDir, loadManifest, readSection } from "./manifest.ts";
-import { loadMutations } from "./scribe.ts";
+import { loadMutationsForGeneration } from "./scribe.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -187,9 +187,7 @@ async function measureCostEfficiency(cwd: string): Promise<number> {
   const manifest = await loadManifest(cwd);
   if (!manifest) return 0;
 
-  const mutations = await loadMutations(cwd);
-  const genMutations = mutations.filter((m) => m.generation === manifest.generation.number);
-
+  const genMutations = await loadMutationsForGeneration(cwd, manifest.generation.number);
   // Normalize: 10+ mutations = 1.0
   return Math.min(1, genMutations.length / 10);
 }

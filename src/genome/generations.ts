@@ -7,12 +7,12 @@
  */
 
 import { existsSync } from "fs";
-import { mkdir, readFile, rename, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import type { ProviderRouter } from "../providers/router.ts";
 import { type FitnessMetrics, measureFitness } from "./fitness.ts";
 import { type GenomeManifest, genomeDir, loadManifest, readSection, saveManifest, writeSection } from "./manifest.ts";
-import { consolidateProposals, loadMutations } from "./scribe.ts";
+import { consolidateProposals, loadMutationsForGeneration } from "./scribe.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,8 +80,7 @@ export async function evaluateGeneration(cwd: string, router?: ProviderRouter): 
   const fitness = await measureFitness(cwd);
 
   // Count mutations this generation
-  const mutations = await loadMutations(cwd);
-  const genMutations = mutations.filter((m) => m.generation === manifest.generation.number);
+  const genMutations = await loadMutationsForGeneration(cwd, manifest.generation.number);
 
   // Evolve strategies if router available
   let promotedStrategies: string[] = [];
@@ -121,6 +120,14 @@ export async function endGeneration(cwd: string): Promise<void> {
   if (!manifest) throw new Error("No genome found.");
 
   const genNum = manifest.generation.number;
+
+  // Ensure fitness was evaluated before archiving
+  const hasEvaluation = manifest.fitnessHistory.some((f) => f.generation === genNum);
+  if (!hasEvaluation) {
+    const fitness = await measureFitness(cwd);
+    manifest.fitnessHistory.push({ generation: genNum, scores: { ...fitness } });
+  }
+
   manifest.generation.endedAt = new Date().toISOString();
 
   // Archive current milestone
@@ -266,13 +273,15 @@ async function updateLineage(cwd: string, manifest: GenomeManifest): Promise<voi
 
   let lineage: LineageEntry[] = [];
   if (existsSync(lineagePath)) {
-    const raw = await readFile(lineagePath, "utf-8");
-    lineage = JSON.parse(raw);
+    try {
+      const raw = await readFile(lineagePath, "utf-8");
+      lineage = JSON.parse(raw);
+    } catch {
+      // Corrupt lineage file — start fresh
+    }
   }
 
-  const mutations = await loadMutations(cwd);
-  const genMutations = mutations.filter((m) => m.generation === manifest.generation.number);
-
+  const genMutations = await loadMutationsForGeneration(cwd, manifest.generation.number);
   const fitnessEntry = manifest.fitnessHistory.find((f) => f.generation === manifest.generation.number);
 
   lineage.push({

@@ -10,7 +10,7 @@
 
 import { existsSync } from "fs";
 import { appendFile, mkdir, readFile, writeFile } from "fs/promises";
-import { join } from "path";
+import { dirname, join } from "path";
 import type { ProviderRouter } from "../providers/router.ts";
 import { genomeDir, readSection, type SectionMeta, updateManifest, writeSection } from "./manifest.ts";
 
@@ -45,12 +45,45 @@ export interface MutationRecord {
 // Paths
 // ---------------------------------------------------------------------------
 
+function evolutionDir(cwd: string): string {
+  return join(genomeDir(cwd), "evolution");
+}
+
 function pendingPath(cwd: string): string {
-  return join(genomeDir(cwd), "evolution", "pending.jsonl");
+  return join(evolutionDir(cwd), "pending.jsonl");
 }
 
 function mutationsPath(cwd: string): string {
-  return join(genomeDir(cwd), "evolution", "mutations.jsonl");
+  return join(evolutionDir(cwd), "mutations.jsonl");
+}
+
+/**
+ * Ensure the evolution directory exists, then append a JSONL line.
+ */
+async function appendJsonl(path: string, data: unknown): Promise<void> {
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+  await appendFile(path, JSON.stringify(data) + "\n", "utf-8");
+}
+
+/**
+ * Read a JSONL file and parse each line.
+ */
+async function readJsonl<T>(path: string): Promise<T[]> {
+  if (!existsSync(path)) return [];
+  const raw = await readFile(path, "utf-8");
+  const results: T[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      results.push(JSON.parse(line) as T);
+    } catch {
+      // Skip corrupt JSONL lines — partial writes from crashes
+    }
+  }
+  return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -62,11 +95,6 @@ function mutationsPath(cwd: string): string {
  * Fire-and-forget — doesn't block the agent.
  */
 export async function proposeUpdate(cwd: string, proposal: Omit<GenomeProposal, "id" | "timestamp">): Promise<string> {
-  const dir = join(genomeDir(cwd), "evolution");
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-
   const id = `prop-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
   const full: GenomeProposal = {
     ...proposal,
@@ -74,7 +102,7 @@ export async function proposeUpdate(cwd: string, proposal: Omit<GenomeProposal, 
     timestamp: new Date().toISOString(),
   };
 
-  await appendFile(pendingPath(cwd), JSON.stringify(full) + "\n", "utf-8");
+  await appendJsonl(pendingPath(cwd), full);
   return id;
 }
 
@@ -82,14 +110,7 @@ export async function proposeUpdate(cwd: string, proposal: Omit<GenomeProposal, 
  * Load all pending proposals.
  */
 export async function loadPendingProposals(cwd: string): Promise<GenomeProposal[]> {
-  const path = pendingPath(cwd);
-  if (!existsSync(path)) return [];
-
-  const raw = await readFile(path, "utf-8");
-  return raw
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as GenomeProposal);
+  return readJsonl<GenomeProposal>(pendingPath(cwd));
 }
 
 /**
@@ -110,29 +131,23 @@ async function clearPendingProposals(cwd: string): Promise<void> {
  * Log a mutation to the audit trail.
  */
 async function logMutation(cwd: string, mutation: MutationRecord): Promise<void> {
-  const dir = join(genomeDir(cwd), "evolution");
-  if (!existsSync(dir)) {
-    await mkdir(dir, { recursive: true });
-  }
-
-  await appendFile(mutationsPath(cwd), JSON.stringify(mutation) + "\n", "utf-8");
+  await appendJsonl(mutationsPath(cwd), mutation);
 }
 
 /**
  * Load mutation history.
  */
 export async function loadMutations(cwd: string, limit?: number): Promise<MutationRecord[]> {
-  const path = mutationsPath(cwd);
-  if (!existsSync(path)) return [];
+  const all = await readJsonl<MutationRecord>(mutationsPath(cwd));
+  return limit ? all.slice(-limit) : all;
+}
 
-  const raw = await readFile(path, "utf-8");
-  const all = raw
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => JSON.parse(line) as MutationRecord);
-
-  if (limit) return all.slice(-limit);
-  return all;
+/**
+ * Load mutations for a specific generation number.
+ */
+export async function loadMutationsForGeneration(cwd: string, generation: number): Promise<MutationRecord[]> {
+  const all = await readJsonl<MutationRecord>(mutationsPath(cwd));
+  return all.filter((m) => m.generation === generation);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,16 +177,14 @@ export async function consolidateProposals(
   }
 
   let applied = 0;
-  const skipped = 0;
+  let skipped = 0; // Counts LLM merge failures that fell through to sequential
 
   for (const [section, sectionProposals] of bySection) {
     const existing = await readSection(cwd, section);
 
     if (sectionProposals.length === 1 && sectionProposals[0]!.operation !== "update") {
-      // Simple append or create — apply directly
       const p = sectionProposals[0]!;
       const newContent = p.operation === "append" && existing ? existing + "\n\n" + p.content : p.content;
-
       await writeSectionFromProposal(cwd, section, newContent, p);
       applied++;
       continue;
@@ -185,13 +198,13 @@ export async function consolidateProposals(
         applied++;
         continue;
       }
+      skipped++; // LLM merge returned null
     }
 
     // Fallback: apply proposals sequentially (last write wins for updates)
     for (const p of sectionProposals) {
       const current = await readSection(cwd, section);
       const newContent = p.operation === "append" && current ? current + "\n\n" + p.content : p.content;
-
       await writeSectionFromProposal(cwd, section, newContent, p);
       applied++;
     }
