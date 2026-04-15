@@ -9,7 +9,7 @@
 import { existsSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
-import type { ProviderRouter } from "../providers/router.ts";
+import type { LLMSummarizer } from "../providers/types.ts";
 import { type FitnessMetrics, measureFitness } from "./fitness.ts";
 import { type GenomeManifest, genomeDir, loadManifest, readSection, updateManifest, writeSection } from "./manifest.ts";
 import { consolidateProposals, loadMutationsForGeneration } from "./scribe.ts";
@@ -66,12 +66,12 @@ export async function startGeneration(cwd: string, milestone: string): Promise<n
 /**
  * Evaluate the current generation — measure fitness, assess progress.
  */
-export async function evaluateGeneration(cwd: string, router?: ProviderRouter): Promise<GenerationReport> {
+export async function evaluateGeneration(cwd: string, summarizer?: LLMSummarizer): Promise<GenerationReport> {
   const manifest = await loadManifest(cwd);
   if (!manifest) throw new Error("No genome found.");
 
   // Consolidate any pending proposals first
-  await consolidateProposals(cwd, router);
+  await consolidateProposals(cwd, summarizer);
 
   // Measure fitness
   const fitness = await measureFitness(cwd);
@@ -79,13 +79,13 @@ export async function evaluateGeneration(cwd: string, router?: ProviderRouter): 
   // Count mutations this generation
   const genMutations = await loadMutationsForGeneration(cwd, manifest.generation.number);
 
-  // Evolve strategies if router available
+  // Evolve strategies if a summarizer is available
   let promotedStrategies: string[] = [];
   let retiredStrategies: string[] = [];
   let newExperiments: string[] = [];
 
-  if (router) {
-    const evolution = await evolveStrategies(cwd, fitness, genMutations.length, router);
+  if (summarizer) {
+    const evolution = await evolveStrategies(cwd, fitness, genMutations.length, summarizer);
     promotedStrategies = evolution.promoted;
     retiredStrategies = evolution.retired;
     newExperiments = evolution.experiments;
@@ -166,7 +166,7 @@ async function evolveStrategies(
   cwd: string,
   fitness: FitnessMetrics,
   mutationCount: number,
-  router: ProviderRouter,
+  summarizer: LLMSummarizer,
 ): Promise<{ promoted: string[]; retired: string[]; experiments: string[] }> {
   const activeStrategies = (await readSection(cwd, "strategies/active.md")) ?? "";
   const experiments = (await readSection(cwd, "strategies/experiments.md")) ?? "";
@@ -197,7 +197,7 @@ Respond in this exact JSON format (no markdown, no code fences):
 {"promoted": ["strategy1"], "retired": ["strategy1"], "experiments": ["new experiment 1"], "updatedActive": "full text of updated active.md", "updatedExperiments": "full text of updated experiments.md", "graveyardAppend": "text to append to graveyard.md"}`;
 
   let response = "";
-  const stream = router.stream({
+  const stream = summarizer.stream({
     systemPrompt: "You evolve development strategies. Respond only with the requested JSON.",
     messages: [{ role: "user", content: prompt }],
     tools: [],

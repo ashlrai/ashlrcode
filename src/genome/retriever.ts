@@ -251,7 +251,10 @@ export async function injectGenomeContext(
   if (sections.length === 0) return 0;
 
   const content = formatGenomeForPrompt(sections);
-  builder.addPart("genome", content, 25);
+  // Dynamic import avoids circular dependency: system-prompt.ts imports from
+  // this module (via injectGenomeContext), so we resolve PromptPriority lazily.
+  const { PromptPriority } = await import("../agent/system-prompt.ts");
+  builder.addPart("genome", content, PromptPriority.Genome);
 
   return sections.reduce((sum, s) => sum + s.tokens, 0);
 }

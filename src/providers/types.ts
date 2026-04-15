@@ -77,6 +77,19 @@ export interface Provider {
   pricing: [number, number];
 }
 
+/**
+ * Minimal streaming LLM interface for components that only need to summarize
+ * or consolidate text. Used in place of the concrete ProviderRouter so that
+ * genome/scribe, genome/generations, and agent/context#autoCompact can be
+ * extracted into @ashlr/core-efficiency without dragging router wiring along.
+ *
+ * ProviderRouter structurally satisfies this interface (it has matching
+ * `stream(ProviderRequest)`), so existing call sites require no change.
+ */
+export interface LLMSummarizer {
+  stream(request: ProviderRequest): AsyncGenerator<StreamEvent>;
+}
+
 export interface ProviderRouterConfig {
   primary: ProviderConfig & { provider: "xai" | "anthropic" | "openai" };
   fallbacks?: Array<ProviderConfig & { provider: "xai" | "anthropic" | "openai" }>;

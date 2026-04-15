@@ -7,8 +7,11 @@
  * 3. contextCollapse — restructure for efficiency (future)
  */
 
-import type { Message, ContentBlock } from "../providers/types.ts";
-import type { ProviderRouter } from "../providers/router.ts";
+import type { LLMSummarizer, Message } from "../providers/types.ts";
+import { estimateTokensFromMessages } from "../utils/tokens.ts";
+
+/** @deprecated Use estimateTokensFromMessages from ../utils/tokens.ts */
+export const estimateTokens = estimateTokensFromMessages;
 
 export interface ContextConfig {
   /** Max tokens before triggering compaction (default: 100000) */
@@ -44,41 +47,6 @@ export function getProviderContextLimit(providerName: string): number {
     if (lower.includes(key)) return limit;
   }
   return DEFAULT_CONFIG.maxContextTokens;
-}
-
-/**
- * Estimate token count for messages.
- * Uses ~4 chars per token heuristic (good enough for cost tracking).
- */
-export function estimateTokens(messages: Message[]): number {
-  let chars = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === "string") {
-      chars += msg.content.length;
-    } else {
-      for (const block of msg.content) {
-        chars += blockCharCount(block);
-      }
-    }
-  }
-  return Math.ceil(chars / 4);
-}
-
-function blockCharCount(block: ContentBlock): number {
-  switch (block.type) {
-    case "text":
-      return block.text.length;
-    case "thinking":
-      return block.thinking.length;
-    case "tool_use":
-      return block.name.length + JSON.stringify(block.input).length;
-    case "tool_result":
-      return block.content.length;
-    case "image_url":
-      return 1000; // Estimate ~1000 tokens per image
-    default:
-      return 0;
-  }
 }
 
 /**
@@ -147,7 +115,7 @@ export function needsCompaction(
  */
 export async function autoCompact(
   messages: Message[],
-  router: ProviderRouter,
+  summarizer: LLMSummarizer,
   config: Partial<ContextConfig> = {}
 ): Promise<Message[]> {
   const cfg = { ...DEFAULT_CONFIG, ...config };
@@ -162,7 +130,7 @@ export async function autoCompact(
   const recentMessages = messages.slice(splitIndex);
 
   // Summarize older messages
-  const summary = await summarizeMessages(olderMessages, router);
+  const summary = await summarizeMessages(olderMessages, summarizer);
 
   // Return: summary + recent messages
   return [
@@ -206,7 +174,7 @@ export function snipCompact(messages: Message[]): Message[] {
  */
 async function summarizeMessages(
   messages: Message[],
-  router: ProviderRouter
+  summarizer: LLMSummarizer
 ): Promise<string> {
   const conversationText = messages
     .map((msg) => {
@@ -229,7 +197,7 @@ async function summarizeMessages(
     .join("\n\n");
 
   let summary = "";
-  const stream = router.stream({
+  const stream = summarizer.stream({
     systemPrompt:
       "Summarize the following conversation concisely. Preserve key decisions, file paths mentioned, code changes made, and important context. Be thorough but compact. Output only the summary, no preamble.",
     messages: [

@@ -8,6 +8,7 @@
 import { existsSync } from "fs";
 import { mkdir, readFile, rename, writeFile } from "fs/promises";
 import { dirname, join } from "path";
+import { estimateTokensFromString as estimateTokens } from "../utils/tokens.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -78,12 +79,11 @@ export function sectionPath(cwd: string, relativePath: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Token estimation (same heuristic as system-prompt.ts)
+// Token estimation — imported from the single source of truth above.
+// Re-exported so existing consumers keep working without an import change.
 // ---------------------------------------------------------------------------
 
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+export { estimateTokens };
 
 // ---------------------------------------------------------------------------
 // Load / Save

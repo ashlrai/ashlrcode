@@ -11,7 +11,7 @@
 import { existsSync } from "fs";
 import { writeFile } from "fs/promises";
 import { join } from "path";
-import type { ProviderRouter } from "../providers/router.ts";
+import type { LLMSummarizer } from "../providers/types.ts";
 import { appendJsonl, readJsonl } from "./jsonl.ts";
 import { genomeDir, readSection, writeSection } from "./manifest.ts";
 
@@ -135,7 +135,7 @@ export async function loadMutationsForGeneration(cwd: string, generation: number
  */
 export async function consolidateProposals(
   cwd: string,
-  router?: ProviderRouter,
+  summarizer?: LLMSummarizer,
 ): Promise<{ applied: number; skipped: number }> {
   const proposals = await loadPendingProposals(cwd);
   if (proposals.length === 0) return { applied: 0, skipped: 0 };
@@ -163,8 +163,8 @@ export async function consolidateProposals(
     }
 
     // Multiple proposals or updates — use LLM to merge if available
-    if (router && sectionProposals.length > 1) {
-      const merged = await mergeProposalsWithLLM(existing ?? "", sectionProposals, router);
+    if (summarizer && sectionProposals.length > 1) {
+      const merged = await mergeProposalsWithLLM(existing ?? "", sectionProposals, summarizer);
       if (merged) {
         await writeSectionFromProposal(cwd, section, merged, sectionProposals[0]!);
         applied++;
@@ -224,7 +224,7 @@ async function writeSectionFromProposal(
 async function mergeProposalsWithLLM(
   existingContent: string,
   proposals: GenomeProposal[],
-  router: ProviderRouter,
+  summarizer: LLMSummarizer,
 ): Promise<string | null> {
   const proposalText = proposals
     .map(
@@ -247,7 +247,7 @@ For conflicts, prefer the most specific/recent information. Maintain the existin
 Return ONLY the merged section content, no explanation.`;
 
   let response = "";
-  const stream = router.stream({
+  const stream = summarizer.stream({
     systemPrompt: "You merge document proposals. Return only the merged content.",
     messages: [{ role: "user", content: prompt }],
     tools: [],

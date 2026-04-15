@@ -12,11 +12,35 @@ import { getConfigDir } from "../config/settings.ts";
 import { getModelPatches } from "./model-patches.ts";
 import { getUndercoverPrompt } from "../config/undercover.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import { estimateTokensFromString as estimateTokens } from "../utils/tokens.ts";
+
+/**
+ * Priority slots for SystemPromptBuilder. Lower = earlier in the assembled prompt
+ * and more likely to survive token-budget pruning in `build(maxTokens)`.
+ *
+ * Numeric values are stable and preserved from the pre-enum hardcoded ints so
+ * existing callers passing raw numbers keep behaving identically.
+ */
+export enum PromptPriority {
+  Core = 0,
+  PlanMode = 5,
+  Tools = 10,
+  Permissions = 20,
+  Genome = 25,
+  Knowledge = 30,
+  Git = 35,
+  Memory = 40,
+  Default = 50,
+  BuddyInfluence = 85,
+  ModelPatches = 90,
+  Undercover = 95,
+}
 
 export interface PromptPart {
   name: string;
   content: string;
-  priority: number; // Lower = earlier in prompt
+  /** Lower = earlier in prompt. See {@link PromptPriority} for named slots. */
+  priority: number;
 }
 
 export interface AssembledPrompt {
@@ -25,25 +49,18 @@ export interface AssembledPrompt {
   estimatedTokens: number; // Rough token count
 }
 
-/**
- * Estimate tokens from text (rough: chars / 4).
- */
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
-
 export class SystemPromptBuilder {
   private parts: PromptPart[] = [];
 
   /** Add a named section to the prompt */
-  addPart(name: string, content: string, priority: number = 50): this {
+  addPart(name: string, content: string, priority: number = PromptPriority.Default): this {
     this.parts.push({ name, content, priority });
     return this;
   }
 
   /** Add core instructions */
   addCoreInstructions(instructions: string): this {
-    return this.addPart("core", instructions, 0);
+    return this.addPart("core", instructions, PromptPriority.Core);
   }
 
   /** Add tool descriptions from registry */
@@ -54,14 +71,14 @@ export class SystemPromptBuilder {
     const descriptions = tools
       .map((t) => `### ${t.name}\n${t.prompt()}`)
       .join("\n\n");
-    return this.addPart("tools", `## Available Tools\n\n${descriptions}`, 10);
+    return this.addPart("tools", `## Available Tools\n\n${descriptions}`, PromptPriority.Tools);
   }
 
   /** Add permission context */
   addPermissionContext(mode: string, rules?: string): this {
     let content = `## Permissions\nCurrent mode: ${mode}`;
     if (rules) content += `\nRules:\n${rules}`;
-    return this.addPart("permissions", content, 20);
+    return this.addPart("permissions", content, PromptPriority.Permissions);
   }
 
   /** Load and add relevant genome sections for the current task */
@@ -88,7 +105,7 @@ export class SystemPromptBuilder {
         this.addPart(
           `knowledge:${file}`,
           `## Project Knowledge: ${file}\n\n${content}`,
-          30
+          PromptPriority.Knowledge
         );
       }
     } catch {
@@ -115,7 +132,7 @@ export class SystemPromptBuilder {
         this.addPart(
           "memory",
           `## Memory\n\n${memories.join("\n\n---\n\n")}`,
-          40
+          PromptPriority.Memory
         );
       }
     } catch {
@@ -130,12 +147,12 @@ export class SystemPromptBuilder {
     let content =
       "## Plan Mode Active\nYou are in read-only plan mode. Only use read-only tools.";
     if (planFile) content += `\nPlan file: ${planFile}`;
-    return this.addPart("plan-mode", content, 5);
+    return this.addPart("plan-mode", content, PromptPriority.PlanMode);
   }
 
   /** Add custom section */
   addSection(name: string, content: string, priority?: number): this {
-    return this.addPart(name, content, priority ?? 50);
+    return this.addPart(name, content, priority ?? PromptPriority.Default);
   }
 
   /** Add git context (branch, recent commits, working tree status) */
@@ -153,20 +170,20 @@ export class SystemPromptBuilder {
       context += `\nWorking tree: ${status.modified} modified, ${status.untracked} untracked`;
     }
 
-    return this.addPart("git", context, 35);
+    return this.addPart("git", context, PromptPriority.Git);
   }
 
   /** Add model-specific behavior patches */
   addModelPatches(modelName: string): this {
     const { combinedSuffix } = getModelPatches(modelName);
-    if (combinedSuffix) this.addPart("model-patches", combinedSuffix, 90);
+    if (combinedSuffix) this.addPart("model-patches", combinedSuffix, PromptPriority.ModelPatches);
     return this;
   }
 
   /** Add undercover mode prompt if active */
   addUndercoverPrompt(): this {
     const prompt = getUndercoverPrompt();
-    if (prompt) this.addPart("undercover", prompt, 95);
+    if (prompt) this.addPart("undercover", prompt, PromptPriority.Undercover);
     return this;
   }
 
@@ -184,7 +201,7 @@ export class SystemPromptBuilder {
     if (stats.snark >= 7) traits.push("Be opinionated — if you see something that could be better, say so directly.");
 
     if (traits.length > 0) {
-      this.addPart("buddy-influence", `## Working Style\n${traits.join("\n")}`, 85);
+      this.addPart("buddy-influence", `## Working Style\n${traits.join("\n")}`, PromptPriority.BuddyInfluence);
     }
     return this;
   }
