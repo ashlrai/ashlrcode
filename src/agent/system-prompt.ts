@@ -14,27 +14,11 @@ import { getUndercoverPrompt } from "../config/undercover.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { estimateTokensFromString as estimateTokens } from "../utils/tokens.ts";
 
-/**
- * Priority slots for SystemPromptBuilder. Lower = earlier in the assembled prompt
- * and more likely to survive token-budget pruning in `build(maxTokens)`.
- *
- * Numeric values are stable and preserved from the pre-enum hardcoded ints so
- * existing callers passing raw numbers keep behaving identically.
- */
-export enum PromptPriority {
-  Core = 0,
-  PlanMode = 5,
-  Tools = 10,
-  Permissions = 20,
-  Genome = 25,
-  Knowledge = 30,
-  Git = 35,
-  Memory = 40,
-  Default = 50,
-  BuddyInfluence = 85,
-  ModelPatches = 90,
-  Undercover = 95,
-}
+// PromptPriority is defined in @ashlr/core-efficiency so both ashlrcode and
+// ashlr-plugin use the same priority slots. Re-exported here for existing
+// consumers of ashlrcode/src/agent/system-prompt.ts.
+export { PromptPriority } from "@ashlr/core-efficiency/compression";
+import { PromptPriority } from "@ashlr/core-efficiency/compression";
 
 export interface PromptPart {
   name: string;
