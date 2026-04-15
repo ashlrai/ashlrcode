@@ -29,7 +29,8 @@
   ],
   "bin": {
     "ashlrcode": "src/cli.ts",
-    "ac": "src/cli.ts"
+    "ac": "src/cli.ts",
+    "ac-autopilot": "src/cli/autopilot.ts"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
@@ -51,6 +52,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@ashlr/core-efficiency": "file:../ashlr-core-efficiency",
     "chalk": "^5.6.2",
     "fast-glob": "^3.3.3",
     "ink": "^6.8.0",

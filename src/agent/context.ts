@@ -9,6 +9,11 @@
 
 import type { LLMSummarizer, Message } from "../providers/types.ts";
 import { estimateTokensFromMessages } from "../utils/tokens.ts";
+import {
+  DEFAULT_CONTEXT_LIMIT,
+  PROVIDER_CONTEXT_LIMITS as CORE_PROVIDER_CONTEXT_LIMITS,
+  getProviderContextLimit as coreGetProviderContextLimit,
+} from "@ashlr/core-efficiency/budget";
 
 /** @deprecated Use estimateTokensFromMessages from ../utils/tokens.ts */
 export const estimateTokens = estimateTokensFromMessages;
@@ -28,26 +33,19 @@ const DEFAULT_CONFIG: ContextConfig = {
   recentMessageCount: 10,
 };
 
-/** Provider-aware context limits (in tokens). */
-const PROVIDER_CONTEXT_LIMITS: Record<string, number> = {
-  xai: 2_000_000,
-  anthropic: 200_000,
-  openai: 128_000,
-  ollama: 32_000,   // Conservative default; most local models are 4K-128K
-  groq: 128_000,
-  deepseek: 128_000,
-};
+/** Provider-aware context limits — re-exported from @ashlr/core-efficiency. */
+const PROVIDER_CONTEXT_LIMITS = CORE_PROVIDER_CONTEXT_LIMITS;
 
 /**
  * Get the context token limit for a given provider.
+ * Delegates to @ashlr/core-efficiency; preserved here so existing imports
+ * from ashlrcode/src/agent/context.ts keep working unchanged.
  */
-export function getProviderContextLimit(providerName: string): number {
-  const lower = providerName.toLowerCase();
-  for (const [key, limit] of Object.entries(PROVIDER_CONTEXT_LIMITS)) {
-    if (lower.includes(key)) return limit;
-  }
-  return DEFAULT_CONFIG.maxContextTokens;
-}
+export const getProviderContextLimit = coreGetProviderContextLimit;
+
+// Silence unused-warnings — both are re-exported above.
+void PROVIDER_CONTEXT_LIMITS;
+void DEFAULT_CONTEXT_LIMIT;
 
 /**
  * Tier 3: contextCollapse — remove redundant messages from older history.
