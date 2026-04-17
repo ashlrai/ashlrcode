@@ -91,6 +91,6 @@ export interface LLMSummarizer {
 }
 
 export interface ProviderRouterConfig {
-  primary: ProviderConfig & { provider: "xai" | "anthropic" | "openai" };
-  fallbacks?: Array<ProviderConfig & { provider: "xai" | "anthropic" | "openai" }>;
+  primary: ProviderConfig & { provider: "xai" | "anthropic" | "openai" | "ollama" };
+  fallbacks?: Array<ProviderConfig & { provider: "xai" | "anthropic" | "openai" | "ollama" }>;
 }

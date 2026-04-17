@@ -28,9 +28,10 @@ export async function runSetupWizard(): Promise<Settings> {
   console.log(chalk.bold("  Step 1: Choose your AI provider\n"));
   console.log(chalk.dim("  1. ") + chalk.bold("xAI Grok") + chalk.dim(" — $0.20/$0.50 per M tokens, 2M context (recommended)"));
   console.log(chalk.dim("  2. ") + chalk.bold("Anthropic Claude") + chalk.dim(" — $3/$15 per M tokens, 200K context"));
-  console.log(chalk.dim("  3. ") + chalk.bold("Both") + chalk.dim(" — xAI primary, Claude fallback\n"));
+  console.log(chalk.dim("  3. ") + chalk.bold("Both") + chalk.dim(" — xAI primary, Claude fallback"));
+  console.log(chalk.dim("  4. ") + chalk.bold("Local models only") + chalk.dim(" — LM Studio / Ollama, fully free, no API keys\n"));
 
-  const providerChoice = await prompt(chalk.cyan("  Provider [1/2/3]: "));
+  const providerChoice = await prompt(chalk.cyan("  Provider [1/2/3/4]: "));
   const choice = providerChoice.trim() || "1";
 
   // Step 2: API key(s)
@@ -47,6 +48,62 @@ export async function runSetupWizard(): Promise<Settings> {
     console.log(chalk.dim("\n  Get a Claude API key at: https://console.anthropic.com/\n"));
     anthropicKey = await prompt(chalk.cyan("  Anthropic API key: "));
     anthropicKey = anthropicKey.trim();
+  }
+
+  // Local-only path — no API keys needed
+  if (choice === "4") {
+    console.log(chalk.dim("\n  Step 2: Choose local LLM backend\n"));
+    console.log(chalk.dim("  1. ") + chalk.bold("LM Studio") + chalk.dim(" — http://localhost:1234 (recommended for coding)"));
+    console.log(chalk.dim("  2. ") + chalk.bold("Ollama") + chalk.dim(" — http://localhost:11434 (simpler setup)"));
+    console.log(chalk.dim("  3. ") + chalk.bold("Both") + chalk.dim(" — LM Studio primary, Ollama fallback\n"));
+
+    const localChoice = await prompt(chalk.cyan("  Backend [1/2/3]: "));
+    const lc = localChoice.trim() || "1";
+
+    let localModel: string;
+    if (lc === "2") {
+      console.log(chalk.dim("\n  Which Ollama model? (default: gemma4:26b)\n"));
+      const ollamaModel = await prompt(chalk.cyan("  Model name: "));
+      localModel = ollamaModel.trim() || "gemma4:26b";
+    } else {
+      console.log(chalk.dim("\n  Which LM Studio model? (default: qwen/qwen3-coder-30b)\n"));
+      const lmsModel = await prompt(chalk.cyan("  Model name: "));
+      localModel = lmsModel.trim() || "qwen/qwen3-coder-30b";
+    }
+
+    const localProviders: ProviderRouterConfig = lc === "2"
+      ? {
+          primary: {
+            provider: "ollama",
+            apiKey: "local",
+            model: localModel,
+            baseURL: "http://localhost:11434",
+          },
+          fallbacks: [],
+        }
+      : {
+          primary: {
+            provider: "openai",
+            apiKey: "lm-studio",
+            model: localModel,
+            baseURL: "http://localhost:1234/v1",
+          },
+          fallbacks: lc === "3"
+            ? [{ provider: "ollama", apiKey: "local", model: "gemma4:26b", baseURL: "http://localhost:11434" }]
+            : [],
+        };
+
+    const localSettings: Settings = { providers: localProviders, maxTokens: 8192 };
+    await saveSettings(localSettings);
+
+    console.log(chalk.green("\n  Setup complete!"));
+    console.log(chalk.dim(`  Provider: local (${lc === "2" ? "Ollama" : "LM Studio"})`));
+    console.log(chalk.dim(`  Model: ${localModel}`));
+    console.log(chalk.dim(`  No API keys needed — fully free and private`));
+    console.log(chalk.dim(`  Config saved to: ~/.ashlrcode/settings.json`));
+    console.log(chalk.dim(`\n  Run ${chalk.bold("ac")} to start coding.\n`));
+
+    return localSettings;
   }
 
   if (!xaiKey && !anthropicKey) {
@@ -133,12 +190,18 @@ export async function runSetupWizard(): Promise<Settings> {
 /**
  * Check if setup is needed (no API key from env or settings).
  */
+/** Local provider placeholder keys that indicate a valid local-only setup. */
+const LOCAL_PLACEHOLDERS = new Set(["local", "lm-studio", "ollama", "local-llm"]);
+
 export function needsSetup(settings: { providers: ProviderRouterConfig }): boolean {
   const key = settings.providers.primary.apiKey;
   // __keychain__ is a placeholder — the real key was loaded from keychain
   // in loadSettings(). If it's still __keychain__ here, the keychain lookup
   // failed and we need setup.
-  return !key || key === KEYCHAIN_PLACEHOLDER;
+  if (!key || key === KEYCHAIN_PLACEHOLDER) return true;
+  // Local model placeholders are valid — no real API key needed.
+  if (LOCAL_PLACEHOLDERS.has(key)) return false;
+  return false;
 }
 
 function prompt(question: string): Promise<string> {
