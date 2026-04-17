@@ -170,6 +170,29 @@ async function main() {
   const maxCostArg = getArg(args, "--max-cost");
   maxCostUSD = maxCostArg ? parseFloat(maxCostArg) : Infinity;
 
+  // ── Autonomous mode ────────────────────────────────────────
+  const autonomous = args.includes("--autonomous");
+  const goal = getArg(args, "--goal");
+  const initialScaffold = args.includes("--initial-scaffold");
+  const maxIterationsArg = getArg(args, "--max-iterations");
+  const timeoutArg = getArg(args, "--timeout");
+
+  if (autonomous) {
+    if (!goal) {
+      console.error("--goal is required with --autonomous");
+      process.exit(1);
+    }
+    const { runAutonomous } = await import("./agent/autonomous.ts");
+    const result = await runAutonomous({
+      goal,
+      cwd: process.cwd(),
+      scaffold: initialScaffold,
+      maxIterations: maxIterationsArg ? parseInt(maxIterationsArg, 10) : 200,
+      timeout: timeoutArg ? parseInt(timeoutArg, 10) : 3600,
+    });
+    process.exit(result.success ? 0 : 1);
+  }
+
   if (dangerouslySkipPermissions) {
     setBypassMode(true);
   }
@@ -204,56 +227,13 @@ async function main() {
     };
   }
 
-  // Initialize tool registry
+  // Initialize tool registry — shared standard-tool list lives in bootstrap.ts
+  // (same list used by `ac-autopilot --until-empty`). SnipTool is REPL-only
+  // (it mutates the live history buffer) so it stays registered here.
+  const { registerStandardTools } = await import("./agent/bootstrap.ts");
   const registry = new ToolRegistry();
-  registry.register(bashTool);
-  registry.register(fileReadTool);
-  registry.register(fileWriteTool);
-  registry.register(fileEditTool);
-  registry.register(globTool);
-  registry.register(grepTool);
-  registry.register(askUserTool);
-  registry.register(webFetchTool);
-  registry.register(enterPlanTool);
-  registry.register(exitPlanTool);
-  registry.register(planWriteTool);
-  registry.register(agentTool);
-  registry.register(taskCreateTool);
-  registry.register(taskUpdateTool);
-  registry.register(taskListTool);
-  registry.register(taskGetTool);
-  registry.register(lsTool);
-  registry.register(configTool);
-  registry.register(enterWorktreeTool);
-  registry.register(exitWorktreeTool);
-  registry.register(webSearchTool);
-  registry.register(toolSearchTool);
-  registry.register(memorySaveTool);
-  registry.register(memoryListTool);
-  registry.register(memoryDeleteTool);
-  registry.register(notebookEditTool);
-  registry.register(sendMessageTool);
-  registry.register(checkMessagesTool);
-  registry.register(sleepTool);
-  registry.register(todoWriteTool);
-  registry.register(diffTool);
+  registerStandardTools(registry);
   registry.register(snipTool);
-  registry.register(lspTool);
-  registry.register(teamCreateTool);
-  registry.register(teamDeleteTool);
-  registry.register(teamListTool);
-  registry.register(teamDispatchTool);
-  registry.register(workflowTool);
-  registry.register(listPeersTool);
-  registry.register(verifyTool);
-  registry.register(coordinateTool);
-  if (process.platform === "win32") {
-    registry.register(powershellTool);
-  }
-  if (feature("BROWSER_TOOL")) {
-    registry.register(webBrowserTool);
-  }
-  initToolSearch(registry);
 
   // Set up hooks from settings — toolHooks (new format) takes priority, falls back to hooks (legacy)
   if (settings.toolHooks) {
@@ -1271,6 +1251,11 @@ ${chalk.bold("OPTIONS")}
   --print                             Output only text (for piping)
   --max-cost <dollars>                Stop when cost exceeds limit
   --no-mcp                            Skip MCP server connections on startup
+  --autonomous                        Run in headless autonomous mode (requires --goal)
+  --goal <text>                       Goal for autonomous mode
+  --initial-scaffold                  Force project scaffolding in autonomous mode
+  --max-iterations <n>                Max agent iterations (default: 200)
+  --timeout <seconds>                 Timeout in seconds (default: 3600)
   --migrate                           Import MCP servers and skills from Claude Code
 
 ${chalk.bold("COMMANDS")} (in REPL)
