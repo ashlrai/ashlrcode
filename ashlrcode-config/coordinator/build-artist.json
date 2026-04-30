@@ -1,0 +1,97 @@
+{
+  "$schema": "../schema/coordinator-dag.schema.json",
+  "name": "build-artist",
+  "description": "Artist Encyclopedia Factory: ingest → enrich → assets → build → deploy → smoke. One run per artist slug. Invoke via the /build-artist skill with the slug as its argument.",
+  "skill": "build-artist",
+  "maxParallel": 3,
+  "autoVerify": false,
+  "argSchema": {
+    "slug": {
+      "type": "string",
+      "description": "Artist slug whose bundle lives at ../artist-encyclopedia-factory/artists/<slug>.json",
+      "required": true
+    },
+    "budgetUsd": {
+      "type": "string",
+      "description": "Per-artist LLM spend ceiling (USD) enforced by the enrich phase. Passed by runUntilEmpty via --var budgetUsd=<n>.",
+      "required": false
+    }
+  },
+  "tasks": [
+    {
+      "id": "ingest",
+      "description": "Phase 1 — ingest. Fetch data from Spotify, MusicBrainz, Wikipedia/Wikidata, Setlist.fm, Discogs (read-only) for artist '{{slug}}'. Merge results into artists/{{slug}}.json under bundle.sources.*. Respect each API's rate limits. Do not fetch lyrics. See prompts/skills/build-artist.md phase 1.",
+      "role": "implementer",
+      "readOnly": false,
+      "files": [
+        "../artist-encyclopedia-factory/artists/{{slug}}.json",
+        "../artist-encyclopedia-factory/packages/ingest/"
+      ],
+      "dependsOn": [],
+      "type": "implementation"
+    },
+    {
+      "id": "enrich",
+      "description": "Phase 2 — enrich. Given populated bundle.sources, compose pure bundle→bundle' enrichments: meanings, themes, songColorMap, sampleGraph, producerNetwork. Stay under the per-artist LLM budget of ${{budgetUsd}} USD; abort remaining enrichments and emit a partial bundle if the budget is exceeded. Idempotent: skip sections already present unless forced. No lyric quotation. See prompts/skills/build-artist.md phase 2.",
+      "role": "implementer",
+      "readOnly": false,
+      "files": [
+        "../artist-encyclopedia-factory/artists/{{slug}}.json",
+        "../artist-encyclopedia-factory/packages/enrich/"
+      ],
+      "dependsOn": ["ingest"],
+      "type": "implementation"
+    },
+    {
+      "id": "assets",
+      "description": "Phase 3 — assets. Download and optimize album covers, producer photos, feature portraits for '{{slug}}'. Prefer Wikimedia Commons (CC-BY-SA/CC0); fall back to Spotify official art; press-kit URLs only when explicitly licensed. Emit WebP + AVIF at 400/800/1600. Write assets-manifest.json with license + attribution per file. See prompts/skills/build-artist.md phase 3.",
+      "role": "implementer",
+      "readOnly": false,
+      "files": [
+        "../artist-encyclopedia-factory/template/public/images/{{slug}}/",
+        "../artist-encyclopedia-factory/packages/assets/"
+      ],
+      "dependsOn": ["ingest"],
+      "type": "implementation"
+    },
+    {
+      "id": "build",
+      "description": "Phase 4 — build. Hydrate template from artists/{{slug}}.json + public/images/{{slug}}/, run bun install and bun run build in the per-artist build dir. On failure snapshot to .ashlrcode/autopilot/failed/{{slug}}-<ts>/. Record build hash. See prompts/skills/build-artist.md phase 4.",
+      "role": "implementer",
+      "readOnly": false,
+      "files": [
+        "../artist-encyclopedia-factory/template/",
+        "../artist-encyclopedia-factory/artists/{{slug}}.json"
+      ],
+      "dependsOn": ["enrich", "assets"],
+      "type": "implementation"
+    },
+    {
+      "id": "deploy",
+      "description": "Phase 5 — deploy. Stub calls: create Vercel project + upload build, attach Porkbun domain ({{slug}}verse.com), create Stripe product/price for AI unlock, run Supabase migration scoped by artist_slug='{{slug}}'. Persist identifiers into bundle.deploy.*. Each sub-step checks its field and skips if already populated. Do NOT hit real APIs without explicit user approval. See prompts/skills/build-artist.md phase 5.",
+      "role": "implementer",
+      "readOnly": false,
+      "files": [
+        "../artist-encyclopedia-factory/artists/{{slug}}.json",
+        "../artist-encyclopedia-factory/packages/deploy/"
+      ],
+      "dependsOn": ["build"],
+      "type": "implementation"
+    },
+    {
+      "id": "smoke",
+      "description": "Phase 6 — smoke. Headless Playwright against bundle.deploy.deploymentUrl: home + 10 random song pages + auth flow + Stripe test-mode checkout. Require Lighthouse perf ≥ 85. Write results into bundle.smoke.*. On red, alias-rollback the Vercel deployment to the previous green build. See prompts/skills/build-artist.md phase 6.",
+      "role": "test-writer",
+      "readOnly": true,
+      "files": [
+        "../artist-encyclopedia-factory/artists/{{slug}}.json"
+      ],
+      "dependsOn": ["deploy"],
+      "type": "test"
+    }
+  ],
+  "notes": [
+    "The ashlrcode coordinator at src/agent/coordinator.ts currently plans subtasks via the LLM at runtime — it does NOT yet read a static DAG file. This config matches the SubTask[] shape in coordinator.ts so a thin loader (future work) can hand these tasks directly to dispatchTasks() and skip the LLM planning step.",
+    "{{slug}} is a placeholder. Until a templating loader is added to coordinator.ts, the /build-artist skill receives the slug via {{args}} and the per-task descriptions substitute the slug at dispatch time."
+  ]
+}

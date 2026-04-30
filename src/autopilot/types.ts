@@ -13,6 +13,7 @@ export type WorkItemType =
   | "missing_docs"   // public APIs without docs
   | "stale_dep"      // outdated dependencies
   | "error_handling" // uncaught errors, missing try/catch
+  | "artist_build"   // run the artist-encyclopedia-factory build-artist DAG for a slug
 
 export type WorkItemPriority = "critical" | "high" | "medium" | "low";
 
@@ -36,6 +37,12 @@ export interface WorkItem {
   discoveredAt: string;
   completedAt?: string;
   error?: string;
+  /** Artist slug — populated for `artist_build` items so the autopilot
+   *  loop can invoke the coordinator with --config build-artist --var slug=<slug>. */
+  slug?: string;
+  /** Per-item budget in USD. Passed through to the build-artist coordinator
+   *  config as `{{budgetUsd}}`. Additive; does nothing if unset. */
+  budgetUsd?: number;
 }
 
 export type TrustLevel = "propose" | "auto";

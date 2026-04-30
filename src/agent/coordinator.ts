@@ -549,6 +549,54 @@ export async function coordinate(
 }
 
 /**
+ * Coordinate with pre-planned tasks — skips the LLM planner entirely.
+ * Used by the static-DAG loader in `coordinator-config.ts`. Matches the
+ * validate → load-team → dispatch → verify → summarize flow of `coordinate()`,
+ * minus the planSubTasks() step.
+ */
+export async function coordinateWithTasks(
+  tasks: SubTask[],
+  goal: string,
+  config: CoordinatorConfig,
+): Promise<CoordinatorResult> {
+  const cycle = detectCycles(tasks);
+  if (cycle) {
+    const summary = `Coordinator aborted: circular dependency detected: ${cycle.join(" → ")}`;
+    config.onProgress?.({ type: "complete", summary });
+    return { tasks: [], summary };
+  }
+
+  let team: Team | null = null;
+  if (config.teamId) {
+    team = await loadTeam(config.teamId);
+  }
+
+  const taskResults = await dispatchTasks(tasks, config, team, goal);
+
+  let verificationPassed: boolean | undefined;
+  if (config.autoVerify) {
+    config.onProgress?.({ type: "verifying" });
+    const verifyConfig: VerificationConfig = {
+      router: config.router,
+      toolRegistry: config.toolRegistry,
+      toolContext: config.toolContext,
+      systemPrompt: config.systemPrompt,
+    };
+    const modifiedFiles = tasks.flatMap((t) => t.files ?? []);
+    if (modifiedFiles.length > 0) {
+      const vResult = await runVerification(verifyConfig, { intent: goal, files: modifiedFiles });
+      verificationPassed = vResult.passed;
+    }
+  }
+
+  const successCount = taskResults.filter((t) => t.success).length;
+  const summary = `Coordinator completed: ${successCount}/${taskResults.length} tasks succeeded${verificationPassed !== undefined ? `, verification ${verificationPassed ? "passed" : "failed"}` : ""}`;
+  config.onProgress?.({ type: "complete", summary });
+
+  return { tasks: taskResults, verificationPassed, summary };
+}
+
+/**
  * Resume a coordinator from a checkpoint.
  * Loads the checkpoint, applies the user's response, and re-dispatches pending tasks.
  */

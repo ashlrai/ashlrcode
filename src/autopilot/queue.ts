@@ -149,6 +149,50 @@ export class WorkQueue {
   }
 
   /**
+   * Defer an item: leave status as "discovered" but move to the back of the
+   * queue so other items are picked first. Used by `--require-deploy-env`
+   * gating in `runUntilEmpty`.
+   */
+  deferItem(id: string): boolean {
+    const idx = this.items.findIndex((i) => i.id === id);
+    if (idx < 0) return false;
+    const [item] = this.items.splice(idx, 1);
+    if (!item) return false;
+    item.status = "discovered";
+    this.items.push(item);
+    return true;
+  }
+
+  /**
+   * All items (read-only snapshot). Exposed so the drain loop can iterate
+   * without reaching into private state.
+   */
+  getAll(): WorkItem[] {
+    return [...this.items];
+  }
+
+  /**
+   * Atomically claim the next `discovered` item matching `predicate`, marking
+   * it `in_progress` so parallel workers don't pick the same slug. Returns
+   * `null` when no match remains. The returned item is a live reference —
+   * callers should mutate via `completeItem`/`failItem`/`deferItem`.
+   *
+   * Not thread-safe across processes, but safe within a single Node/Bun
+   * process because JS is single-threaded — callers just need to avoid
+   * interleaving awaited work between the read and the status-flip, which
+   * this method guarantees by doing both synchronously.
+   */
+  claimNext(predicate: (i: WorkItem) => boolean = () => true): WorkItem | null {
+    for (const item of this.items) {
+      if (item.status === "discovered" && predicate(item)) {
+        item.status = "in_progress";
+        return item;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Get summary stats.
    */
   getStats(): Record<string, number> {

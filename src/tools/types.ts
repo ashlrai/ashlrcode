@@ -13,6 +13,17 @@ export interface ToolContext {
   turnNumber?: number;
   /** Session ID (for task board, persistence) */
   sessionId?: string;
+  /**
+   * Optional per-slug budget guard. When present, tools that drive LLM calls
+   * (or otherwise spend real money) SHOULD invoke this before the expensive
+   * operation — the guard throws `BudgetExceededError` (see
+   * `src/autopilot/cost-bucket.ts`) when the projected spend would breach
+   * the per-slug budget. No-op when undefined.
+   *
+   * Wired by `runUntilEmpty` so that concurrent autopilot drains can't
+   * silently share one router-level cost tracker across workers.
+   */
+  budgetGuard?: (estimatedUsd: number, transform: string) => void;
 }
 
 export interface Tool {

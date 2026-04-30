@@ -201,6 +201,24 @@ async function executeSingle(
 
   callbacks?.onToolStart?.(tc.name, tc.input);
 
+  // Per-slug budget guard — consulted before every tool call when the
+  // autopilot drain has installed a bucket on the ToolContext. The guard
+  // throws `BudgetExceededError` when the per-slug budget is breached;
+  // we surface that as a tool error so the agent loop can bail cleanly.
+  // Estimate is 0 here — tools that actually drive LLM calls should call
+  // `context.budgetGuard` themselves with a real estimate if they have one.
+  // A zero-cost probe still fires the halt branch once `spent >= budget`.
+  if (context.budgetGuard) {
+    try {
+      context.budgetGuard(0, tc.name);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      callbacks?.onToolEnd?.(tc.name, message, true);
+      recordToolMetric(tc.name, performance.now() - startTime, true);
+      throw err;
+    }
+  }
+
   const { result, isError } = await registry.execute(tc.name, tc.input, context);
 
   callbacks?.onToolEnd?.(tc.name, result, isError);

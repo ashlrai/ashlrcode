@@ -89,6 +89,80 @@ export function autopilotCommands(deps: {
       handler: async (args, ctx) => {
         const subCmd = args?.split(" ")[0];
 
+        // ── Until-Empty Drain ───────────────────────────────────────────
+        // Recognize the flag in any position so `/autopilot --until-empty`
+        // and `/autopilot --until-empty --require-deploy-env` both work.
+        const argv = (args ?? "").split(" ").filter((s) => s.length > 0);
+        if (argv.includes("--until-empty")) {
+          const requireDeployEnv = argv.includes("--require-deploy-env");
+          let budgetUsd: number | undefined;
+          const budgetIdx = argv.findIndex((a) => a === "--budget-usd-per-artist");
+          if (budgetIdx >= 0 && argv[budgetIdx + 1]) {
+            const n = Number(argv[budgetIdx + 1]);
+            if (Number.isFinite(n)) budgetUsd = n;
+          }
+          for (const a of argv) {
+            if (a.startsWith("--budget-usd-per-artist=")) {
+              const n = Number(a.slice("--budget-usd-per-artist=".length));
+              if (Number.isFinite(n)) budgetUsd = n;
+            }
+          }
+          const mock = argv.includes("--mock");
+          let concurrency: number | undefined;
+          const concIdx = argv.findIndex((a) => a === "--concurrency");
+          if (concIdx >= 0 && argv[concIdx + 1]) {
+            const n = Number(argv[concIdx + 1]);
+            if (Number.isFinite(n)) concurrency = n;
+          }
+          for (const a of argv) {
+            if (a.startsWith("--concurrency=")) {
+              const n = Number(a.slice("--concurrency=".length));
+              if (Number.isFinite(n)) concurrency = n;
+            }
+          }
+          ctx.addOutput(
+            theme.accent(
+              `\n  🌊 Autopilot drain starting — cwd=${ctx.state.toolContext.cwd}${mock ? " [mock]" : ""}\n`,
+            ),
+          );
+          try {
+            const { runUntilEmpty } = await import("../autopilot/until-empty.ts");
+            const report = await runUntilEmpty({
+              cwd: ctx.state.toolContext.cwd,
+              requireDeployEnv,
+              budgetUsdPerArtist: budgetUsd,
+              concurrency,
+              mockExecutor: mock
+                ? async ({ slug }) => ({
+                    status: "success",
+                    durationMs: 1,
+                    costUsd: 0,
+                    warnings: [`mock executor: ${slug}`],
+                  })
+                : undefined,
+              coordinator: mock
+                ? undefined
+                : {
+                    router: ctx.state.router,
+                    toolRegistry: ctx.state.registry,
+                    toolContext: ctx.state.toolContext,
+                    systemPrompt: ctx.state.baseSystemPrompt,
+                  },
+            });
+            ctx.addOutput(
+              theme.success(
+                `  ✅ drain done — ${report.totalProcessed} processed · ` +
+                  `${report.byStatus.success} success · ${report.byStatus.failed} failed · ` +
+                  `${report.byStatus.deferred} deferred · total $${report.totalCostUsd.toFixed(2)}\n`,
+              ),
+            );
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            ctx.addOutput(theme.error(`  drain failed: ${msg}\n`));
+          }
+          return true;
+        }
+
         // ── Scan ────────────────────────────────────────────────────────
         if (!subCmd || subCmd === "scan") {
           ctx.addOutput(theme.accent("\n  🔍 Scanning codebase for work items...\n"));

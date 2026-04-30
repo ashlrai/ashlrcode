@@ -53,6 +53,76 @@ export function agentCommands(): Command[] {
           return true;
         }
 
+        // Handle static-DAG config mode: /coordinate --config <name> --var k=v ...
+        if (args.startsWith("--config ") || args.startsWith("--config=")) {
+          const tokens = args.match(/(?:[^\s"]+|"[^"]*")+/g) ?? [];
+          let configName = "";
+          const vars: Record<string, string> = {};
+          for (let i = 0; i < tokens.length; i++) {
+            const tok = tokens[i]!;
+            if (tok === "--config") {
+              configName = tokens[++i] ?? "";
+            } else if (tok.startsWith("--config=")) {
+              configName = tok.slice("--config=".length);
+            } else if (tok === "--var") {
+              const pair = tokens[++i] ?? "";
+              const eq = pair.indexOf("=");
+              if (eq > 0) vars[pair.slice(0, eq)] = pair.slice(eq + 1).replace(/^"|"$/g, "");
+            } else if (tok.startsWith("--var=")) {
+              const pair = tok.slice("--var=".length);
+              const eq = pair.indexOf("=");
+              if (eq > 0) vars[pair.slice(0, eq)] = pair.slice(eq + 1).replace(/^"|"$/g, "");
+            }
+          }
+          if (!configName) {
+            ctx.addOutput(theme.warning("\n  Usage: /coordinate --config <name> [--var key=value ...]\n"));
+            return true;
+          }
+
+          try {
+            const { loadCoordinatorConfig } = await import("../agent/coordinator-config.ts");
+            const { config: cfg, tasks } = await loadCoordinatorConfig(configName, vars);
+            ctx.addOutput(theme.accent(`\n  🎯 Coordinator (static DAG: ${cfg.name}) — ${tasks.length} tasks\n`));
+            const { coordinateWithTasks, formatCoordinatorReport } = await import("../agent/coordinator.ts");
+            const coordResult = await coordinateWithTasks(tasks, cfg.description ?? cfg.name, {
+              router: ctx.state.router,
+              toolRegistry: ctx.state.registry,
+              toolContext: ctx.state.toolContext,
+              systemPrompt: ctx.state.baseSystemPrompt,
+              maxParallel: cfg.maxParallel,
+              autoVerify: cfg.autoVerify ?? false,
+              onProgress: (event) => {
+                switch (event.type) {
+                  case "dispatching":
+                    ctx.addOutput(
+                      theme.accent(`  🚀 [${event.taskIndex + 1}/${event.totalTasks}] Dispatching to ${event.agentName}\n`),
+                    );
+                    break;
+                  case "agent_complete":
+                    ctx.addOutput(
+                      event.success
+                        ? theme.success(`  ✓ ${event.agentName} completed\n`)
+                        : theme.error(`  ✗ ${event.agentName} failed\n`),
+                    );
+                    break;
+                  case "verifying":
+                    ctx.addOutput(theme.tertiary("  🔍 Running verification...\n"));
+                    break;
+                  case "complete":
+                    ctx.addOutput(theme.success(`  ✅ ${event.summary}\n`));
+                    break;
+                }
+                ctx.update();
+              },
+            });
+            ctx.addOutput("\n" + formatCoordinatorReport(coordResult) + "\n");
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            ctx.addOutput(theme.error(`\n  Coordinator config error: ${msg}\n`));
+          }
+          return true;
+        }
+
         // Handle resume subcommand
         if (args.startsWith("resume ")) {
           const resumeParts = args.replace("resume ", "").trim().split(" ");

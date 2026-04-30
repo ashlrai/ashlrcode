@@ -658,6 +658,54 @@ Reply with JSON only: {"focusAreas": ["..."], "assessment": "...", "isComplete":
       itemDescription: item.title,
     });
 
+    // Static-DAG route: artist_build items dispatch the build-artist coordinator
+    // config directly. Skip LLM planning; each phase sub-agent runs in dependency
+    // order per ashlrcode-config/coordinator/build-artist.json.
+    if (item.type === "artist_build") {
+      const slug = item.slug;
+      if (!slug) {
+        this.config.onProgress?.({
+          type: "item_complete",
+          description: item.title,
+          success: false,
+          summary: "artist_build item missing required slug field",
+        });
+        return false;
+      }
+      try {
+        const { loadCoordinatorConfig } = await import("./coordinator-config.ts");
+        const { coordinateWithTasks } = await import("./coordinator.ts");
+        const { config: cfg, tasks } = await loadCoordinatorConfig("build-artist", { slug });
+        const result = await coordinateWithTasks(tasks, `build-artist: ${slug}`, {
+          router: this.config.router,
+          toolRegistry: this.config.toolRegistry,
+          toolContext: this.config.toolContext,
+          systemPrompt: this.config.systemPrompt,
+          teamId: this.config.teamId,
+          maxParallel: cfg.maxParallel ?? this.config.maxParallel ?? 3,
+          autoVerify: false,
+        });
+        const success =
+          result.tasks.length > 0 && result.tasks.every((t) => t.success);
+        this.config.onProgress?.({
+          type: "item_complete",
+          description: item.title,
+          success,
+          summary: result.summary,
+        });
+        return success;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.config.onProgress?.({
+          type: "item_complete",
+          description: item.title,
+          success: false,
+          summary: `artist_build error: ${msg.slice(0, 200)}`,
+        });
+        return false;
+      }
+    }
+
     // Build context with genome sections if available
     let genomeContext = "";
     if (this.genome) {
