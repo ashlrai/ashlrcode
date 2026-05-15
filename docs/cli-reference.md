@@ -163,7 +163,7 @@ With an argument, switches to the specified model. Accepts either a model alias 
 
 | Alias | Resolves to |
 |-------|-------------|
-| `grok-fast` | `grok-4-1-fast-reasoning` |
+| `grok-fast` | `grok-4.3` |
 | `grok-4` | `grok-4-0314` |
 | `grok-3` | `grok-3-fast` |
 | `sonnet` | `claude-sonnet-4-6-20250514` |
@@ -172,7 +172,7 @@ With an argument, switches to the specified model. Accepts either a model alias 
 
 ```
 /model sonnet
-/model grok-4-1-fast-reasoning
+/model grok-4.3
 ```
 
 ### `/compact`
@@ -222,7 +222,7 @@ API key for the Anthropic (Claude) provider. When set, Anthropic is configured a
 
 ### `AC_MODEL`
 
-Override the default model. If set, this value is used instead of the default `grok-4-1-fast-reasoning`.
+Override the default model. If set, this value is used instead of the default `grok-4.3`.
 
 ```bash
 export AC_MODEL=grok-4-0314

@@ -13,7 +13,7 @@ console.log("Testing xAI Grok API...\n");
 // Test 1: Simple chat with streaming
 console.log("=== Test 1: Streaming chat ===");
 const stream = await client.chat.completions.create({
-  model: "grok-4-1-fast-reasoning",
+  model: "grok-4.3",
   messages: [{ role: "user", content: "Say 'hello world' and nothing else" }],
   max_tokens: 50,
   stream: true,
@@ -39,7 +39,7 @@ console.log(`\nFull text: "${fullText}"\n`);
 // Test 2: Tool calling
 console.log("=== Test 2: Tool calling ===");
 const toolStream = await client.chat.completions.create({
-  model: "grok-4-1-fast-reasoning",
+  model: "grok-4.3",
   messages: [{ role: "user", content: "What files are in the current directory? Use the list_files tool." }],
   tools: [
     {

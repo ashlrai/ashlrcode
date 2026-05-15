@@ -11,7 +11,7 @@ interface ModelPricing {
 // Pricing tables (USD per million tokens)
 const PRICING: Record<string, ModelPricing> = {
   // xAI
-  "grok-4-1-fast-reasoning": {
+  "grok-4.3": {
     inputPerMillion: 0.2,
     outputPerMillion: 0.5,
   },

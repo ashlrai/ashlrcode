@@ -13,12 +13,12 @@ export interface ModelPatch {
 
 const PATCHES: ModelPatch[] = [
   {
-    pattern: "^grok(?!-4-1-fast)",
+    pattern: "^grok(?!-4\\.3)",
     name: "Grok verbosity control",
     promptSuffix: "\n\nIMPORTANT: Be concise. Avoid unnecessary preamble. Lead with the answer or action, not reasoning. If you can say it in one sentence, don't use three.",
   },
   {
-    pattern: "^grok-4-1-fast",
+    pattern: "^grok-4\\.3",
     name: "Grok fast mode",
     promptSuffix: "\n\nYou are running in fast mode. Prioritize speed. Use fewer tool calls. Give direct answers.",
   },

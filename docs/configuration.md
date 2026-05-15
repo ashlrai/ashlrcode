@@ -61,7 +61,7 @@ When no `settings.json` exists, the following defaults apply:
     "primary": {
       "provider": "xai",
       "apiKey": "$XAI_API_KEY",
-      "model": "grok-4-1-fast-reasoning",
+      "model": "grok-4.3",
       "baseURL": "https://api.x.ai/v1"
     },
     "fallbacks": [
@@ -88,7 +88,7 @@ The `AC_MODEL` environment variable overrides the primary model if set.
     "primary": {
       "provider": "xai",
       "apiKey": "xai-...",
-      "model": "grok-4-1-fast-reasoning",
+      "model": "grok-4.3",
       "baseURL": "https://api.x.ai/v1"
     },
     "fallbacks": [

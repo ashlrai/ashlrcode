@@ -111,7 +111,7 @@ bunx tsc --noEmit       # Type check
 
 - `XAI_API_KEY` — xAI API key (primary provider, required)
 - `ANTHROPIC_API_KEY` — Anthropic Claude API key (fallback, optional)
-- `AC_MODEL` — Override model (default: grok-4-1-fast-reasoning)
+- `AC_MODEL` — Override model (default: grok-4.3)
 - `CMUX_SOCKET_PATH` — cmux terminal app socket path (auto-detected, enables lifecycle hooks)
 
 ## Key Directories
@@ -180,7 +180,7 @@ Skills can also be installed from the marketplace: `/skills install <name>`, `/s
 
 ## Provider Behavior
 
-- **Primary**: xAI Grok 4.1 Fast ($0.20/$0.50 per M tokens, 2M context)
+- **Primary**: xAI Grok 4.3 Fast ($0.20/$0.50 per M tokens, 2M context)
 - **Fallback**: Anthropic Claude Sonnet ($3/$15 per M tokens, 200K context)
 - 4 additional providers: OpenAI, Ollama (local), Groq, DeepSeek
 - Auto-failover on rate limits with exponential backoff (3 retries)

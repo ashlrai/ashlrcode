@@ -244,7 +244,7 @@ export function coreCommands(deps: {
       handler: async (args, ctx) => {
         if (args) {
           const aliases: Record<string, string> = {
-            "grok-fast": "grok-4-1-fast-reasoning",
+            "grok-fast": "grok-4.3",
             "grok-4": "grok-4-0314",
             "grok-3": "grok-3-fast",
             sonnet: "claude-sonnet-4-6-20250514",

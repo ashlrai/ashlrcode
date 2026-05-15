@@ -115,12 +115,12 @@ export async function runSetupWizard(): Promise<Settings> {
   let model: string;
   if (xaiKey) {
     console.log(chalk.dim("\n  Step 2: Choose model\n"));
-    console.log(chalk.dim("  1. ") + chalk.bold("grok-4-1-fast-reasoning") + chalk.dim(" — best value, tool-calling optimized (recommended)"));
+    console.log(chalk.dim("  1. ") + chalk.bold("grok-4.3") + chalk.dim(" — best value, tool-calling optimized (recommended)"));
     console.log(chalk.dim("  2. ") + chalk.bold("grok-4-0314") + chalk.dim(" — highest quality, higher cost"));
     console.log(chalk.dim("  3. ") + chalk.bold("grok-3-fast") + chalk.dim(" — older, cheapest\n"));
     const modelChoice = await prompt(chalk.cyan("  Model [1/2/3]: "));
     const mc = modelChoice.trim() || "1";
-    model = mc === "2" ? "grok-4-0314" : mc === "3" ? "grok-3-fast" : "grok-4-1-fast-reasoning";
+    model = mc === "2" ? "grok-4-0314" : mc === "3" ? "grok-3-fast" : "grok-4.3";
   } else {
     model = "claude-sonnet-4-6-20250514";
   }

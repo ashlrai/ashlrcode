@@ -617,7 +617,7 @@ async function handleCommand(
       if (arg) {
         // Model switching
         const models: Record<string, string> = {
-          "grok-fast": "grok-4-1-fast-reasoning",
+          "grok-fast": "grok-4.3",
           "grok-4": "grok-4-0314",
           "grok-3": "grok-3-fast",
           "sonnet": "claude-sonnet-4-6-20250514",
@@ -632,7 +632,7 @@ async function handleCommand(
         console.log(chalk.dim(`  Provider: ${state.router.currentProvider.name}`));
         console.log(chalk.dim(`  Model: ${state.router.currentProvider.config.model}`));
         console.log(chalk.bold("\nAliases:"));
-        console.log(chalk.dim("  grok-fast  → grok-4-1-fast-reasoning"));
+        console.log(chalk.dim("  grok-fast  → grok-4.3"));
         console.log(chalk.dim("  grok-4     → grok-4-0314"));
         console.log(chalk.dim("  grok-3     → grok-3-fast"));
         console.log(chalk.dim("  sonnet     → claude-sonnet-4-6-20250514"));

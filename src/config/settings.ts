@@ -155,7 +155,7 @@ function getDefaultSettings(): Settings {
       primary: {
         provider: "xai",
         apiKey: xaiKey,
-        model: process.env.AC_MODEL ?? "grok-4-1-fast-reasoning",
+        model: process.env.AC_MODEL ?? "grok-4.3",
         baseURL: "https://api.x.ai/v1",
       },
       fallbacks: anthropicKey

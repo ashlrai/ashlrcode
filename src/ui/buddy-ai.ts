@@ -1,7 +1,7 @@
 /**
  * AI-powered buddy comments.
  *
- * Calls grok-4-1-fast-reasoning with minimal tokens for contextual
+ * Calls grok-4.3 with minimal tokens for contextual
  * buddy reactions. Mixed 80/20 with hardcoded quips for cost efficiency.
  */
 
@@ -51,7 +51,7 @@ export async function generateBuddyComment(
     if (context.errorOccurred) userMsg += " An error just happened.";
 
     const response = await client.chat.completions.create({
-      model: "grok-4-1-fast-reasoning",
+      model: "grok-4.3",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: userMsg },

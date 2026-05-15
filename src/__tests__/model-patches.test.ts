@@ -3,17 +3,17 @@ import { getModelPatches, listPatches } from "../agent/model-patches.ts";
 
 describe("Model Patches", () => {
   describe("getModelPatches", () => {
-    test("matches grok models (not grok-4-1-fast)", () => {
+    test("matches grok models (not grok-4.3)", () => {
       const result = getModelPatches("grok-4");
       expect(result.names).toContain("Grok verbosity control");
       expect(result.names).not.toContain("Grok fast mode");
       expect(result.combinedSuffix).toContain("Be concise");
     });
 
-    test("matches grok-4-1-fast specifically", () => {
-      const result = getModelPatches("grok-4-1-fast");
+    test("matches grok-4.3 specifically", () => {
+      const result = getModelPatches("grok-4.3");
       expect(result.names).toContain("Grok fast mode");
-      // The generic grok pattern uses negative lookahead to exclude grok-4-1-fast
+      // The generic grok pattern uses negative lookahead to exclude grok-4.3
       expect(result.names).not.toContain("Grok verbosity control");
       expect(result.combinedSuffix).toContain("fast mode");
     });

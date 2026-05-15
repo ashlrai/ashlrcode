@@ -265,7 +265,7 @@ Pre/post tool execution hooks for automation and safety:
 
 | Provider | Model | Cost (in/out per 1M tokens) | Context |
 |----------|-------|-----------------------------|---------|
-| **xAI** (default) | grok-4-1-fast-reasoning | $0.20 / $0.50 | 2M |
+| **xAI** (default) | grok-4.3 | $0.20 / $0.50 | 2M |
 | **Anthropic** | claude-sonnet-4-6 | $3.00 / $15.00 | 200K |
 | **OpenAI** | gpt-4o | $2.50 / $10.00 | 128K |
 | **DeepSeek** | deepseek-chat | $0.14 / $0.28 | 128K |

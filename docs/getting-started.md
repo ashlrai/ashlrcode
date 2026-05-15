@@ -71,7 +71,7 @@ ac
 Once inside AshlrCode, just type what you want done:
 
 ```
-  AshlrCode v1.5.0 | xai:grok-4-1-fast-reasoning
+  AshlrCode v1.5.0 | xai:grok-4.3
   /Users/you/my-project
   Type a message to start. /help for commands, /skills for skills, Ctrl+C to exit.
 
@@ -167,7 +167,7 @@ ac --resume abc123
 Every request shows cost:
 ```
 Total: $0.003 | 12,450 in / 234 out / 890 reasoning
-  xai: $0.003 (grok-4-1-fast-reasoning)
+  xai: $0.003 (grok-4.3)
 ```
 
 Set a spending limit:
