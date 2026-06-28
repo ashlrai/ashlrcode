@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@ashlr/auth": "file:../ashlr-auth",
     "@ashlr/config": "file:../ashlr-config",
     "@ashlr/cost": "file:../ashlr-cost",
     "@ashlr/core-efficiency": "file:../ashlr-core-efficiency",
