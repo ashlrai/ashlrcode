@@ -18,6 +18,11 @@ import { buildMinimalCoordinatorContext, type MinimalCoordinatorContext } from "
 import { initPulseHud, getPulseHud } from "../telemetry/pulse-hud.ts";
 import { listTimelines, loadTimeline, forkFrom } from "./time-travel.ts";
 import { bisectEdits, type Edit } from "./self-bisect.ts";
+import {
+  detectSurgicalScope,
+  checkFileCountGuard,
+  revertToPreSurgicalSnapshot,
+} from "./surgical-scope.ts";
 
 export interface AutonomousOptions {
   goal: string;
@@ -294,12 +299,23 @@ export async function runAutonomous(opts: AutonomousOptions): Promise<Autonomous
 
   // In surgical mode: skip all phases and run one focused agent loop, then return.
   if (opts.surgical) {
-    const surgicalSystemPrompt = ctx.systemPrompt + "\n\n" + SURGICAL_DIRECTIVE;
+    // ── Intent-aware scope detection ──────────────────────────────────────
+    const scope = detectSurgicalScope(opts.goal);
+    reporter.phase("surgical", `Scope detected: ${scope.scopeLabel} — file budget: ${scope.fileBudget}`);
+
+    const surgicalSystemPrompt =
+      ctx.systemPrompt +
+      "\n\n" +
+      SURGICAL_DIRECTIVE +
+      `\n\nSCOPE BUDGET: This goal is classified as "${scope.scopeTier}" scope. ` +
+      `Expected to touch at most ${scope.fileBudget} file(s). ` +
+      `Stay within this budget — do not spread changes across unrelated files.`;
+
     // Cap at 10 iterations — enough for read+edit+verify but blocks multi-milestone sprawl.
     // User can still pass --max-iterations 2 to further restrict.
     const surgicalMaxIterations = Math.min(opts.maxIterations, 10);
 
-    reporter.phase("surgical", `Applying surgical edit (max ${surgicalMaxIterations} iterations)...`);
+    reporter.phase("surgical", `Applying surgical edit (max ${surgicalMaxIterations} iterations, scope: ${scope.scopeTier})...`);
 
     try {
       const result = await runAgentLoop(opts.goal, [], {
@@ -309,6 +325,31 @@ export async function runAutonomous(opts: AutonomousOptions): Promise<Autonomous
         toolContext: ctx.toolContext,
         maxIterations: surgicalMaxIterations,
       });
+
+      // ── File-count guard ───────────────────────────────────────────────
+      // If the run touched more files than the scope budget allows, auto-revert
+      // via git stash and report the overshoot instead of committing.
+      const guardResult = await checkFileCountGuard(opts.cwd, scope);
+      if (!guardResult.withinBudget) {
+        reporter.warn(
+          `FILE-COUNT GUARD: surgical run touched ${guardResult.filesChanged} file(s) ` +
+          `but scope budget is ${guardResult.fileBudget} (${scope.scopeTier}). ` +
+          `Auto-reverting via git stash.`,
+        );
+        const reverted = await revertToPreSurgicalSnapshot(opts.cwd, opts.goal);
+        const revertMsg = reverted
+          ? "Changes stashed as 'surgical-scope-revert'. Use `git stash pop` to restore if intentional."
+          : "Stash failed — working tree may still have changes. Inspect manually.";
+        reporter.warn(revertMsg);
+        await ctx.cleanup();
+        return {
+          success: false,
+          summary:
+            `Surgical overshoot: touched ${guardResult.filesChanged} files, ` +
+            `budget was ${guardResult.fileBudget} (${scope.scopeTier} scope). ` +
+            revertMsg,
+        };
+      }
 
       // Commit only if something actually changed
       const committed = await gitCommit(opts.cwd, `fix: ${opts.goal.slice(0, 72)}`);
