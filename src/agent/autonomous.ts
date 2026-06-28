@@ -8,13 +8,16 @@
  */
 
 import { existsSync } from "fs";
-import { readFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 
 import { runAgentLoop } from "./loop.ts";
 import { coordinate, type CoordinatorConfig } from "./coordinator.ts";
 import { AutonomousReporter } from "./autonomous-reporter.ts";
 import { buildMinimalCoordinatorContext, type MinimalCoordinatorContext } from "./bootstrap.ts";
+import { initPulseHud, getPulseHud } from "../telemetry/pulse-hud.ts";
+import { listTimelines, loadTimeline, forkFrom } from "./time-travel.ts";
+import { bisectEdits, type Edit } from "./self-bisect.ts";
 
 export interface AutonomousOptions {
   goal: string;
@@ -29,6 +32,16 @@ export interface AutonomousOptions {
    * requires a new file), and caps iterations to a low number.
    */
   surgical?: boolean;
+  /** Enable Pulse HUD telemetry — emits OTLP spans to the configured endpoint. */
+  pulseHud?: boolean;
+  /** Enable time-travel recording — appends each tool step to a session timeline. */
+  timeTravel?: boolean;
+  /**
+   * Self-bisect on test failure — when a post-milestone fix-pass still leaves
+   * tests red, binary-search the recorded edit sequence to isolate the culprit
+   * edit and surface a surgical revert instead of a broad retry.
+   */
+  selfBisect?: boolean;
 }
 
 export interface AutonomousResult {
@@ -146,6 +159,87 @@ async function detectAndRunTests(cwd: string): Promise<{ passed: number; failed:
   return { passed: 0, failed: 0 };
 }
 
+/* ── Self-bisect helpers ──────────────────────────────────────────── */
+
+/**
+ * Snapshot all git-tracked source files in `cwd` into `out`.
+ * Uses `git ls-files` so we only track files the repo knows about.
+ * Non-git dirs fall back to a no-op (bisect just won't have edits).
+ */
+async function snapshotTrackedFiles(cwd: string, out: Map<string, string>): Promise<void> {
+  try {
+    const proc = Bun.spawn(["git", "ls-files", "--cached", "--others", "--exclude-standard"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const paths = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+    await Promise.all(
+      paths.map(async (rel) => {
+        const abs = join(cwd, rel);
+        try {
+          const content = await readFile(abs, "utf-8");
+          out.set(abs, content);
+        } catch {
+          // binary or unreadable — skip
+        }
+      }),
+    );
+  } catch {
+    // not a git repo or git unavailable — bisect edit log stays empty
+  }
+}
+
+/**
+ * Compare current on-disk content against `snapshots`, add one Edit entry per
+ * changed file into `log`. Each file gets a single coarse edit (before=snapshot,
+ * after=current) labelled with the milestone name.
+ */
+async function diffSnapshotsIntoEditLog(
+  cwd: string,
+  snapshots: Map<string, string>,
+  log: Edit[],
+  label: string,
+): Promise<void> {
+  for (const [abs, before] of snapshots) {
+    try {
+      const after = await readFile(abs, "utf-8");
+      if (after !== before) {
+        log.push({ filePath: abs, before, after, label });
+      }
+    } catch {
+      // file was deleted — record deletion as edit with empty after
+      log.push({ filePath: abs, before, after: "", label: `${label} (deleted)` });
+    }
+  }
+  // Also pick up newly created files (not in snapshot but now on disk).
+  try {
+    const proc = Bun.spawn(["git", "ls-files", "--others", "--exclude-standard"], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = await new Response(proc.stdout).text();
+    await proc.exited;
+    const newFiles = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+    for (const rel of newFiles) {
+      const abs = join(cwd, rel);
+      if (!snapshots.has(abs)) {
+        try {
+          const after = await readFile(abs, "utf-8");
+          log.push({ filePath: abs, before: "", after, label: `${label} (new)` });
+        } catch {
+          // skip unreadable
+        }
+      }
+    }
+  } catch {
+    // git unavailable — skip new-file detection
+  }
+}
+
 /* ── Main entry point ─────────────────────────────────────────────── */
 
 /** System-prompt directive injected when --surgical is active. */
@@ -168,6 +262,19 @@ export async function runAutonomous(opts: AutonomousOptions): Promise<Autonomous
   let totalCommits = 0;
   let totalFilesCreated = 0;
   let lastTestResults = { passed: 0, failed: 0 };
+
+  // ── Pulse HUD bootstrap ─────────────────────────────────────────────────
+  // Init before any agent work so spans are captured from the first loop iter.
+  initPulseHud({
+    enabled: opts.pulseHud ?? false,
+    endpoint: (opts as any).pulseOtlpUrl ?? process.env.PULSE_OTLP_URL,
+    apiKey: (opts as any).pulseOtlpApiKey ?? process.env.PULSE_OTLP_API_KEY,
+    sessionId: `auto-${Date.now()}`,
+  });
+
+  // ── Edit log for self-bisect ────────────────────────────────────────────
+  // Populated by the onToolEnd hook below whenever Write/Edit succeeds.
+  const recordedEdits: Edit[] = [];
 
   reporter.phase("init", `Goal: ${opts.goal}`);
   reporter.phase("init", `Working directory: ${opts.cwd}`);
@@ -322,6 +429,18 @@ Make sure BACKLOG.md exists with ## headings for each milestone.`;
 
       reporter.milestone(i + 1, milestones.length, ms.name);
 
+      // Snapshot of edit log length at milestone start — lets us slice edits
+      // produced only during this milestone for bisect purposes.
+      const editLogBaseIdx = recordedEdits.length;
+
+      // Capture pre-milestone file snapshots for self-bisect edit recording.
+      // We snapshot every tracked source file before coordinate() runs, then
+      // diff against disk after — each changed file becomes one Edit entry.
+      const preMilestoneSnapshots = new Map<string, string>();
+      if (opts.selfBisect) {
+        await snapshotTrackedFiles(opts.cwd, preMilestoneSnapshots);
+      }
+
       // Dispatch milestone via Coordinator
       const coordinatorConfig: CoordinatorConfig = {
         router: ctx.router,
@@ -359,6 +478,11 @@ Make sure BACKLOG.md exists with ## headings for each milestone.`;
         const successCount = result.tasks.filter((t) => t.success).length;
         iterationsUsed += result.tasks.length;
 
+        // Build edit log from pre/post file snapshots (for self-bisect).
+        if (opts.selfBisect && preMilestoneSnapshots.size > 0) {
+          await diffSnapshotsIntoEditLog(opts.cwd, preMilestoneSnapshots, recordedEdits, ms.name);
+        }
+
         // Run tests after each milestone
         lastTestResults = await detectAndRunTests(opts.cwd);
         if (lastTestResults.passed > 0 || lastTestResults.failed > 0) {
@@ -368,7 +492,12 @@ Make sure BACKLOG.md exists with ## headings for each milestone.`;
         // If tests fail, attempt a fix pass
         if (lastTestResults.failed > 0) {
           reporter.phase("autopilot", "Attempting to fix test failures...");
-          const fixResult = await runAgentLoop(
+
+          // Capture file snapshots before the fix-pass so bisect can restore.
+          // We snapshot each file touched in this milestone's edits.
+          const milestoneEdits = recordedEdits.slice(editLogBaseIdx);
+
+          await runAgentLoop(
             `Tests are failing. Run the tests, read the error output, and fix all failures. Do not skip or delete tests.`,
             [],
             {
@@ -385,6 +514,74 @@ Make sure BACKLOG.md exists with ## headings for each milestone.`;
           lastTestResults = await detectAndRunTests(opts.cwd);
           if (lastTestResults.passed > 0 || lastTestResults.failed > 0) {
             reporter.tests(lastTestResults.passed, lastTestResults.failed);
+          }
+
+          // ── Self-bisect ──────────────────────────────────────────────────
+          // If tests still red AND self-bisect is on AND we have recorded edits,
+          // binary-search the milestone's edit sequence to isolate the culprit.
+          if (opts.selfBisect && lastTestResults.failed > 0 && milestoneEdits.length > 0) {
+            reporter.phase("autopilot", `Self-bisecting ${milestoneEdits.length} edit(s) to find culprit...`);
+
+            /**
+             * Restore the working tree to the state after applying the first
+             * `prefixLen` edits from the milestone's edit log. We write each file
+             * to its pre/post content depending on which edits are in the prefix.
+             */
+            const restoreTreeToPrefix = async (prefixLen: number): Promise<void> => {
+              // Build a map of filePath → content at this prefix boundary.
+              // For files not yet touched (index >= prefixLen), use `before` of
+              // first edit on that file. For files in the prefix, use `after` of
+              // the last edit on that file within the prefix.
+              const fileState = new Map<string, string>();
+              // Seed with pre-edit (before) content for every touched file.
+              for (const e of milestoneEdits) {
+                if (!fileState.has(e.filePath)) {
+                  fileState.set(e.filePath, e.before);
+                }
+              }
+              // Apply edits up to prefixLen.
+              for (let k = 0; k < prefixLen && k < milestoneEdits.length; k++) {
+                fileState.set(milestoneEdits[k]!.filePath, milestoneEdits[k]!.after);
+              }
+              for (const [filePath, content] of fileState) {
+                try {
+                  await writeFile(filePath, content, "utf-8");
+                } catch {
+                  // best-effort
+                }
+              }
+            };
+
+            const bisectResult = await bisectEdits({
+              edits: milestoneEdits,
+              check: async () => {
+                const r = await detectAndRunTests(opts.cwd);
+                return r.failed === 0;
+              },
+              apply: restoreTreeToPrefix,
+            });
+
+            if (bisectResult.reason === "isolated" && bisectResult.culprit) {
+              reporter.phase(
+                "autopilot",
+                `Bisect isolated culprit edit #${bisectResult.culpritIndex} (${bisectResult.probes} probes): ${bisectResult.culprit.label ?? bisectResult.culprit.filePath}`,
+              );
+              if (bisectResult.surgicalRevert) {
+                reporter.phase("autopilot", `Surgical revert:\n${bisectResult.surgicalRevert}`);
+                // Apply the surgical revert (restore to before state for culprit file).
+                try {
+                  await writeFile(bisectResult.culprit.filePath, bisectResult.culprit.before, "utf-8");
+                  reporter.phase("autopilot", `Applied surgical revert to ${bisectResult.culprit.filePath}`);
+                  // Re-verify after revert.
+                  lastTestResults = await detectAndRunTests(opts.cwd);
+                  reporter.tests(lastTestResults.passed, lastTestResults.failed);
+                } catch {
+                  reporter.warn("Surgical revert write failed — tree may be inconsistent");
+                }
+              }
+            } else {
+              reporter.phase("autopilot", `Bisect result: ${bisectResult.reason} (${bisectResult.probes} probes) — no single culprit isolated`);
+            }
           }
         }
 
@@ -407,6 +604,13 @@ Make sure BACKLOG.md exists with ## headings for each milestone.`;
     // ── Phase 3: Wrap-up ───────────────────────────────────────
 
     reporter.phase("wrap-up", "Running final checks...");
+
+    // Flush + print Pulse HUD summary before final test run.
+    const hud = getPulseHud();
+    if (hud) {
+      await hud.close();
+      reporter.phase("wrap-up", hud.summaryLine());
+    }
 
     // Final test suite
     lastTestResults = await detectAndRunTests(opts.cwd);

@@ -175,6 +175,9 @@ async function main() {
   const goal = getArg(args, "--goal");
   const initialScaffold = args.includes("--initial-scaffold");
   const surgical = args.includes("--surgical");
+  const selfBisect = args.includes("--self-bisect");
+  const timeTravel = args.includes("--time-travel");
+  const pulseHud = args.includes("--pulse-hud");
   const maxIterationsArg = getArg(args, "--max-iterations");
   const timeoutArg = getArg(args, "--timeout");
 
@@ -189,10 +192,76 @@ async function main() {
       cwd: process.cwd(),
       scaffold: initialScaffold,
       surgical,
+      selfBisect,
+      timeTravel,
+      pulseHud,
       maxIterations: maxIterationsArg ? parseInt(maxIterationsArg, 10) : 200,
       timeout: timeoutArg ? parseInt(timeoutArg, 10) : 3600,
     });
     process.exit(result.success ? 0 : 1);
+  }
+
+  // ── Timeline subcommand ────────────────────────────────────────────────
+  if (args[0] === "timeline") {
+    const sub = args[1];
+    const { listTimelines, loadTimeline, forkFrom } = await import("./agent/time-travel.ts");
+
+    if (!sub || sub === "list") {
+      const sessions = await listTimelines();
+      if (sessions.length === 0) {
+        console.log("No recorded timelines.");
+      } else {
+        console.log(`${sessions.length} timeline(s):`);
+        for (const id of sessions) {
+          console.log(`  ${id}`);
+        }
+      }
+    } else if (sub === "show") {
+      const id = args[2];
+      if (!id) {
+        console.error("Usage: ac timeline show <session-id>");
+        process.exit(1);
+      }
+      const steps = await loadTimeline(id);
+      if (steps.length === 0) {
+        console.log(`No steps recorded for session: ${id}`);
+      } else {
+        console.log(`Timeline: ${id}  (${steps.length} step(s))`);
+        for (const step of steps) {
+          const treeRef = step.tree.sha ? step.tree.sha.slice(0, 8) : "none";
+          const dirty = step.tree.dirty ? "*" : "";
+          console.log(`  [${step.index}] ${step.at}  ${step.toolName}  tree:${treeRef}${dirty}${step.isError ? "  ERROR" : ""}`);
+        }
+      }
+    } else if (sub === "fork") {
+      const id = args[2];
+      const stepStr = args[3];
+      if (!id || !stepStr) {
+        console.error("Usage: ac timeline fork <session-id> <step>");
+        process.exit(1);
+      }
+      const stepIndex = parseInt(stepStr, 10);
+      if (isNaN(stepIndex)) {
+        console.error(`Invalid step index: ${stepStr}`);
+        process.exit(1);
+      }
+      const result = await forkFrom(id, stepIndex);
+      if (!result) {
+        console.error(`Fork failed: session ${id} not found or step ${stepIndex} out of range.`);
+        process.exit(1);
+      }
+      console.log(`Forked session: ${result.sessionId}`);
+      console.log(`  from: ${id} @ step ${result.fromIndex}`);
+      console.log(`  steps copied: ${result.steps}`);
+      if (result.tree.sha) {
+        console.log(`  tree marker: ${result.tree.sha.slice(0, 8)}${result.tree.dirty ? " (dirty)" : ""}`);
+      }
+    } else {
+      console.error(`Unknown timeline subcommand: ${sub}`);
+      console.error("Usage: ac timeline <list|show <id>|fork <id> <step>>");
+      process.exit(1);
+    }
+    process.exit(0);
   }
 
   if (dangerouslySkipPermissions) {
@@ -1257,9 +1326,17 @@ ${chalk.bold("OPTIONS")}
   --goal <text>                       Goal for autonomous mode
   --initial-scaffold                  Force project scaffolding in autonomous mode
   --surgical                          Minimal-change mode: one edit, no scaffolding, no new files
+  --self-bisect                       Binary-search edits to isolate culprit on test failure
+  --time-travel                       Record every tool step to a replayable session timeline
+  --pulse-hud                         Emit OTLP telemetry spans for each autonomous step
   --max-iterations <n>                Max agent iterations (default: 200)
   --timeout <seconds>                 Timeout in seconds (default: 3600)
   --migrate                           Import MCP servers and skills from Claude Code
+
+${chalk.bold("TIMELINE")}
+  ac timeline list                    List all recorded session timelines
+  ac timeline show <id>               Print every step in a session timeline
+  ac timeline fork <id> <step>        Fork a new session from a step in an existing timeline
 
 ${chalk.bold("COMMANDS")} (in REPL)
   /plan                     Show plan mode status
