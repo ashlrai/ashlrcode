@@ -11,6 +11,7 @@ import type { ToolDefinition } from "../providers/types.ts";
 import { toolToDefinition } from "./types.ts";
 import { runPreToolHooks, runPostToolHooks, type HooksConfig } from "../config/hooks.ts";
 import { checkRules } from "../config/permissions.ts";
+import { emitSpan } from "../telemetry/pulse-hud.ts";
 
 /** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
 let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -161,6 +162,7 @@ export class ToolRegistry {
     // Execute tool with timeout protection (exempt tools that wait for human input or run sub-agents)
     const skipTimeout = NO_TIMEOUT_TOOLS.has(toolName);
     const timeout = timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    const _spanStart = Date.now();
     try {
       const result = skipTimeout
         ? await tool.call(input, context)
@@ -177,9 +179,11 @@ export class ToolRegistry {
       // Run post-tool hooks (fire and forget)
       runPostToolHooks(this.hooks, toolName, input, result).catch(() => {});
 
+      emitSpan({ name: `tool ${toolName}`, kind: "tool", durationMs: Date.now() - _spanStart, attrs: { "gen_ai.tool.name": toolName } });
       return { result, isError: false };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      emitSpan({ name: `tool ${toolName}`, kind: "tool", durationMs: Date.now() - _spanStart, error: message, attrs: { "gen_ai.tool.name": toolName } });
       return { result: `Error: ${message}`, isError: true };
     }
   }

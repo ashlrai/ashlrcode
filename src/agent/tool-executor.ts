@@ -11,6 +11,10 @@ import type { ToolContext } from "../tools/types.ts";
 import type { ToolCall } from "../providers/types.ts";
 import type { SpeculationCache } from "./speculation.ts";
 import { trackFileModification } from "./verification.ts";
+import { recordStep } from "./time-travel.ts";
+
+// Monotonic per-session step index for the time-travel timeline.
+const _ttStepIndex = new Map<string, number>();
 
 // ---------------------------------------------------------------------------
 // Module-level speculation cache (set from repl startup)
@@ -222,6 +226,12 @@ async function executeSingle(
 
   // Track and speculatively pre-fetch next likely calls
   trackAndSpeculate(tc.name, tc.input, isError ? undefined : result);
+
+  // Time-travel: record this step into the session timeline (never throws, flag-gated).
+  const sid = context.sessionId ?? "default";
+  const idx = (_ttStepIndex.get(sid) ?? 0);
+  _ttStepIndex.set(sid, idx + 1);
+  void recordStep(sid, { index: idx, toolName: tc.name, args: tc.input, result, isError, cwd: context.cwd });
 
   return {
     toolCallId: tc.id,

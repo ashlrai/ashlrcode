@@ -6,6 +6,7 @@ import { createOpenAICompatibleProvider, createXAIProvider } from "./xai.ts";
 import { createAnthropicProvider } from "./anthropic.ts";
 import { CostTracker } from "./cost-tracker.ts";
 import { CircuitBreaker } from "./retry.ts";
+import { emitSpan } from "../telemetry/pulse-hud.ts";
 import type {
   Provider,
   ProviderConfig,
@@ -150,6 +151,18 @@ export class ProviderRouter {
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
       reasoningTokens: usage.reasoningTokens ?? 0,
+    });
+    // Pulse HUD: emit a GenAI-OTel LLM span (no-op unless pulseHud enabled).
+    emitSpan({
+      name: `chat ${provider.name}`,
+      kind: "llm",
+      attrs: {
+        "gen_ai.system": provider.name,
+        "gen_ai.request.model": provider.config.model,
+        "gen_ai.usage.input_tokens": usage.inputTokens,
+        "gen_ai.usage.output_tokens": usage.outputTokens,
+        "gen_ai.usage.reasoning_tokens": usage.reasoningTokens ?? 0,
+      },
     });
   }
 

@@ -80,6 +80,32 @@ export interface Settings {
 
   /** Optional API key for authenticated binshield requests. */
   binshieldKey?: string;
+
+  /**
+   * Record a replayable, branchable timeline of every agent step (tool name,
+   * args, result, and a cheap working-tree marker) to
+   * `~/.ashlrcode/timelines/<sessionId>.jsonl`. Enables scrubbing backward,
+   * forking from any step, and re-running. Never throws; bounded per session.
+   * Default: false.
+   */
+  timeTravel?: boolean;
+
+  /**
+   * Live GenAI-OTel HUD: stream a span per LLM call and per tool call from the
+   * autonomous loop to ashlr-pulse, plus a compact in-TUI cost/token summary.
+   * Telemetry is best-effort and never blocks the agent. Default: false.
+   */
+  pulseHud?: boolean;
+
+  /**
+   * ashlr-pulse OTLP endpoint. Accepts a base Pulse URL (the
+   * `/api/otlp/v1/traces` path is appended automatically) or the full traces
+   * URL. Falls back to the `PULSE_OTLP_URL` env var when unset.
+   */
+  pulseOtlpUrl?: string;
+
+  /** Optional bearer token for the Pulse OTLP endpoint (or PULSE_OTLP_API_KEY). */
+  pulseOtlpApiKey?: string;
 }
 
 let configDirOverride: string | null = null;
