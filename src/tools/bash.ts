@@ -1,12 +1,51 @@
 /**
  * BashTool — execute shell commands with timeout and live output streaming.
+ *
+ * Autonomous safety guards (both default-off, flag-gated via settings):
+ *   phantomSealed  — routes commands through `phantom exec --` so secrets
+ *                    never appear in prompts/transcripts.
+ *   binshieldGate  — scans dependency-install commands via binshield before
+ *                    executing; blocks on critical/high risk verdict.
  */
 
 import chalk from "chalk";
 import type { Tool, ToolContext } from "./types.ts";
+import { applyPhantomSeal } from "./guards/phantom-seal.ts";
+import { checkBinshieldGate } from "./guards/binshield-gate.ts";
+import type { Settings } from "../config/settings.ts";
 
 const DEFAULT_TIMEOUT = 120_000; // 2 minutes
 const LIVE_OUTPUT_THRESHOLD = 5_000; // Stream live after 5s
+
+// ── Guard settings cache ──────────────────────────────────────────────────────
+// Loaded lazily on first autonomous call; never throws.
+
+let _cachedSettings: Settings | null = null;
+let _settingsLoaded = false;
+
+async function getGuardSettings(): Promise<Settings> {
+  if (_settingsLoaded) return _cachedSettings ?? ({} as Settings);
+  _settingsLoaded = true;
+  try {
+    const { loadSettings } = await import("../config/settings.ts");
+    _cachedSettings = await loadSettings();
+  } catch {
+    _cachedSettings = {} as Settings;
+  }
+  return _cachedSettings;
+}
+
+/** Reset for tests — allows injecting mock settings. */
+export function _resetGuardSettingsCache(settings?: Settings): void {
+  _cachedSettings = settings ?? null;
+  _settingsLoaded = settings !== undefined;
+}
+
+/** Fetch override for binshield — injectable in tests. */
+export let _binshieldFetchOverride: typeof fetch | undefined;
+export function _setBinshieldFetch(fn: typeof fetch | undefined): void {
+  _binshieldFetchOverride = fn;
+}
 
 export const bashTool: Tool = {
   name: "Bash",
@@ -64,8 +103,39 @@ export const bashTool: Tool = {
   },
 
   async call(input, context) {
-    const command = input.command as string;
+    let command = input.command as string;
     const timeout = (input.timeout as number) ?? DEFAULT_TIMEOUT;
+
+    // ── Autonomous safety guards ────────────────────────────────────────────
+    // Both are default-off and never-throw; degrade gracefully when unavailable.
+    try {
+      const s = await getGuardSettings();
+
+      // Guard 1: BinShield install gate — scan before executing installs
+      if (s.binshieldGate) {
+        const gate = await checkBinshieldGate(command, {
+          enabled: true,
+          apiUrl: s.binshieldUrl,
+          apiKey: s.binshieldKey,
+          fetchFn: _binshieldFetchOverride,
+        });
+        if (gate.verdict === "block") {
+          return gate.reason;
+        }
+      }
+
+      // Guard 2: Phantom-sealed secrets — wrap command through phantom exec
+      if (s.phantomSealed) {
+        const seal = await applyPhantomSeal(command, {
+          enabled: true,
+          cwd: context.cwd,
+        });
+        command = seal.command;
+      }
+    } catch {
+      // Guards must never break normal tool execution
+    }
+    // ── End guards ──────────────────────────────────────────────────────────
 
     const proc = Bun.spawn(["bash", "-c", command], {
       cwd: context.cwd,

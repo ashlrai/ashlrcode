@@ -23,6 +23,12 @@ export interface AutonomousOptions {
   maxIterations: number;
   /** Timeout in seconds */
   timeout: number;
+  /**
+   * Surgical mode — make ONLY the minimal change the goal states.
+   * Forbids scaffolding, planning docs, new files (unless the goal explicitly
+   * requires a new file), and caps iterations to a low number.
+   */
+  surgical?: boolean;
 }
 
 export interface AutonomousResult {
@@ -142,6 +148,19 @@ async function detectAndRunTests(cwd: string): Promise<{ passed: number; failed:
 
 /* ── Main entry point ─────────────────────────────────────────────── */
 
+/** System-prompt directive injected when --surgical is active. */
+const SURGICAL_DIRECTIVE = `
+[SURGICAL MODE — CRITICAL CONSTRAINTS]
+You are performing a SURGICAL edit. You MUST obey ALL of the following:
+1. Make ONLY the exact minimal change that the goal states — nothing more.
+2. If the goal says "add a one-line comment", add exactly one line. Do not refactor, rename, or reorganize.
+3. Do NOT create any new files unless the goal explicitly says to create a new file. No BACKLOG.md, no README, no scaffolding, no milestone docs.
+4. Do NOT run planning phases, create task lists, or write project structure files.
+5. Locate the target, apply the smallest possible edit, and stop.
+6. If you are unsure which file to edit, read only what is necessary to find it, then edit it.
+VIOLATION OF THESE RULES IS A FAILURE. One edit. Stop.
+`.trim();
+
 export async function runAutonomous(opts: AutonomousOptions): Promise<AutonomousResult> {
   const reporter = new AutonomousReporter();
   const startTime = Date.now();
@@ -152,6 +171,9 @@ export async function runAutonomous(opts: AutonomousOptions): Promise<Autonomous
 
   reporter.phase("init", `Goal: ${opts.goal}`);
   reporter.phase("init", `Working directory: ${opts.cwd}`);
+  if (opts.surgical) {
+    reporter.phase("init", "Mode: SURGICAL — minimal change only, scaffolding disabled");
+  }
 
   // Bootstrap the full coordinator context (router, tools, permissions, system prompt)
   let ctx: MinimalCoordinatorContext;
@@ -161,6 +183,51 @@ export async function runAutonomous(opts: AutonomousOptions): Promise<Autonomous
     const msg = err instanceof Error ? err.message : String(err);
     reporter.error(`Failed to initialize: ${msg}`);
     return { success: false, summary: `Init failed: ${msg}` };
+  }
+
+  // In surgical mode: skip all phases and run one focused agent loop, then return.
+  if (opts.surgical) {
+    const surgicalSystemPrompt = ctx.systemPrompt + "\n\n" + SURGICAL_DIRECTIVE;
+    // Cap at 10 iterations — enough for read+edit+verify but blocks multi-milestone sprawl.
+    // User can still pass --max-iterations 2 to further restrict.
+    const surgicalMaxIterations = Math.min(opts.maxIterations, 10);
+
+    reporter.phase("surgical", `Applying surgical edit (max ${surgicalMaxIterations} iterations)...`);
+
+    try {
+      const result = await runAgentLoop(opts.goal, [], {
+        systemPrompt: surgicalSystemPrompt,
+        router: ctx.router,
+        toolRegistry: ctx.toolRegistry,
+        toolContext: ctx.toolContext,
+        maxIterations: surgicalMaxIterations,
+      });
+
+      // Commit only if something actually changed
+      const committed = await gitCommit(opts.cwd, `fix: ${opts.goal.slice(0, 72)}`);
+      if (committed) {
+        reporter.commit(`fix: ${opts.goal.slice(0, 72)}`);
+        totalCommits++;
+      }
+
+      reporter.summary({
+        filesCreated: 0,
+        testsPass: 0,
+        testsFail: 0,
+        commits: totalCommits,
+        duration: Date.now() - startTime,
+        milestones: { done: 1, total: 1 },
+      });
+
+      const summary = result.finalText.slice(0, 200) || "Surgical edit applied";
+      return { success: true, summary };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reporter.error(`Surgical edit failed: ${msg}`);
+      return { success: false, summary: `Surgical edit failed: ${msg}` };
+    } finally {
+      await ctx.cleanup();
+    }
   }
 
   try {

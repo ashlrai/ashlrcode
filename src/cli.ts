@@ -174,6 +174,7 @@ async function main() {
   const autonomous = args.includes("--autonomous");
   const goal = getArg(args, "--goal");
   const initialScaffold = args.includes("--initial-scaffold");
+  const surgical = args.includes("--surgical");
   const maxIterationsArg = getArg(args, "--max-iterations");
   const timeoutArg = getArg(args, "--timeout");
 
@@ -187,6 +188,7 @@ async function main() {
       goal,
       cwd: process.cwd(),
       scaffold: initialScaffold,
+      surgical,
       maxIterations: maxIterationsArg ? parseInt(maxIterationsArg, 10) : 200,
       timeout: timeoutArg ? parseInt(timeoutArg, 10) : 3600,
     });
@@ -1254,6 +1256,7 @@ ${chalk.bold("OPTIONS")}
   --autonomous                        Run in headless autonomous mode (requires --goal)
   --goal <text>                       Goal for autonomous mode
   --initial-scaffold                  Force project scaffolding in autonomous mode
+  --surgical                          Minimal-change mode: one edit, no scaffolding, no new files
   --max-iterations <n>                Max agent iterations (default: 200)
   --timeout <seconds>                 Timeout in seconds (default: 3600)
   --migrate                           Import MCP servers and skills from Claude Code

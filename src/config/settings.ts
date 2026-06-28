@@ -55,6 +55,31 @@ export interface Settings {
   toolTimeoutMs?: number;
   /** System prompt token budget cap (default: 50000) */
   systemPromptBudget?: number;
+
+  // ── Autonomous safety guards (default off) ────────────────────────────────
+
+  /**
+   * Route autonomous bash calls through `phantom exec -- <cmd>` so real
+   * credentials are injected at the network edge rather than appearing in
+   * prompts or transcripts. Requires `phantom` on PATH and an initialized
+   * Phantom vault in the project. Degrades gracefully when unavailable.
+   * Default: false.
+   */
+  phantomSealed?: boolean;
+
+  /**
+   * Scan dependency-install commands (npm/bun/pnpm/yarn/pip install) via
+   * binshield before execution. Blocks on critical/high verdict; allows
+   * otherwise. Degrades gracefully (fail-open) when binshield is unreachable.
+   * Default: false.
+   */
+  binshieldGate?: boolean;
+
+  /** Base URL for the binshield scan API. Default: https://api.binshield.dev */
+  binshieldUrl?: string;
+
+  /** Optional API key for authenticated binshield requests. */
+  binshieldKey?: string;
 }
 
 let configDirOverride: string | null = null;
