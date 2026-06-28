@@ -14,6 +14,7 @@ import {
   KEYCHAIN_ACCOUNTS,
   KEYCHAIN_PLACEHOLDER,
 } from "./keychain.ts";
+import { resolveSecret } from "@ashlr/config/secrets";
 
 export interface ToolHookRule {
   /** Glob pattern for tool name (e.g. "Bash", "File*") */
@@ -197,9 +198,9 @@ export async function saveSettings(settings: Settings): Promise<void> {
 }
 
 function getDefaultSettings(): Settings {
-  // Filter out empty strings from env vars — treat "" as unset
-  const xaiKey = process.env.XAI_API_KEY?.trim() || "";
-  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() || "";
+  // Resolve API keys — phantom vault first, then process.env (resolveSecret handles both)
+  const xaiKey = resolveSecret("XAI_API_KEY") ?? "";
+  const anthropicKey = resolveSecret("ANTHROPIC_API_KEY") ?? "";
 
   return {
     providers: {
