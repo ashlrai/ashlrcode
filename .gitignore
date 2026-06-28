@@ -149,3 +149,4 @@ vite.config.ts.timestamp-*
 
 # Research / reference projects
 cc source project/
+*.bun-build

@@ -52,6 +52,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@ashlr/cost": "file:../ashlr-cost",
     "@ashlr/core-efficiency": "file:../ashlr-core-efficiency",
     "chalk": "^5.6.2",
     "fast-glob": "^3.3.3",

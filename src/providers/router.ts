@@ -35,7 +35,7 @@ export class ProviderRouter {
       perProvider: new Map<string, { inputTokens: number; outputTokens: number; reasoningTokens: number; costUSD: number }>(
         tracker.getBreakdown().map(e => [
           `${e.provider}`,
-          { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens, reasoningTokens: e.usage.reasoningTokens, costUSD: e.costUSD },
+          { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens, reasoningTokens: e.usage.reasoningTokens, costUSD: e.cost.totalCostUSD },
         ])
       ),
     };
