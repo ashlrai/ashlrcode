@@ -18,6 +18,12 @@ import type { SpeculationCache } from "./speculation.ts";
 import type { PersistentSpeculationCache } from "./speculation.ts";
 import { trackFileModification } from "./verification.ts";
 import { recordStep } from "./time-travel.ts";
+import {
+  recordToolSelection,
+  recordSpeculationHit,
+  recordSpeculationMiss,
+  currentTurn,
+} from "./intent-trace.ts";
 
 // ---------------------------------------------------------------------------
 // Streaming result compression
@@ -364,13 +370,20 @@ async function executeSingle(
   const startTime = performance.now();
   const tool = registry.get(tc.name);
 
+  const sid = context.sessionId ?? "default";
+  const turn = currentTurn(sid);
+
   // Check in-memory speculation cache for read-only tools (skip the full execute path)
   if (tool?.isReadOnly() && _speculationCache) {
     const cached = _speculationCache.get(tc.name, tc.input);
     if (cached !== null) {
       callbacks?.onToolStart?.(tc.name, tc.input);
       callbacks?.onToolEnd?.(tc.name, cached, false);
-      recordToolMetric(tc.name, performance.now() - startTime, false);
+      const hitMs = performance.now() - startTime;
+      recordToolMetric(tc.name, hitMs, false);
+
+      // Intent trace: record speculation hit
+      void recordSpeculationHit(sid, turn, tc.name, "memory", hitMs);
 
       // Track for speculation and trigger pre-fetch for next likely call
       trackAndSpeculate(tc.name, tc.input, cached);
@@ -392,7 +405,11 @@ async function executeSingle(
       const { result: cachedResult } = persistedHit;
       callbacks?.onToolStart?.(tc.name, tc.input);
       callbacks?.onToolEnd?.(tc.name, cachedResult, false);
-      recordToolMetric(tc.name, performance.now() - startTime, false);
+      const hitMs = performance.now() - startTime;
+      recordToolMetric(tc.name, hitMs, false);
+
+      // Intent trace: record persistent speculation hit
+      void recordSpeculationHit(sid, turn, tc.name, "persistent", hitMs);
 
       // Also populate the in-memory cache so subsequent calls in this session
       // don't need to hit disk
@@ -442,10 +459,13 @@ async function executeSingle(
   trackAndSpeculate(tc.name, tc.input, isError ? undefined : result);
 
   // Time-travel: record this step into the session timeline (never throws, flag-gated).
-  const sid = context.sessionId ?? "default";
   const idx = (_ttStepIndex.get(sid) ?? 0);
   _ttStepIndex.set(sid, idx + 1);
   void recordStep(sid, { index: idx, toolName: tc.name, args: tc.input, result, isError, cwd: context.cwd });
+
+  // Intent trace: record tool selection (cache miss path = live execution).
+  void recordToolSelection(sid, turn, tc.name, tc.input, "", idx);
+  void recordSpeculationMiss(sid, turn, tc.name, executionMs);
 
   return {
     toolCallId: tc.id,

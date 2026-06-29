@@ -20,6 +20,13 @@ import type {
 } from "../providers/types.ts";
 import type { SystemPrompt, AgentId } from "../types/branded.ts";
 import { runWithAgentContext, createChildContext, getAgentContext } from "./async-context.ts";
+import {
+  recordTurnBoundary,
+  recordGoalNormalization,
+  recordContextCompression,
+  nextTurn,
+  approxTokens,
+} from "./intent-trace.ts";
 
 /** Default inactivity timeout for provider streams (5 minutes). */
 const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
@@ -147,7 +154,20 @@ async function _runAgentLoop(
   const allToolCalls: AgentResult["toolCalls"] = [];
   let finalText = "";
 
+  const sid = config.toolContext.sessionId ?? "default";
+  // Record goal normalization at the start of the outer user turn (iteration 0).
+  const turn = nextTurn(sid);
+  void recordGoalNormalization(sid, turn, userMessage, userMessage.slice(0, 200));
+  void recordTurnBoundary(sid, turn, "start");
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // Detect context compression: if messages have grown significantly compared
+    // to the last iteration, record a compression event (heuristic: block count drops).
+    const blocksBefore = messages.reduce(
+      (acc, m) => acc + (Array.isArray(m.content) ? m.content.length : 1),
+      0
+    );
+
     const { text, thinking, thinkingSignature, toolCalls, stopReason } = await streamResponse(
       messages,
       tools,
@@ -209,12 +229,28 @@ async function _runAgentLoop(
     }
 
     messages.push({ role: "user", content: resultBlocks });
+
+    // Detect context compression heuristic: measure token delta after appending results.
+    const blocksAfter = messages.reduce(
+      (acc, m) => acc + (Array.isArray(m.content) ? m.content.length : 1),
+      0
+    );
+    if (iteration > 0 && blocksAfter < blocksBefore) {
+      const tokensBefore = approxTokens(JSON.stringify(messages.slice(0, -1)));
+      const tokensAfter = approxTokens(JSON.stringify(messages));
+      if (tokensBefore > tokensAfter) {
+        void recordContextCompression(sid, turn, tokensBefore, tokensAfter, blocksBefore - blocksAfter);
+      }
+    }
   }
 
   // If we hit max iterations with no final text, add a fallback
   if (!finalText && allToolCalls.length > 0) {
     finalText = `[Reached maximum iterations (${maxIterations}). ${allToolCalls.length} tool calls were executed.]`;
   }
+
+  // Record turn end
+  void recordTurnBoundary(sid, turn, "end", allToolCalls.length, finalText.slice(0, 120));
 
   return { messages, finalText, toolCalls: allToolCalls };
 }
