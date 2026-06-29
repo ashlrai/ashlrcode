@@ -510,7 +510,7 @@ export function agentCommands(): Command[] {
       name: "/surgical",
       description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
       category: "agent",
-      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats"],
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats", "viz", "confidence", "history"],
       handler: async (args, ctx) => {
         const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
 
@@ -775,6 +775,24 @@ export function agentCommands(): Command[] {
           const stats = computeProposalStats(feedback);
           ctx.addOutput(formatProposalStats(stats));
           return true;
+        }
+
+        // /surgical viz — full tier confidence dashboard
+        if (args === "viz" || args.startsWith("viz ")) {
+          const { handleSurgicalViz } = await import("./surgical-viz.ts");
+          return handleSurgicalViz(args.slice("viz".length).trim(), ctx);
+        }
+
+        // /surgical confidence — confidence distribution chart
+        if (args === "confidence" || args.startsWith("confidence ")) {
+          const { handleSurgicalConfidence } = await import("./surgical-viz.ts");
+          return handleSurgicalConfidence(args.slice("confidence".length).trim(), ctx);
+        }
+
+        // /surgical history — recent tier decisions
+        if (args === "history" || args.startsWith("history ")) {
+          const { handleSurgicalHistory } = await import("./surgical-viz.ts");
+          return handleSurgicalHistory(args.slice("history".length).trim(), ctx);
         }
 
         // /surgical <free-text> — auto-detect tier from the provided message text
