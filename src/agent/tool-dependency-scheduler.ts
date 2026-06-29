@@ -456,6 +456,105 @@ export function recordWaveTiming(plan: ExecutionPlan, waveIndex: number, ms: num
 }
 
 // ---------------------------------------------------------------------------
+// Graph introspection API (used by /tool-graph command)
+// ---------------------------------------------------------------------------
+
+/**
+ * A serialisable snapshot of the internal graph structure for a given
+ * execution plan.  Suitable for JSON export and post-mortem analysis.
+ */
+export interface GraphSnapshot {
+  /** Stable fingerprint of the originating tool-call list. */
+  fingerprint: string;
+  /** ISO timestamp when this snapshot was captured. */
+  capturedAt: string;
+  /** Total number of tool calls in the plan. */
+  nodeCount: number;
+  /** Total number of dependency edges. */
+  edgeCount: number;
+  /** Number of parallel waves. */
+  waveCount: number;
+  /** Whether a dependency cycle was detected (forces serial fallback). */
+  hasCycle: boolean;
+  nodes: Array<{
+    index: number;
+    toolCallId: string;
+    toolName: string;
+    reads: string[];
+    writes: string[];
+    deps: number[];
+    dependents: number[];
+  }>;
+  edges: Array<{
+    from: number;
+    to: number;
+    resource: string;
+  }>;
+  waves: Wave[];
+  waveTimingsMs: number[];
+  /** Per-wave parallelism degree (number of tools in that wave). */
+  parallelismDegrees: number[];
+  /** Indices of tools that could not run in parallel with anything (lone serial nodes). */
+  serialBottlenecks: number[];
+  /** Coalescence decisions: pairs of node indices grouped for merged execution. */
+  coalescedPairs: Array<[number, number]>;
+}
+
+/**
+ * Extract a serialisable `GraphSnapshot` from an `ExecutionPlan`.
+ *
+ * This is the primary introspection surface for `/tool-graph` and `--debug-graph`.
+ */
+export function getGraph(plan: ExecutionPlan): GraphSnapshot {
+  const serialBottlenecks: number[] = [];
+  const parallelismDegrees = plan.waves.map((w) => {
+    if (w.length === 1) serialBottlenecks.push(w[0]!);
+    return w.length;
+  });
+
+  // Identify coalescence pairs: nodes in the same wave that share no direct
+  // dependency but write to overlapping resources (heuristic for coalescence candidates).
+  const coalescedPairs: Array<[number, number]> = [];
+  for (const wave of plan.waves) {
+    if (wave.length < 2) continue;
+    for (let i = 0; i < wave.length; i++) {
+      for (let j = i + 1; j < wave.length; j++) {
+        const a = plan.nodes[wave[i]!];
+        const b = plan.nodes[wave[j]!];
+        if (!a || !b) continue;
+        // They share a write target but are in the same wave (no dep between them)
+        const shareWrite = [...a.writes].some((r) => b.writes.has(r));
+        if (shareWrite) coalescedPairs.push([wave[i]!, wave[j]!]);
+      }
+    }
+  }
+
+  return {
+    fingerprint: plan.fingerprint,
+    capturedAt: new Date().toISOString(),
+    nodeCount: plan.nodes.length,
+    edgeCount: plan.edges.length,
+    waveCount: plan.waves.length,
+    hasCycle: plan.hasCycle,
+    nodes: plan.nodes.map((n) => ({
+      index: n.index,
+      toolCallId: n.toolCallId,
+      toolName: n.toolName,
+      reads: [...n.reads],
+      writes: [...n.writes],
+      deps: [...n.deps],
+      dependents: [...n.dependents],
+    })),
+    edges: plan.edges.map((e) => ({ from: e.from, to: e.to, resource: e.resource })),
+    waves: plan.waves,
+    waveTimingsMs: plan.waveTimingsMs,
+    parallelismDegrees,
+    serialBottlenecks,
+    coalescedPairs,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Visualisation helper (/plan show-parallel)
 // ---------------------------------------------------------------------------
 
