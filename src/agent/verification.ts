@@ -19,6 +19,11 @@ import { runSubAgent, type SubAgentResult } from "./sub-agent.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
+import {
+  runCrossFileVerification,
+  formatCrossFileReport,
+  type CrossFileIssue,
+} from "./cross-file-verifier.ts";
 
 export interface VerificationConfig {
   router: ProviderRouter;
@@ -43,6 +48,8 @@ export interface VerificationResult {
   testSuggestions?: TestSuggestion[];
   /** Paths of generated test stub files (only present when withTests mode wrote files) */
   generatedTestFiles?: string[];
+  /** Cross-file semantic issues found when crossFile mode is active */
+  crossFileIssues?: CrossFileIssue[];
 }
 
 export interface VerificationIssue {
@@ -382,6 +389,18 @@ export async function runVerification(
     generateStubs?: boolean;
     /** Min coverage (0–100) to auto-generate stubs. Default: 70 */
     coverageThreshold?: number;
+    /**
+     * Enable cross-file semantic verification (default: false).
+     *
+     * When true, a lightweight static analysis pass runs before the LLM
+     * sub-agent to detect API surface changes whose call sites have not been
+     * updated: renamed exports, missing exports, wrong argument counts, and
+     * obvious type mismatches across file boundaries.
+     *
+     * Enable with `/verify --cross-file`. Disabled by default to avoid latency
+     * on single-file changes.
+     */
+    crossFile?: boolean;
   }
 ): Promise<VerificationResult> {
   const files = options?.files ?? getModifiedFiles();
@@ -397,6 +416,24 @@ export async function runVerification(
   }
 
   const withTests = options?.withTests ?? false;
+  const crossFile = options?.crossFile ?? false;
+
+  // ── Cross-file static analysis (fast, no LLM) ────────────────────────────
+  let crossFileIssues: CrossFileIssue[] | undefined;
+  if (crossFile && files.length >= 2) {
+    config.onOutput?.("  Running cross-file semantic verification...\n");
+    crossFileIssues = runCrossFileVerification(files);
+    const cfErrors = crossFileIssues.filter(i => i.severity === "error").length;
+    const cfWarns = crossFileIssues.filter(i => i.severity === "warning").length;
+    if (crossFileIssues.length === 0) {
+      config.onOutput?.("  ✓ Cross-file check passed\n");
+    } else {
+      config.onOutput?.(
+        `  ✗ Cross-file check: ${cfErrors} error(s), ${cfWarns} warning(s)\n`
+      );
+    }
+  }
+
   const prompt = buildVerificationPrompt(files, options?.intent, withTests);
 
   config.onOutput?.("  Running verification agent...\n");
@@ -445,7 +482,7 @@ export async function runVerification(
     }
   }
 
-  return { ...parsed, agentResult, generatedTestFiles };
+  return { ...parsed, agentResult, generatedTestFiles, crossFileIssues };
 }
 
 /**
@@ -488,6 +525,11 @@ export function formatVerificationReport(result: VerificationResult): string {
     for (const f of result.generatedTestFiles) {
       lines.push(`📄 ${f}`);
     }
+  }
+
+  if (result.crossFileIssues && result.crossFileIssues.length > 0) {
+    lines.push("");
+    lines.push(formatCrossFileReport(result.crossFileIssues));
   }
 
   return lines.join("\n");
