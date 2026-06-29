@@ -79,6 +79,36 @@ export interface ToolSizeStats {
   avgDurationMs: number;
   /** Pattern tag most commonly seen in outputs: "text" | "stack trace" | "grep matches" | "file listing" | "list items" */
   dominantPattern: string;
+  /** Number of failed executions (isError = true). */
+  failureCount: number;
+  /** Last error type/message seen (empty string if none). */
+  lastErrorType: string;
+}
+
+// ---------------------------------------------------------------------------
+// Time-series entry for temporal rollups
+// ---------------------------------------------------------------------------
+
+export interface TimeSeriesEntry {
+  /** Unix epoch ms when the execution was recorded. */
+  timestamp: number;
+  /** Output bytes of that execution. */
+  bytes: number;
+  /** Execution duration in ms. */
+  durationMs: number;
+  /** Whether the execution resulted in an error. */
+  isError: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Co-execution correlation record
+// ---------------------------------------------------------------------------
+
+export interface ToolCorrelation {
+  /** The co-executed tool name. */
+  coTool: string;
+  /** Number of times these two tools were called together (same turn). */
+  count: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +140,26 @@ export class ToolMetrics {
 
   private readonly _stats = new Map<string, ToolSizeStats>();
 
+  /**
+   * Ring-buffer of recent executions per tool for time-series queries.
+   * Capped at MAX_TIME_SERIES_ENTRIES per tool to bound memory.
+   */
+  private readonly _timeSeries = new Map<string, TimeSeriesEntry[]>();
+  private static readonly MAX_TIME_SERIES_ENTRIES = 500;
+
+  /**
+   * Co-execution counts: outer key = tool A, inner key = tool B.
+   * Incremented when two different tools are recorded in the same "turn"
+   * (tracked via notifyTurnStart / the current-turn token).
+   */
+  private readonly _correlations = new Map<string, Map<string, number>>();
+
+  /**
+   * Tools seen in the current turn — used to update correlations on record().
+   * Reset via notifyTurnStart().
+   */
+  private _currentTurnTools: Set<string> = new Set();
+
   // Private constructor — use getInstance().
   private constructor() {}
 
@@ -124,12 +174,16 @@ export class ToolMetrics {
    * @param outputBytes - UTF-8 byte length of the result string.
    * @param durationMs  - Wall-clock execution time in milliseconds.
    * @param pattern     - Pattern tag detected by summariseChunk() (optional).
+   * @param isError     - Whether the execution resulted in an error.
+   * @param errorType   - Short description of the error type (optional).
    */
   record(
     toolName: string,
     outputBytes: number,
     durationMs: number,
-    pattern = "text"
+    pattern = "text",
+    isError = false,
+    errorType = ""
   ): void {
     const existing = this._stats.get(toolName);
     if (!existing) {
@@ -141,21 +195,85 @@ export class ToolMetrics {
         minBytes: outputBytes,
         avgDurationMs: durationMs,
         dominantPattern: pattern,
+        failureCount: isError ? 1 : 0,
+        lastErrorType: isError ? errorType : "",
       });
-      return;
+    } else {
+      const n = existing.samples + 1;
+      // Incremental mean update
+      existing.avgBytes = (existing.avgBytes * existing.samples + outputBytes) / n;
+      existing.avgDurationMs = (existing.avgDurationMs * existing.samples + durationMs) / n;
+      existing.maxBytes = Math.max(existing.maxBytes, outputBytes);
+      existing.minBytes = Math.min(existing.minBytes, outputBytes);
+      existing.samples = n;
+      if (isError) {
+        existing.failureCount++;
+        if (errorType) existing.lastErrorType = errorType;
+      }
+      // Keep dominant pattern as the most recently detected (simple heuristic)
+      if (pattern !== "text") existing.dominantPattern = pattern;
+      this._stats.set(toolName, existing);
     }
 
-    const n = existing.samples + 1;
-    // Incremental mean update
-    existing.avgBytes = (existing.avgBytes * existing.samples + outputBytes) / n;
-    existing.avgDurationMs = (existing.avgDurationMs * existing.samples + durationMs) / n;
-    existing.maxBytes = Math.max(existing.maxBytes, outputBytes);
-    existing.minBytes = Math.min(existing.minBytes, outputBytes);
-    existing.samples = n;
-    // Keep dominant pattern as the most recently detected (simple heuristic)
-    if (pattern !== "text") existing.dominantPattern = pattern;
+    // Append to time-series ring buffer
+    const tsBuf = this._timeSeries.get(toolName) ?? [];
+    tsBuf.push({ timestamp: Date.now(), bytes: outputBytes, durationMs, isError });
+    if (tsBuf.length > ToolMetrics.MAX_TIME_SERIES_ENTRIES) tsBuf.shift();
+    this._timeSeries.set(toolName, tsBuf);
 
-    this._stats.set(toolName, existing);
+    // Update co-execution correlations for tools in the current turn
+    for (const other of this._currentTurnTools) {
+      if (other === toolName) continue;
+      // toolName → other
+      const fromA = this._correlations.get(toolName) ?? new Map<string, number>();
+      fromA.set(other, (fromA.get(other) ?? 0) + 1);
+      this._correlations.set(toolName, fromA);
+      // other → toolName (symmetric)
+      const fromB = this._correlations.get(other) ?? new Map<string, number>();
+      fromB.set(toolName, (fromB.get(toolName) ?? 0) + 1);
+      this._correlations.set(other, fromB);
+    }
+    this._currentTurnTools.add(toolName);
+  }
+
+  /**
+   * Notify the metrics tracker that a new agent turn has started.
+   * Resets the current-turn tool set so correlation tracking is per-turn.
+   */
+  notifyTurnStart(): void {
+    this._currentTurnTools = new Set();
+  }
+
+  /**
+   * Return the success rate (0–1) for a tool, or 1.0 if no data.
+   */
+  successRate(toolName: string): number {
+    const stats = this._stats.get(toolName);
+    if (!stats || stats.samples === 0) return 1.0;
+    return (stats.samples - stats.failureCount) / stats.samples;
+  }
+
+  /**
+   * Return time-series entries for a tool within the last `minutes` minutes.
+   * Returns an empty array if no data or the tool has never been recorded.
+   */
+  getTimeSeriesWindow(toolName: string, minutes: number): TimeSeriesEntry[] {
+    const buf = this._timeSeries.get(toolName);
+    if (!buf) return [];
+    const cutoff = Date.now() - minutes * 60 * 1000;
+    return buf.filter((e) => e.timestamp >= cutoff);
+  }
+
+  /**
+   * Return co-execution correlations for a tool, sorted by count descending.
+   * These describe which other tools tend to be called in the same turn.
+   */
+  getCorrelations(toolName: string): ToolCorrelation[] {
+    const map = this._correlations.get(toolName);
+    if (!map) return [];
+    return Array.from(map.entries())
+      .map(([coTool, count]) => ({ coTool, count }))
+      .sort((a, b) => b.count - a.count);
   }
 
   /**
@@ -212,6 +330,9 @@ export class ToolMetrics {
    */
   reset(): void {
     this._stats.clear();
+    this._timeSeries.clear();
+    this._correlations.clear();
+    this._currentTurnTools = new Set();
   }
 }
 

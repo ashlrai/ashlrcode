@@ -5,6 +5,23 @@
 import { theme } from "../ui/theme.ts";
 import type { Command, CommandContext } from "./types.ts";
 
+// ---------------------------------------------------------------------------
+// Formatting helpers used by /tool-metrics
+// ---------------------------------------------------------------------------
+function padR(s: string, n: number): string { return s.padEnd(n); }
+function padL(s: string, n: number): string { return s.padStart(n); }
+function fmtMs(ms: number): string {
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+function fmtPct(rate: number): string { return `${(rate * 100).toFixed(1)}%`; }
+function fmtBytes(b: number): string {
+  if (b >= 1_048_576) return `${(b / 1_048_576).toFixed(1)}MB`;
+  if (b >= 1_024) return `${(b / 1_024).toFixed(1)}KB`;
+  return `${Math.round(b)}B`;
+}
+
 export function agentCommands(): Command[] {
   return [
     {
@@ -648,6 +665,138 @@ export function agentCommands(): Command[] {
             "\n  /trigger add <schedule> <prompt>\n  /trigger list\n  /trigger toggle <id>\n  /trigger delete <id>\n",
           ),
         );
+        return true;
+      },
+    },
+    {
+      name: "/tool-metrics",
+      description: "Show tool execution performance metrics",
+      category: "agent",
+      subcommands: ["compare"],
+      handler: async (args, ctx) => {
+        const { getToolAnalytics } = await import("../agent/tool-analytics.ts");
+        const analytics = getToolAnalytics();
+
+        // /tool-metrics compare <goal1> <goal2>
+        if (args?.startsWith("compare ")) {
+          const parts = args.slice("compare ".length).trim().split(/\s+/);
+          const goal1 = parts[0] ?? "";
+          const goal2 = parts[1] ?? "";
+          if (!goal1 || !goal2) {
+            ctx.addOutput(theme.warning("\n  Usage: /tool-metrics compare <goal1> <goal2>\n"));
+            return true;
+          }
+          const r1 = analytics.rollupByGoal(goal1);
+          const r2 = analytics.rollupByGoal(goal2);
+          const lines: string[] = [
+            "",
+            theme.accentBold("  Tool Metrics Comparison"),
+            theme.muted(`  Goal A: ${goal1}   |   Goal B: ${goal2}`),
+            "",
+            "  " + padR("Tool", 18) + padL("Calls A", 9) + padL("Calls B", 9) +
+              padL("Avg ms A", 10) + padL("Avg ms B", 10) + padL("Err% A", 8) + padL("Err% B", 8),
+            "  " + "-".repeat(72),
+          ];
+          const allTools = new Set([
+            ...r1.byTool.map((t) => t.toolName),
+            ...r2.byTool.map((t) => t.toolName),
+          ]);
+          for (const tool of allTools) {
+            const t1 = r1.byTool.find((t) => t.toolName === tool);
+            const t2 = r2.byTool.find((t) => t.toolName === tool);
+            lines.push(
+              "  " +
+                padR(tool.slice(0, 17), 18) +
+                padL(t1 ? String(t1.calls) : "-", 9) +
+                padL(t2 ? String(t2.calls) : "-", 9) +
+                padL(t1 ? fmtMs(t1.avgDurationMs) : "-", 10) +
+                padL(t2 ? fmtMs(t2.avgDurationMs) : "-", 10) +
+                padL(t1 ? fmtPct(1 - t1.successRate) : "-", 8) +
+                padL(t2 ? fmtPct(1 - t2.successRate) : "-", 8),
+            );
+          }
+          lines.push("");
+          ctx.addOutput(lines.join("\n"));
+          return true;
+        }
+
+        // /tool-metrics <toolname> — detailed histogram for a single tool
+        if (args && args.trim() && !args.startsWith("compare")) {
+          const toolName = args.trim();
+          const rollups = analytics.rollupByTool();
+          const entry = rollups.find(
+            (r) => r.toolName.toLowerCase() === toolName.toLowerCase(),
+          );
+          if (!entry) {
+            ctx.addOutput(theme.warning(`\n  No metrics recorded for tool: ${toolName}\n`));
+            return true;
+          }
+          const anomaly = analytics.anomalyDetect(toolName);
+          const lines: string[] = [
+            "",
+            theme.accentBold(`  Tool Metrics: ${entry.toolName}`),
+            "",
+            `  Calls:        ${entry.calls}`,
+            `  Errors:       ${entry.errors}  (${fmtPct(1 - entry.successRate)} error rate)`,
+            `  Avg duration: ${fmtMs(entry.avgDurationMs)}`,
+            `  P50 duration: ${fmtMs(entry.p50DurationMs)}`,
+            `  P95 duration: ${fmtMs(entry.p95DurationMs)}`,
+            `  Max duration: ${fmtMs(entry.maxDurationMs)}`,
+            `  Avg output:   ${fmtBytes(entry.avgOutputBytes)}`,
+            `  Total output: ${fmtBytes(entry.totalOutputBytes)}`,
+          ];
+          if (anomaly.outliers.length > 0) {
+            lines.push("");
+            lines.push(theme.warning(`  Anomalies (z > 2.5):`));
+            lines.push(
+              `  Baseline: mean=${fmtMs(anomaly.meanMs)} std=${fmtMs(anomaly.stdMs)}`,
+            );
+            for (const o of anomaly.outliers.slice(0, 5)) {
+              const ts = new Date(o.timestamp).toISOString();
+              lines.push(
+                `    ${ts}  ${fmtMs(o.durationMs)}  z=${o.zScore.toFixed(2)}${o.isError ? "  [error]" : ""}`,
+              );
+            }
+          }
+          lines.push("");
+          ctx.addOutput(lines.join("\n"));
+          return true;
+        }
+
+        // /tool-metrics — ASCII table of all tools
+        const rollups = analytics.rollupByTool();
+        if (rollups.length === 0) {
+          ctx.addOutput(theme.tertiary("\n  No tool metrics recorded yet.\n"));
+          return true;
+        }
+        const lines: string[] = [
+          "",
+          theme.accentBold("  Tool Performance Metrics"),
+          "",
+          "  " +
+            padR("Tool", 20) +
+            padL("Calls", 7) +
+            padL("Errors", 8) +
+            padL("Succ%", 7) +
+            padL("Avg ms", 9) +
+            padL("P95 ms", 9) +
+            padL("Avg out", 9),
+          "  " + "-".repeat(69),
+        ];
+        for (const r of rollups) {
+          lines.push(
+            "  " +
+              padR(r.toolName.slice(0, 19), 20) +
+              padL(String(r.calls), 7) +
+              padL(String(r.errors), 8) +
+              padL(fmtPct(r.successRate), 7) +
+              padL(fmtMs(r.avgDurationMs), 9) +
+              padL(fmtMs(r.p95DurationMs), 9) +
+              padL(fmtBytes(r.avgOutputBytes), 9),
+          );
+        }
+        lines.push("");
+        ctx.addOutput(lines.join("\n"));
         return true;
       },
     },

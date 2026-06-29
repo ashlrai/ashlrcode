@@ -46,6 +46,8 @@ import {
   resolveCompressionOptions,
 } from "./tool-metrics.ts";
 export type { CompressorConfig } from "./tool-metrics.ts";
+import { getToolAnalytics } from "./tool-analytics.ts";
+export type { AnalyticsEvent, ToolRollup, GoalRollup, AnomalyResult } from "./tool-analytics.ts";
 import {
   getToolResultPredictor,
 } from "./tool-result-predictor.ts";
@@ -680,6 +682,19 @@ async function executeSingle(
   callbacks?.onToolEnd?.(tc.name, result, isError);
   const executionMs = performance.now() - startTime;
   recordToolMetric(tc.name, executionMs, isError);
+
+  // Record to ToolAnalytics for aggregated/persistent metrics
+  const agentCtxForAnalytics = getAgentContext();
+  getToolAnalytics().recordEvent({
+    timestamp: Date.now(),
+    sessionId: context.sessionId ?? "default",
+    goalId: (agentCtxForAnalytics as any)?.goalId ?? "",
+    toolName: tc.name,
+    durationMs: executionMs,
+    outputBytes: new TextEncoder().encode(result).length,
+    isError,
+    errorType: isError ? result.slice(0, 120) : "",
+  });
 
   // Store in dedup cache for cross-agent reuse within the same coordinator wave
   if (dedupCache && tool && DedupCache.shouldDedup(tc.name, tool.isReadOnly()) && !isError) {
