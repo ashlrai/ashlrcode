@@ -31,6 +31,11 @@ import {
   type GraphSnapshot,
   type ExecutionPlan,
 } from "../agent/tool-dependency-scheduler.ts";
+import {
+  getDispatchStats,
+  getDispatchRing,
+  resetDispatchStats,
+} from "../telemetry/event-log.ts";
 import type { ToolCall } from "../providers/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -255,8 +260,154 @@ function buildDemoPlan(): { plan: ExecutionPlan; toolCalls: ToolCall[] } {
 // /tool-graph command
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// /tool-dispatch-stats command
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a bar for percentage display (0–100 range, barWidth chars wide).
+ */
+function percentBar(pct: number, barWidth = 30): string {
+  const filled = Math.round(Math.min(1, pct / 100) * barWidth);
+  return "█".repeat(Math.max(0, filled)) + "░".repeat(barWidth - Math.max(0, filled));
+}
+
+export function toolDispatchStatsCommands(): Command[] {
+  return [
+    {
+      name: "/tool-dispatch-stats",
+      description: "Show auto-fallback frequency and cost savings per tool across providers",
+      category: "agent",
+      subcommands: ["reset", "recent"],
+      handler: async (args, ctx) => {
+        const cleanArgs = args.trim();
+
+        // ── /tool-dispatch-stats reset ─────────────────────────────────────
+        if (cleanArgs === "reset") {
+          resetDispatchStats();
+          ctx.addOutput(theme.success("\n  Dispatch stats reset.\n"));
+          return true;
+        }
+
+        // ── /tool-dispatch-stats recent ────────────────────────────────────
+        if (cleanArgs === "recent") {
+          const ring = getDispatchRing();
+          if (ring.length === 0) {
+            ctx.addOutput(
+              theme.muted("\n  No dispatch events recorded yet in this session.\n")
+            );
+            return true;
+          }
+          const last20 = [...ring].slice(-20).reverse();
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Recent Tool Dispatches  /tool-dispatch-stats recent"),
+              "",
+            ].join("\n")
+          );
+          for (const ev of last20) {
+            const fallbackStr = ev.fallback_provider
+              ? theme.accent(` → ${ev.fallback_provider}`)
+              : "";
+            const costStr = ev.cost_delta !== 0
+              ? theme.muted(` Δcost ${ev.cost_delta >= 0 ? "+" : ""}${ev.cost_delta.toFixed(2)}`)
+              : "";
+            ctx.addOutput(
+              `    ${theme.secondary(ev.tool)} on ${ev.provider}${fallbackStr}${costStr}`
+            );
+            ctx.addOutput(theme.muted(`      ${ev.reason}`));
+          }
+          ctx.addOutput("");
+          return true;
+        }
+
+        // ── /tool-dispatch-stats (default) ────────────────────────────────
+        const stats = getDispatchStats();
+
+        ctx.addOutput(
+          [
+            "",
+            theme.accentBold("  Tool Dispatch Statistics  /tool-dispatch-stats"),
+            "",
+          ].join("\n")
+        );
+
+        if (stats.length === 0) {
+          ctx.addOutput(
+            [
+              theme.muted("  No dispatch data yet — dispatch tracking runs automatically"),
+              theme.muted("  when tools are resolved via resolveToolDispatch()."),
+              "",
+              theme.muted("  Use /tool-dispatch-stats recent to see individual events."),
+              "",
+            ].join("\n")
+          );
+        } else {
+          // Summary header
+          const totalDispatches = stats.reduce((s, e) => s + e.total, 0);
+          const totalFallbacks = stats.reduce((s, e) => s + e.fallbacks, 0);
+          const overallRate = totalDispatches > 0 ? (totalFallbacks / totalDispatches) * 100 : 0;
+          const totalSavings = stats
+            .filter((e) => e.avgCostDelta < 0)
+            .reduce((s, e) => s + Math.abs(e.avgCostDelta) * e.fallbacks, 0);
+
+          ctx.addOutput(
+            [
+              `  Total dispatches : ${theme.accent(String(totalDispatches))}`,
+              `  Auto-fallbacks   : ${theme.accent(String(totalFallbacks))} (${overallRate.toFixed(1)}% of dispatches)`,
+              ...(totalSavings > 0
+                ? [`  Cost savings     : ${theme.success(`−${totalSavings.toFixed(3)} avg multiplier units`)}`]
+                : []),
+              "",
+            ].join("\n")
+          );
+
+          // Per-tool breakdown
+          ctx.addOutput(theme.secondary("  Per-tool breakdown (sorted by fallback count):"));
+          ctx.addOutput("");
+
+          for (const entry of stats.slice(0, 20)) {
+            const ratePct = entry.fallbackRate * 100;
+            const bar = percentBar(ratePct, 20);
+            const costStr =
+              entry.fallbacks > 0
+                ? (entry.avgCostDelta >= 0
+                    ? theme.muted(` avg +${entry.avgCostDelta.toFixed(2)} cost`)
+                    : theme.success(` avg ${entry.avgCostDelta.toFixed(2)} cost`))
+                : "";
+            ctx.addOutput(
+              `    ${theme.accent(entry.tool.padEnd(18))} on ${entry.provider.padEnd(10)}` +
+                `  [${bar}] ${ratePct.toFixed(0).padStart(3)}% fallback` +
+                `  (${entry.fallbacks}/${entry.total})${costStr}`
+            );
+          }
+
+          if (stats.length > 20) {
+            ctx.addOutput(theme.muted(`\n  ... and ${stats.length - 20} more tool/provider pairs.`));
+          }
+
+          ctx.addOutput("");
+        }
+
+        ctx.addOutput(
+          [
+            theme.secondary("  Sub-commands:"),
+            `    ${theme.accent("/tool-dispatch-stats reset")}   — reset counters`,
+            `    ${theme.accent("/tool-dispatch-stats recent")}  — show last 20 dispatch events`,
+            "",
+          ].join("\n")
+        );
+
+        return true;
+      },
+    },
+  ];
+}
+
 export function toolGraphCommands(): Command[] {
   return [
+    ...toolDispatchStatsCommands(),
     {
       name: "/tool-graph",
       description: "Visualise tool call dependency DAG, parallel waves, and coalescence decisions",

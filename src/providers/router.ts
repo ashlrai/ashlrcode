@@ -9,6 +9,8 @@ import { CircuitBreaker } from "./retry.ts";
 import { emitSpan } from "../telemetry/pulse-hud.ts";
 import { globalPredictor, CONFIDENCE_THRESHOLD } from "./rate-limit-predictor.ts";
 import { getGlobalReasoningCache } from "../agent/reasoning-cache.ts";
+import { resolveToolDispatch, type DispatchResolution } from "../tools/capability-check.ts";
+import type { ProviderId } from "./capability-registry.ts";
 import type {
   Provider,
   ProviderConfig,
@@ -228,5 +230,22 @@ export class ProviderRouter {
 
   getCostSummary(): string {
     return this.costTracker.formatSummary();
+  }
+
+  /**
+   * Resolve the best provider for a single tool dispatch without committing
+   * to a full session switch.
+   *
+   * When the current provider lacks native support for `toolName` and a
+   * native-supporting provider is available within the cost ceiling (≤1.5×),
+   * returns that provider's id so the caller can route this one invocation
+   * there while the session remains on the current provider.
+   *
+   * @param toolName   Name of the tool about to be dispatched.
+   * @returns          DispatchResolution with resolvedProvider + fallback metadata.
+   */
+  dispatchWithFallback(toolName: string): DispatchResolution {
+    const currentProviderName = this.currentProvider.name as ProviderId;
+    return resolveToolDispatch(toolName, currentProviderName);
   }
 }

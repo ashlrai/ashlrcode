@@ -17,7 +17,20 @@ export type EventType =
   | "compact" | "dream"
   | "error" | "retry" | "circuit_breaker"
   | "permission_granted" | "permission_denied"
-  | "kairos_tick" | "kairos_start" | "kairos_stop";
+  | "kairos_tick" | "kairos_start" | "kairos_stop"
+  | "tool_dispatch";
+
+/**
+ * Structured payload for a tool_dispatch event.
+ * Emitted when a tool is routed — including auto-fallback to a native provider.
+ */
+export interface ToolDispatchEvent {
+  tool: string;
+  provider: string;
+  fallback_provider: string | null;
+  cost_delta: number;
+  reason: string;
+}
 
 interface TelemetryEvent {
   type: EventType;
@@ -113,4 +126,84 @@ export function formatEvents(events: TelemetryEvent[]): string {
     const data = e.data ? ` ${JSON.stringify(e.data).slice(0, 80)}` : "";
     return `  ${time} ${e.type}${data}`;
   }).join("\n");
+}
+
+/**
+ * Log a structured tool dispatch event.
+ * Call this each time a tool is dispatched — including auto-promoted fallbacks.
+ *
+ * @param payload  Structured dispatch info: tool, providers, cost_delta, reason.
+ */
+export async function logToolDispatch(payload: ToolDispatchEvent): Promise<void> {
+  return logEvent("tool_dispatch", payload as unknown as Record<string, unknown>);
+}
+
+// ---------------------------------------------------------------------------
+// In-process dispatch stats (ring buffer, survives for the session lifetime)
+// ---------------------------------------------------------------------------
+
+const MAX_DISPATCH_STATS = 1000;
+
+/** Accumulated per-tool-per-provider dispatch counts and cost deltas. */
+const _dispatchStats = new Map<string, {
+  total: number;
+  fallbacks: number;
+  totalCostDelta: number;
+}>();
+
+/** Ordered ring of the last N raw dispatch events for recency queries. */
+const _dispatchRing: ToolDispatchEvent[] = [];
+
+/**
+ * Record a dispatch event into the in-process ring buffer.
+ * This is O(1) and never throws — safe to call on every tool invocation.
+ */
+export function recordDispatch(payload: ToolDispatchEvent): void {
+  const key = `${payload.tool}@${payload.provider}`;
+  const entry = _dispatchStats.get(key) ?? { total: 0, fallbacks: 0, totalCostDelta: 0 };
+  entry.total += 1;
+  if (payload.fallback_provider !== null) entry.fallbacks += 1;
+  entry.totalCostDelta += payload.cost_delta;
+  _dispatchStats.set(key, entry);
+
+  // Ring: evict oldest when full
+  if (_dispatchRing.length >= MAX_DISPATCH_STATS) _dispatchRing.shift();
+  _dispatchRing.push(payload);
+}
+
+export interface DispatchStatEntry {
+  tool: string;
+  provider: string;
+  total: number;
+  fallbacks: number;
+  fallbackRate: number;
+  avgCostDelta: number;
+}
+
+/** Return accumulated dispatch stats sorted by fallback count descending. */
+export function getDispatchStats(): DispatchStatEntry[] {
+  const results: DispatchStatEntry[] = [];
+  for (const [key, v] of _dispatchStats) {
+    const [tool, provider] = key.split("@") as [string, string];
+    results.push({
+      tool,
+      provider,
+      total: v.total,
+      fallbacks: v.fallbacks,
+      fallbackRate: v.total > 0 ? v.fallbacks / v.total : 0,
+      avgCostDelta: v.total > 0 ? v.totalCostDelta / v.total : 0,
+    });
+  }
+  return results.sort((a, b) => b.fallbacks - a.fallbacks);
+}
+
+/** Return the raw dispatch ring (most recent last). */
+export function getDispatchRing(): readonly ToolDispatchEvent[] {
+  return _dispatchRing;
+}
+
+/** Reset all in-process dispatch stats (useful for tests). */
+export function resetDispatchStats(): void {
+  _dispatchStats.clear();
+  _dispatchRing.length = 0;
 }

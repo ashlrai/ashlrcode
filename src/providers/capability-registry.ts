@@ -239,6 +239,42 @@ export class CapabilityRegistry {
     if (check.canExecute) return [];
     return check.alternatives;
   }
+
+  /**
+   * Return an ordered fallback chain of providers for a tool, starting from
+   * the best (highest support rank, then lowest cost) down to the worst.
+   *
+   * Providers with 'unsupported' level are excluded.
+   * The chain is used by the router to attempt per-tool promotion without
+   * committing to a full session provider switch.
+   */
+  getProviderFallbackChain(
+    toolName: string,
+    options: BestProviderOptions = {}
+  ): Array<{ provider: ProviderId; supportLevel: SupportLevel; costMultiplier: number }> {
+    const cap = this.capabilities.get(toolName);
+    if (!cap) return [];
+
+    let candidates = ALL_PROVIDERS.filter((p) => {
+      if (options.exclude?.includes(p)) return false;
+      if (options.include && !options.include.includes(p)) return false;
+      return true;
+    });
+
+    const scored = candidates.map((p) => {
+      const level: SupportLevel = cap.support[p] ?? "native";
+      const cost = cap.costMultipliers[p] ?? 1.0;
+      return { provider: p, supportLevel: level, costMultiplier: cost, rank: SUPPORT_RANK[level] };
+    });
+
+    return scored
+      .filter((s) => s.rank > 0)
+      .sort((a, b) => {
+        if (b.rank !== a.rank) return b.rank - a.rank;
+        return a.costMultiplier - b.costMultiplier; // prefer lower cost on tie
+      })
+      .map(({ provider, supportLevel, costMultiplier }) => ({ provider, supportLevel, costMultiplier }));
+  }
 }
 
 // ---------------------------------------------------------------------------
