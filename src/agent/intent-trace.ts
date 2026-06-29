@@ -47,6 +47,7 @@ export type TraceEventKind =
   | "tool_selection"
   | "speculation_hit"
   | "speculation_miss"
+  | "dedup_hit"
   | "context_compression"
   | "turn_boundary"
   | "replay_start"
@@ -108,6 +109,14 @@ export interface SpeculationMissEvent extends TraceEventBase {
   executionMs: number;
 }
 
+/** A multi-agent dedup cache hit — result served from the wave-scoped dedup cache. */
+export interface DedupHitEvent extends TraceEventBase {
+  kind: "dedup_hit";
+  toolName: string;
+  /** Estimated latency saved (ms). */
+  savedMs?: number;
+}
+
 /** The LLM context was compressed/clamped before a provider call. */
 export interface ContextCompressionEvent extends TraceEventBase {
   kind: "context_compression";
@@ -155,6 +164,7 @@ export type TraceEvent =
   | ToolSelectionEvent
   | SpeculationHitEvent
   | SpeculationMissEvent
+  | DedupHitEvent
   | ContextCompressionEvent
   | TurnBoundaryEvent
   | ReplayStartEvent
@@ -347,6 +357,23 @@ export async function recordSpeculationMiss(
     kind: "speculation_miss",
     toolName,
     executionMs,
+  });
+}
+
+/**
+ * Record a multi-agent dedup cache hit.
+ * Called from tool-executor when a tool result is served from the wave-scoped dedup cache.
+ */
+export async function recordDedupHit(
+  sessionId: string,
+  turn: number,
+  toolName: string,
+  savedMs?: number
+): Promise<void> {
+  await appendEvent(sessionId, turn, {
+    kind: "dedup_hit",
+    toolName,
+    savedMs,
   });
 }
 

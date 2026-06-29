@@ -22,9 +22,12 @@ import {
   recordToolSelection,
   recordSpeculationHit,
   recordSpeculationMiss,
+  recordDedupHit,
   currentTurn,
 } from "./intent-trace.ts";
 import { getBudgetAllocator } from "./budget-allocator.ts";
+import { getAgentContext } from "./async-context.ts";
+import { DedupCache, getGlobalDedupCache } from "./dedup-cache.ts";
 
 // ---------------------------------------------------------------------------
 // Streaming result compression
@@ -377,6 +380,39 @@ async function executeSingle(
   const sid = context.sessionId ?? "default";
   const turn = currentTurn(sid);
 
+  // ------------------------------------------------------------------
+  // Dedup cache — checked first, before speculation/persistent caches.
+  // Serves results from the wave-scoped cache shared across all sub-agents
+  // in a coordinator wave, preventing re-execution of identical read calls.
+  // ------------------------------------------------------------------
+  const agentCtx = getAgentContext();
+  // Prefer the context-local cache (inherited from coordinator); fall back to global.
+  const dedupCache: DedupCache | undefined =
+    agentCtx?.dedupCache ?? (getGlobalDedupCache() as DedupCache | undefined);
+
+  if (dedupCache && tool && DedupCache.shouldDedup(tc.name, tool.isReadOnly())) {
+    const dedupHit = dedupCache.get(tc.name, tc.input, context.cwd);
+    if (dedupHit !== null) {
+      callbacks?.onToolStart?.(tc.name, tc.input);
+      callbacks?.onToolEnd?.(tc.name, dedupHit, false);
+      const hitMs = performance.now() - startTime;
+      recordToolMetric(tc.name, hitMs, false);
+
+      // Intent trace: record dedup hit (distinct from speculation hit)
+      void recordDedupHit(sid, turn, tc.name, hitMs);
+
+      trackAndSpeculate(tc.name, tc.input, dedupHit);
+
+      return {
+        toolCallId: tc.id,
+        name: tc.name,
+        input: tc.input,
+        result: dedupHit,
+        isError: false,
+      };
+    }
+  }
+
   // Check in-memory speculation cache for read-only tools (skip the full execute path)
   if (tool?.isReadOnly() && _speculationCache) {
     const cached = _speculationCache.get(tc.name, tc.input);
@@ -465,6 +501,11 @@ async function executeSingle(
   const executionMs = performance.now() - startTime;
   recordToolMetric(tc.name, executionMs, isError);
 
+  // Store in dedup cache for cross-agent reuse within the same coordinator wave
+  if (dedupCache && tool && DedupCache.shouldDedup(tc.name, tool.isReadOnly()) && !isError) {
+    dedupCache.set(tc.name, tc.input, context.cwd, result, executionMs);
+  }
+
   // Cache successful read-only results for future speculation
   if (tool?.isReadOnly() && _speculationCache && !isError) {
     _speculationCache.set(tc.name, tc.input, result);
@@ -479,6 +520,7 @@ async function executeSingle(
   if (!tool?.isReadOnly()) {
     const filePath = tc.input.file_path;
     if (typeof filePath === "string") {
+      dedupCache?.invalidateForFile(filePath);
       _speculationCache?.invalidateForFile(filePath);
       _persistentCache?.invalidateForFile(filePath).catch(() => {});
       trackFileModification(filePath);
