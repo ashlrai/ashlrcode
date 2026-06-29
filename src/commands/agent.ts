@@ -510,7 +510,7 @@ export function agentCommands(): Command[] {
       name: "/surgical",
       description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
       category: "agent",
-      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats", "viz", "confidence", "history", "feedback"],
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats", "viz", "confidence", "history", "feedback", "replay", "audit"],
       handler: async (args, ctx) => {
         const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
 
@@ -775,6 +775,18 @@ export function agentCommands(): Command[] {
           const stats = computeProposalStats(feedback);
           ctx.addOutput(formatProposalStats(stats));
           return true;
+        }
+
+        // /surgical replay [turn#] — chronological tool decisions for a turn
+        if (args === "replay" || args.startsWith("replay ")) {
+          const { handleSurgicalReplay } = await import("./surgical-commands.ts");
+          return handleSurgicalReplay(args.slice("replay".length).trim(), ctx);
+        }
+
+        // /surgical audit — summary stats: tiers used, allowed/blocked counts
+        if (args === "audit" || args.startsWith("audit ")) {
+          const { handleSurgicalAudit } = await import("./surgical-commands.ts");
+          return handleSurgicalAudit(args.slice("audit".length).trim(), ctx);
         }
 
         // /surgical viz — full tier confidence dashboard

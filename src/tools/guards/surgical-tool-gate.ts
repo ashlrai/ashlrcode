@@ -63,6 +63,16 @@ export interface SurgicalGateOptions {
    * backward-compat, or the new numeric SurgicalTier (1–4).
    */
   tier: ScopeTier | SurgicalTier;
+  /**
+   * Optional audit context.  When provided, every gate verdict is written to
+   * the session's audit JSONL file via SurgicalAuditTrail.emit().
+   */
+  audit?: {
+    /** Session ID used to route events to the correct JSONL file. */
+    sessionId: string;
+    /** Current conversation turn (1-based). */
+    turn: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -239,12 +249,38 @@ export function checkSurgicalToolGate(
   if (!opts.enabled) return { verdict: "allow" };
 
   // Numeric tier path (new 4-tier system)
+  let result: SurgicalGateResult;
   if (typeof opts.tier === "number") {
-    return checkByNumericTier(toolName, input, opts.tier as SurgicalTier);
+    result = checkByNumericTier(toolName, input, opts.tier as SurgicalTier);
+  } else {
+    // Legacy string tier path — preserves original behavior exactly
+    result = checkByLegacyScopeTier(toolName, input, opts.tier as ScopeTier);
   }
 
-  // Legacy string tier path — preserves original behavior exactly
-  return checkByLegacyScopeTier(toolName, input, opts.tier as ScopeTier);
+  // Emit structured audit event if audit context is present (fire-and-forget)
+  if (opts.audit) {
+    const { sessionId, turn } = opts.audit;
+    // Dynamic import keeps audit overhead zero when audit is unused
+    import("../../agent/surgical-audit-trail.ts")
+      .then(({ getAuditTrail }) => {
+        const trail = getAuditTrail(sessionId);
+        return trail.emit({
+          timestamp: new Date().toISOString(),
+          turn,
+          toolName,
+          tier: opts.tier,
+          verdict: result.verdict,
+          reason: result.reason,
+          suggestion: result.suggestion,
+          sessionId,
+        });
+      })
+      .catch(() => {
+        // silently ignore — audit must never break main UX
+      });
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
