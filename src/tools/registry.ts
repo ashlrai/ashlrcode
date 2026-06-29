@@ -18,6 +18,8 @@ import {
   type SurgicalGateOptions,
 } from "./guards/surgical-tool-gate.ts";
 import { getMCPFallbackManager } from "../mcp/fallback-manager.ts";
+import type { ProviderId } from "../providers/capability-registry.ts";
+import { checkToolCapability, logCapabilityMismatch } from "./capability-check.ts";
 
 /** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
 let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -77,6 +79,18 @@ export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private hooks: HooksConfig = {};
   private _surgicalGate: SurgicalGateOptions | null = null;
+  /** Active provider ID used for capability checks at registration time. */
+  private _activeProvider: ProviderId | undefined = undefined;
+
+  /** Set the active provider so capability checks fire on register(). */
+  setActiveProvider(provider: ProviderId): void {
+    this._activeProvider = provider;
+  }
+
+  /** Clear the active provider (disables capability checks at registration). */
+  clearActiveProvider(): void {
+    this._activeProvider = undefined;
+  }
 
   /** Activate surgical-mode tool restrictions for this registry instance. */
   setSurgicalGate(opts: SurgicalGateOptions): void {
@@ -89,6 +103,14 @@ export class ToolRegistry {
   }
 
   register(tool: Tool): void {
+    // Capability check at registration time: log a mismatch when the active
+    // provider does not natively support this tool so operators see it early.
+    if (this._activeProvider) {
+      const capResult = checkToolCapability(tool.name, this._activeProvider);
+      if (!capResult.canExecute || capResult.supportLevel !== "native") {
+        logCapabilityMismatch(tool.name, this._activeProvider, capResult);
+      }
+    }
     this.tools.set(tool.name, tool);
   }
 
@@ -141,6 +163,15 @@ export class ToolRegistry {
     const tool = this.tools.get(toolName);
     if (!tool) {
       return { result: `Unknown tool: ${toolName}`, isError: true };
+    }
+
+    // Log capability mismatch at execution time (non-blocking — we log but
+    // still attempt execution so degraded-mode tools can run).
+    if (this._activeProvider) {
+      const capResult = checkToolCapability(toolName, this._activeProvider);
+      if (!capResult.canExecute || capResult.supportLevel !== "native") {
+        logCapabilityMismatch(toolName, this._activeProvider, capResult);
+      }
     }
 
     // Validate input first (before permissions — don't prompt for invalid input)
