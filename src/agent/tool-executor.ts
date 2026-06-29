@@ -62,6 +62,7 @@ import {
   recordWaveTiming,
   visualiseExecutionPlan,
 } from "./tool-dependency-scheduler.ts";
+import { batchToolCalls } from "./tool-batching.ts";
 export {
   buildExecutionPlan,
   recordWaveTiming,
@@ -95,6 +96,16 @@ export type {
   JournalEntryStatus,
   ImpactSummary,
 } from "./tool-transaction.ts";
+
+// Re-export the batching layer so callers can import from a single module.
+export {
+  batchToolCalls,
+  getBatchingStats,
+  resetBatchingStats,
+  formatBatchingStats,
+  visualiseBatchedPlan,
+} from "./tool-batching.ts";
+export type { BatchedToolCall, BatchingStats } from "./tool-batching.ts";
 
 // Re-export the coalescence layer so callers can import from a single module.
 export {
@@ -471,6 +482,21 @@ export async function executeToolCalls(
   if (toolCalls.length === 1) {
     return [await executeSingle(toolCalls[0]!, registry, context, callbacks, totalContextTokens)];
   }
+
+  // ---------------------------------------------------------------------------
+  // Intelligent tool batching (pre-execution analysis phase)
+  //
+  // batchToolCalls() runs ahead of the wave scheduler to:
+  //  1. Coalesce redundant sequential calls (e.g., Grep×N on same path → 1 call)
+  //  2. Group speculative-read tools into batch-read super-batches
+  //  3. Build a full dependency DAG with implicit file-path edges
+  //
+  // The returned BatchedToolCall list drives stats/logging; the actual
+  // wave-based executor below still processes the original toolCalls so that
+  // result ordering and registry integration are unchanged.  Future iterations
+  // can replace the wave loop with the batched execution plan directly.
+  // ---------------------------------------------------------------------------
+  void batchToolCalls(toolCalls); // pre-execution analysis: updates stats, no side-effects on execution
 
   // ---------------------------------------------------------------------------
   // Dependency-aware wave scheduling (pre-execution analysis phase)
