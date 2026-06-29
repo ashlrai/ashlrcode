@@ -35,15 +35,30 @@ export type ProviderSupportMap = Partial<Record<ProviderId, SupportLevel>>;
 
 /**
  * Full capability entry for one tool.
- * - `support`         — per-provider support level (missing entry → 'native' default)
- * - `costMultipliers` — per-provider multiplier applied to base token cost (1.0 = no change)
- * - `substitutes`     — ordered list of tool names to try when this tool is unavailable
- * - `category`        — logical grouping used for batch-query helpers
+ * - `support`               — per-provider support level (missing entry → 'native' default)
+ * - `costMultipliers`       — per-provider multiplier applied to base token cost (1.0 = no change)
+ * - `fallbackScores`        — per-provider priority score for fallback chain ordering (higher = preferred)
+ * - `emulationCostMultipliers` — per-provider overhead multiplier when running via emulation (≥1.0)
+ * - `substitutes`           — ordered list of tool names to try when this tool is unavailable
+ * - `category`              — logical grouping used for batch-query helpers
  */
 export interface ToolCapability {
   toolName: string;
   support: ProviderSupportMap;
   costMultipliers: Partial<Record<ProviderId, number>>;
+  /**
+   * Per-provider fallback priority score (0–100, higher = more preferred in chain).
+   * When absent, score defaults to rank-derived value (native=100, via-mcp=60, emulated=30).
+   * Allows manual tuning: e.g. prefer xAI over Anthropic for a specific tool even at equal support.
+   */
+  fallbackScores?: Partial<Record<ProviderId, number>>;
+  /**
+   * Per-provider emulation cost multiplier — additional overhead when the tool is emulated
+   * via prompt engineering rather than native API support.
+   * Values >1.0 indicate emulation overhead (e.g. 1.2 = 20% more tokens/cost vs. native).
+   * Missing entry → 1.0 (no overhead, or not emulated).
+   */
+  emulationCostMultipliers?: Partial<Record<ProviderId, number>>;
   substitutes: string[];
   category: ToolCategory;
 }
@@ -241,21 +256,70 @@ export class CapabilityRegistry {
   }
 
   /**
+   * Return the emulation cost multiplier for a tool on a provider.
+   *
+   * This is the *additional* overhead when running via emulation compared to
+   * native execution. Values >1.0 indicate emulation overhead.
+   * Returns 1.0 when:
+   *   - No emulationCostMultipliers entry exists for the provider, OR
+   *   - The tool is native on this provider (overhead = none).
+   */
+  getEmulationCostMultiplier(toolName: string, provider: ProviderId): number {
+    const cap = this.capabilities.get(toolName);
+    if (!cap) return 1.0;
+    const level: SupportLevel = cap.support[provider] ?? "native";
+    if (level === "native") return 1.0;
+    return cap.emulationCostMultipliers?.[provider] ?? 1.0;
+  }
+
+  /**
+   * Return the fallback priority score for a provider/tool combination.
+   *
+   * Higher score = more preferred in the fallback chain.
+   * Default scores by support level: native=100, via-mcp=60, emulated=30.
+   * A registered `fallbackScores` entry overrides the default for fine-grained control.
+   */
+  getFallbackScore(toolName: string, provider: ProviderId): number {
+    const cap = this.capabilities.get(toolName);
+    if (!cap) return 0;
+    if (cap.fallbackScores?.[provider] !== undefined) {
+      return cap.fallbackScores[provider]!;
+    }
+    // Default score derived from support level
+    const level: SupportLevel = cap.support[provider] ?? "native";
+    const defaults: Record<SupportLevel, number> = {
+      native: 100,
+      "via-mcp": 60,
+      emulated: 30,
+      unsupported: 0,
+    };
+    return defaults[level];
+  }
+
+  /**
    * Return an ordered fallback chain of providers for a tool, starting from
-   * the best (highest support rank, then lowest cost) down to the worst.
+   * the best (highest fallback score, then lowest effective cost) down to the worst.
    *
    * Providers with 'unsupported' level are excluded.
+   * The chain uses `fallbackScores` for ordering when registered, otherwise
+   * falls back to support-rank + cost-multiplier ordering.
    * The chain is used by the router to attempt per-tool promotion without
    * committing to a full session provider switch.
    */
   getProviderFallbackChain(
     toolName: string,
     options: BestProviderOptions = {}
-  ): Array<{ provider: ProviderId; supportLevel: SupportLevel; costMultiplier: number }> {
+  ): Array<{
+    provider: ProviderId;
+    supportLevel: SupportLevel;
+    costMultiplier: number;
+    fallbackScore: number;
+    emulationCostMultiplier: number;
+  }> {
     const cap = this.capabilities.get(toolName);
     if (!cap) return [];
 
-    let candidates = ALL_PROVIDERS.filter((p) => {
+    const candidates = ALL_PROVIDERS.filter((p) => {
       if (options.exclude?.includes(p)) return false;
       if (options.include && !options.include.includes(p)) return false;
       return true;
@@ -264,16 +328,37 @@ export class CapabilityRegistry {
     const scored = candidates.map((p) => {
       const level: SupportLevel = cap.support[p] ?? "native";
       const cost = cap.costMultipliers[p] ?? 1.0;
-      return { provider: p, supportLevel: level, costMultiplier: cost, rank: SUPPORT_RANK[level] };
+      const emulationCost = this.getEmulationCostMultiplier(toolName, p);
+      const fbScore = this.getFallbackScore(toolName, p);
+      return {
+        provider: p,
+        supportLevel: level,
+        costMultiplier: cost,
+        fallbackScore: fbScore,
+        emulationCostMultiplier: emulationCost,
+        rank: SUPPORT_RANK[level],
+      };
     });
 
     return scored
       .filter((s) => s.rank > 0)
       .sort((a, b) => {
+        // Primary: fallback score descending (higher = more preferred)
+        if (b.fallbackScore !== a.fallbackScore) return b.fallbackScore - a.fallbackScore;
+        // Secondary: support rank descending
         if (b.rank !== a.rank) return b.rank - a.rank;
-        return a.costMultiplier - b.costMultiplier; // prefer lower cost on tie
+        // Tertiary: prefer lower effective cost (costMultiplier * emulationCostMultiplier)
+        const aCost = a.costMultiplier * a.emulationCostMultiplier;
+        const bCost = b.costMultiplier * b.emulationCostMultiplier;
+        return aCost - bCost;
       })
-      .map(({ provider, supportLevel, costMultiplier }) => ({ provider, supportLevel, costMultiplier }));
+      .map(({ provider, supportLevel, costMultiplier, fallbackScore, emulationCostMultiplier }) => ({
+        provider,
+        supportLevel,
+        costMultiplier,
+        fallbackScore,
+        emulationCostMultiplier,
+      }));
   }
 }
 
@@ -334,6 +419,21 @@ reg({
     ollama: 1.1,
     groq: 1.1,
     deepseek: 1.1,
+  },
+  // xAI preferred over Anthropic as primary fallback for Edit (lower latency, same quality).
+  fallbackScores: {
+    xai: 105,
+    anthropic: 100,
+    openai: 90,
+    ollama: 30,
+    groq: 25,
+    deepseek: 28,
+  },
+  // Emulation overhead when running Edit via prompt-synthesis on limited providers.
+  emulationCostMultipliers: {
+    ollama: 1.2,
+    groq: 1.2,
+    deepseek: 1.15,
   },
   substitutes: ["Write"],
 });
@@ -433,6 +533,19 @@ reg({
     ollama: 1.2,
     groq: 1.2,
     deepseek: 1.15,
+  },
+  fallbackScores: {
+    anthropic: 100,
+    xai: 98,
+    openai: 95,
+    deepseek: 28,
+    ollama: 20,
+    groq: 18,
+  },
+  emulationCostMultipliers: {
+    ollama: 1.25,
+    groq: 1.25,
+    deepseek: 1.2,
   },
   substitutes: ["Edit"],
 });

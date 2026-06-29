@@ -206,6 +206,129 @@ export function recordToolCall(call: ToolCallRecord): void {
  */
 export function resetToolCallStore(): void {
   _callBuffers.clear();
+  _fallbackCostDeltas.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Fallback cost delta integration
+// ---------------------------------------------------------------------------
+
+/**
+ * Represents one recorded fallback cost delta — the extra cost incurred when
+ * a tool was routed to a fallback provider instead of the requested one.
+ */
+export interface FallbackCostDeltaRecord {
+  /** Tool that was routed via fallback. */
+  toolName: string;
+  /** Original (requested) provider. */
+  fromProvider: string;
+  /** Actual (resolved fallback) provider. */
+  toProvider: string;
+  /** Effective cost multiplier delta (resolved − requested). */
+  costDelta: number;
+  /** Timestamp (ms since epoch). */
+  at: number;
+}
+
+/** Per-tool rolling fallback cost delta buffer (max WINDOW_SIZE entries). */
+const _fallbackCostDeltas = new Map<string, FallbackCostDeltaRecord[]>();
+
+/**
+ * Record a fallback cost delta event.
+ * Called when a tool is dispatched to a fallback provider, passing the effective
+ * cost delta from buildCapabilityFallbackChain() or resolveToolDispatch().
+ *
+ * These deltas are accumulated and factored into tier promotion scoring via
+ * `applyFallbackCostDeltas()`.
+ */
+export function recordFallbackCostDelta(record: FallbackCostDeltaRecord): void {
+  const buf = _fallbackCostDeltas.get(record.toolName) ?? [];
+  buf.push({ ...record });
+  if (buf.length > WINDOW_SIZE) buf.shift();
+  _fallbackCostDeltas.set(record.toolName, buf);
+}
+
+/**
+ * Compute the average fallback cost delta for a specific tool.
+ * Returns 0 if no fallback events have been recorded for that tool.
+ */
+export function getAvgFallbackCostDelta(toolName: string): number {
+  const buf = _fallbackCostDeltas.get(toolName);
+  if (!buf || buf.length === 0) return 0;
+  const sum = buf.reduce((s, r) => s + r.costDelta, 0);
+  return sum / buf.length;
+}
+
+/**
+ * Compute the total average fallback cost delta across all recorded tools.
+ * Used to adjust tier promotion cost estimates with real observed fallback overhead.
+ */
+export function getTotalAvgFallbackCostDelta(): number {
+  let total = 0;
+  let count = 0;
+  for (const buf of _fallbackCostDeltas.values()) {
+    for (const r of buf) {
+      total += r.costDelta;
+      count++;
+    }
+  }
+  return count > 0 ? total / count : 0;
+}
+
+/**
+ * Return all fallback cost delta records as a flat array, most recent last.
+ */
+export function getAllFallbackCostDeltas(): FallbackCostDeltaRecord[] {
+  const result: FallbackCostDeltaRecord[] = [];
+  for (const buf of _fallbackCostDeltas.values()) {
+    result.push(...buf);
+  }
+  return result.sort((a, b) => a.at - b.at);
+}
+
+/**
+ * Apply observed fallback cost deltas to a tier promotion cost delta estimate.
+ *
+ * When tools at a given tier have been frequently routed to fallback providers
+ * (incurring extra cost), the effective per-call cost at that tier is higher
+ * than the static canonical estimates. This function adjusts the `costDeltaUsd`
+ * from `promotionScore()` by adding the average fallback overhead for tools
+ * that belong to the target tier.
+ *
+ * The adjustment is additive and clamped to non-negative values.
+ *
+ * @param baseCostDelta     The static cost delta from getTierCostSummary().
+ * @param toTier            The target tier being evaluated for promotion.
+ * @returns                 Adjusted cost delta incorporating fallback overhead.
+ */
+export function applyFallbackCostDeltas(
+  baseCostDelta: number,
+  toTier: SurgicalTier
+): number {
+  // Collect all tools unlocked at the target tier
+  const tierTools: string[] = [];
+  for (let t = 1; t <= toTier; t++) {
+    tierTools.push(...(TOOLS_BY_TIER[t as SurgicalTier] ?? []));
+  }
+
+  // Average fallback overhead across tools in this tier
+  let totalDelta = 0;
+  let toolsWithData = 0;
+  for (const tool of tierTools) {
+    const avgDelta = getAvgFallbackCostDelta(tool);
+    if (avgDelta !== 0) {
+      totalDelta += avgDelta;
+      toolsWithData++;
+    }
+  }
+
+  // Convert fallback cost multiplier delta to approximate USD cost
+  // (multiplier delta × base token cost estimate ≈ USD overhead per call)
+  const avgMultiplierDelta = toolsWithData > 0 ? totalDelta / toolsWithData : 0;
+  // Scale: 0.1 multiplier delta ≈ $0.001 overhead per call (conservative)
+  const fallbackOverheadUsd = avgMultiplierDelta * 0.01;
+
+  return Math.max(0, baseCostDelta + fallbackOverheadUsd);
 }
 
 // ---------------------------------------------------------------------------
@@ -385,7 +508,11 @@ export function promotionScore(
 ): PromotionScoreResult {
   const fromSummary = getTierCostSummary(fromTier);
   const toSummary = getTierCostSummary(toTier);
-  const costDelta = Math.max(0, toSummary.avgCallCostUsd - fromSummary.avgCallCostUsd);
+  const rawCostDelta = Math.max(0, toSummary.avgCallCostUsd - fromSummary.avgCallCostUsd);
+  // Incorporate observed fallback overhead into the cost estimate.
+  // If tools at toTier have been frequently redirected to fallback providers
+  // (incurring emulation overhead), the effective cost is higher than canonical.
+  const costDelta = applyFallbackCostDeltas(rawCostDelta, toTier);
 
   const capabilityGain = estimateCapabilityGain(fromTier, toTier, testPassRateDelta, errorReductionDelta);
 

@@ -10,6 +10,12 @@
  *   and a better provider is available at a cost multiplier ≤ 1.5×,
  *   the tool is automatically promoted to that provider for this dispatch only.
  * - Dispatch events are logged via event-log.ts for observability.
+ *
+ * Multi-Provider Fallback Chain (buildCapabilityFallbackChain):
+ * - Attempts the tool across multiple providers in priority order.
+ * - Tracks emulation overhead per-hop (emulationCostMultiplier).
+ * - If the entire chain exhausts without native support, gracefully degrades
+ *   to a read-only equivalent or provides a user-facing explanation.
  */
 
 import {
@@ -79,6 +85,310 @@ export interface UnsupportedToolWarning {
 
 /** Maximum cost multiplier ratio before auto-promotion is refused. */
 export const AUTO_PROMOTE_COST_CEILING = 1.5;
+
+// ---------------------------------------------------------------------------
+// Multi-provider fallback chain types
+// ---------------------------------------------------------------------------
+
+/**
+ * A single hop in a multi-provider fallback chain.
+ */
+export interface FallbackChainEntry {
+  /** Provider at this hop. */
+  provider: ProviderId;
+  /** Support level at this provider. */
+  supportLevel: SupportLevel;
+  /** Base cost multiplier for this tool on this provider. */
+  costMultiplier: number;
+  /**
+   * Emulation overhead multiplier (≥1.0).
+   * 1.0 = native, no overhead; >1.0 = prompt-synthesis emulation overhead.
+   */
+  emulationCostMultiplier: number;
+  /**
+   * Effective cost multiplier = costMultiplier × emulationCostMultiplier.
+   * Used for cost-scoring and tier promotion delta calculations.
+   */
+  effectiveCostMultiplier: number;
+  /**
+   * Fallback priority score for this provider/tool combination.
+   * Higher = more preferred in chain ordering.
+   */
+  fallbackScore: number;
+  /** Whether this hop is the first in the chain (i.e. the preferred provider). */
+  isPrimary: boolean;
+  /** 0-based position in the chain. */
+  position: number;
+}
+
+/**
+ * Result of building a fallback chain for a tool.
+ */
+export interface FallbackChainResult {
+  /** The tool name this chain applies to. */
+  toolName: string;
+  /**
+   * Ordered provider chain, best first.
+   * Empty if the tool is unknown / unsupported on all providers.
+   */
+  chain: FallbackChainEntry[];
+  /**
+   * Whether any provider in the chain can execute the tool natively.
+   * False means we will degrade to emulated/via-mcp or read-only.
+   */
+  hasNativeProvider: boolean;
+  /**
+   * The best provider to actually execute the tool (first in chain that can
+   * execute it). Null if the chain is exhausted — tool is entirely unsupported.
+   */
+  resolvedProvider: ProviderId | null;
+  /**
+   * Graceful degradation descriptor.
+   * Populated when the chain is exhausted (no provider supports the tool).
+   */
+  degradation: FallbackChainDegradation | null;
+  /**
+   * Cost overhead incurred by using the resolved provider versus what a perfect
+   * native-on-requested provider would cost. 0.0 when resolved = requested.
+   */
+  chainCostDelta: number;
+}
+
+/**
+ * Describes how the system degrades when all providers in a fallback chain
+ * cannot execute the requested tool.
+ */
+export interface FallbackChainDegradation {
+  /**
+   * Degradation strategy chosen:
+   * - 'read-only'     — substitute with a read-only equivalent (e.g. Read instead of Edit)
+   * - 'substitute'    — use a registered substitute tool
+   * - 'explain'       — no executable fallback; surface explanation to user
+   */
+  strategy: "read-only" | "substitute" | "explain";
+  /**
+   * Tool name to use instead (for 'read-only' and 'substitute' strategies).
+   * Null for 'explain'.
+   */
+  substituteTool: string | null;
+  /** Human-readable explanation surfaced to the user or caller. */
+  message: string;
+}
+
+// ---------------------------------------------------------------------------
+// Read-only equivalents map — used for graceful degradation
+// ---------------------------------------------------------------------------
+
+/**
+ * Maps write/mutating tools to their read-only equivalents for graceful degradation.
+ * When a fallback chain exhausts, the system tries a read-only substitute before
+ * giving up and surfacing an "explain" degradation to the user.
+ */
+const READ_ONLY_EQUIVALENTS: Record<string, string> = {
+  Edit: "Read",
+  FileEdit: "FileRead",
+  Write: "Read",
+  FileWrite: "FileRead",
+  BulkEdit: "Read",
+  NotebookEdit: "Read",
+  Bash: "Read",
+  PowerShell: "Read",
+  Agent: "Read",
+  Coordinate: "Read",
+  Autopilot: "Read",
+};
+
+// ---------------------------------------------------------------------------
+// buildCapabilityFallbackChain — multi-provider fallback chain builder
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a multi-provider fallback chain for a tool, starting from the requested
+ * provider and falling back through alternatives in priority order.
+ *
+ * Algorithm:
+ * 1. Retrieve the full ordered provider chain from the capability registry.
+ *    Chain is ordered by: fallbackScore DESC → supportRank DESC → effectiveCost ASC.
+ * 2. Annotate each hop with its emulationCostMultiplier and effectiveCostMultiplier.
+ * 3. Determine the best resolved provider (first in chain that can run the tool).
+ * 4. Compute chainCostDelta = resolvedProvider.effectiveCost − requestedProvider.effectiveCost.
+ * 5. If the chain is exhausted:
+ *    a. Try a read-only equivalent (from READ_ONLY_EQUIVALENTS).
+ *    b. Else try registered substitutes.
+ *    c. Else degrade to 'explain' with a user-facing message.
+ *
+ * The chain respects `options.include` / `options.exclude` provider filters
+ * from the capability registry's BestProviderOptions.
+ *
+ * @param toolName          Tool to resolve.
+ * @param requestedProvider The provider that was originally requested.
+ * @param options           Optional include/exclude provider filters.
+ */
+export function buildCapabilityFallbackChain(
+  toolName: string,
+  requestedProvider: ProviderId,
+  options: {
+    include?: ProviderId[];
+    exclude?: ProviderId[];
+  } = {}
+): FallbackChainResult {
+  const cap = globalCapabilityRegistry.get(toolName);
+
+  // Unknown tool — degrade immediately.
+  if (!cap) {
+    return {
+      toolName,
+      chain: [],
+      hasNativeProvider: false,
+      resolvedProvider: null,
+      degradation: {
+        strategy: "explain",
+        substituteTool: null,
+        message: `Tool "${toolName}" is not registered in the capability registry. No provider can execute it.`,
+      },
+      chainCostDelta: 0,
+    };
+  }
+
+  // Retrieve ordered provider chain from registry.
+  const rawChain = globalCapabilityRegistry.getProviderFallbackChain(toolName, options);
+
+  // Build annotated chain entries.
+  const chain: FallbackChainEntry[] = rawChain.map((entry, idx) => {
+    const effectiveCost = entry.costMultiplier * entry.emulationCostMultiplier;
+    return {
+      provider: entry.provider,
+      supportLevel: entry.supportLevel,
+      costMultiplier: entry.costMultiplier,
+      emulationCostMultiplier: entry.emulationCostMultiplier,
+      effectiveCostMultiplier: effectiveCost,
+      fallbackScore: entry.fallbackScore,
+      isPrimary: idx === 0,
+      position: idx,
+    };
+  });
+
+  const hasNativeProvider = chain.some((e) => e.supportLevel === "native");
+
+  // Compute the requested provider's effective cost for delta calculation.
+  const reqCostMultiplier = cap.costMultipliers[requestedProvider] ?? 1.0;
+  const reqEmulationCost = globalCapabilityRegistry.getEmulationCostMultiplier(toolName, requestedProvider);
+  const reqEffectiveCost = reqCostMultiplier * reqEmulationCost;
+
+  // Find the best resolved provider: first in chain (chain is already ordered best-first).
+  const resolved = chain[0] ?? null;
+
+  if (resolved !== null) {
+    const chainCostDelta = resolved.effectiveCostMultiplier - reqEffectiveCost;
+    return {
+      toolName,
+      chain,
+      hasNativeProvider,
+      resolvedProvider: resolved.provider,
+      degradation: null,
+      chainCostDelta,
+    };
+  }
+
+  // Chain exhausted — build graceful degradation descriptor.
+  let degradation: FallbackChainDegradation;
+
+  // 1. Try read-only equivalent.
+  const readOnlyEquiv = READ_ONLY_EQUIVALENTS[toolName];
+  if (readOnlyEquiv) {
+    degradation = {
+      strategy: "read-only",
+      substituteTool: readOnlyEquiv,
+      message:
+        `No provider supports "${toolName}" (requested: ${requestedProvider}). ` +
+        `Degrading to read-only equivalent: "${readOnlyEquiv}".`,
+    };
+  } else if (cap.substitutes.length > 0) {
+    // 2. Try registered substitutes.
+    const bestSubstitute = cap.substitutes[0]!;
+    degradation = {
+      strategy: "substitute",
+      substituteTool: bestSubstitute,
+      message:
+        `No provider supports "${toolName}" (requested: ${requestedProvider}). ` +
+        `Using substitute: "${bestSubstitute}".`,
+    };
+  } else {
+    // 3. Explain to user — no executable fallback.
+    degradation = {
+      strategy: "explain",
+      substituteTool: null,
+      message:
+        `No provider supports "${toolName}" and no fallback is available for provider "${requestedProvider}". ` +
+        `This tool cannot be executed in the current configuration.`,
+    };
+  }
+
+  process.stderr.write(
+    `[capability] CHAIN_EXHAUSTED tool="${toolName}" provider=${requestedProvider}` +
+      ` strategy=${degradation.strategy}` +
+      (degradation.substituteTool ? ` substitute="${degradation.substituteTool}"` : "") +
+      ` — ${degradation.message}\n`
+  );
+
+  return {
+    toolName,
+    chain,
+    hasNativeProvider: false,
+    resolvedProvider: null,
+    degradation,
+    chainCostDelta: 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// formatFallbackChain — human-readable chain display for /capability-debug
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a FallbackChainResult as a human-readable string for the REPL.
+ * Used by the /capability-debug command.
+ */
+export function formatFallbackChain(result: FallbackChainResult): string {
+  const lines: string[] = [];
+  const header = `  Tool: ${result.toolName}`;
+  lines.push(header);
+
+  if (result.chain.length === 0) {
+    lines.push("    (no providers support this tool)");
+  } else {
+    for (const entry of result.chain) {
+      const primary = entry.isPrimary ? " [PRIMARY]" : "";
+      const emulTag =
+        entry.emulationCostMultiplier > 1.0
+          ? ` emu×${entry.emulationCostMultiplier.toFixed(2)}`
+          : "";
+      const score = `score=${entry.fallbackScore}`;
+      lines.push(
+        `    [${entry.position}] ${entry.provider.padEnd(12)} ` +
+          `${entry.supportLevel.padEnd(10)} ` +
+          `cost×${entry.effectiveCostMultiplier.toFixed(2)}${emulTag}  ${score}${primary}`
+      );
+    }
+  }
+
+  if (result.resolvedProvider !== null) {
+    const delta = result.chainCostDelta;
+    const deltaStr =
+      delta === 0
+        ? "(no overhead)"
+        : `Δcost ${delta >= 0 ? "+" : ""}${delta.toFixed(2)}`;
+    lines.push(`    → Resolved: ${result.resolvedProvider}  ${deltaStr}`);
+  } else if (result.degradation) {
+    lines.push(`    → DEGRADED [${result.degradation.strategy}]: ${result.degradation.message}`);
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Validate whether a tool can be executed by a specific provider.
+// ---------------------------------------------------------------------------
 
 /**
  * Validate whether a tool can be executed by a specific provider.

@@ -36,6 +36,15 @@ import {
   getDispatchRing,
   resetDispatchStats,
 } from "../telemetry/event-log.ts";
+import {
+  buildCapabilityFallbackChain,
+  formatFallbackChain,
+} from "../tools/capability-check.ts";
+import {
+  globalCapabilityRegistry,
+  ALL_PROVIDERS,
+  type ProviderId,
+} from "../providers/capability-registry.ts";
 import type { ToolCall } from "../providers/types.ts";
 
 // ---------------------------------------------------------------------------
@@ -405,9 +414,247 @@ export function toolDispatchStatsCommands(): Command[] {
   ];
 }
 
+// ---------------------------------------------------------------------------
+// /capability-debug command
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a cost-impact table for a fallback chain result.
+ */
+function formatChainCostImpact(
+  toolName: string,
+  requestedProvider: ProviderId
+): string {
+  const lines: string[] = [];
+  lines.push(`\n  ${theme.accentBold(toolName)}  (requested: ${requestedProvider})`);
+  lines.push("  " + "─".repeat(72));
+
+  const result = buildCapabilityFallbackChain(toolName, requestedProvider);
+
+  if (result.chain.length === 0) {
+    lines.push(
+      theme.muted(`    No providers available for "${toolName}".`)
+    );
+  } else {
+    lines.push(
+      "  " +
+        "Pos".padEnd(5) +
+        "Provider".padEnd(14) +
+        "Level".padEnd(12) +
+        "BaseCost".padEnd(10) +
+        "EmuCost".padEnd(10) +
+        "EffCost".padEnd(10) +
+        "Score".padEnd(8) +
+        "Primary"
+    );
+    lines.push("  " + "─".repeat(72));
+
+    for (const entry of result.chain) {
+      const primary = entry.isPrimary ? theme.accent("  ← primary") : "";
+      const emuStr =
+        entry.emulationCostMultiplier > 1.0
+          ? theme.warning(`×${entry.emulationCostMultiplier.toFixed(2)}`)
+          : theme.muted(`×${entry.emulationCostMultiplier.toFixed(2)}`);
+      const effStr =
+        entry.effectiveCostMultiplier > 1.1
+          ? theme.warning(`×${entry.effectiveCostMultiplier.toFixed(2)}`)
+          : `×${entry.effectiveCostMultiplier.toFixed(2)}`;
+      lines.push(
+        "  " +
+          String(entry.position).padEnd(5) +
+          entry.provider.padEnd(14) +
+          entry.supportLevel.padEnd(12) +
+          `×${entry.costMultiplier.toFixed(2)}`.padEnd(10) +
+          emuStr.padEnd(10) +
+          effStr.padEnd(10) +
+          String(entry.fallbackScore).padEnd(8) +
+          primary
+      );
+    }
+  }
+
+  // Resolution line
+  if (result.resolvedProvider !== null) {
+    const deltaStr =
+      result.chainCostDelta === 0
+        ? theme.success("  (no overhead)")
+        : result.chainCostDelta > 0
+          ? theme.warning(`  Δ+${result.chainCostDelta.toFixed(2)} vs requested`)
+          : theme.success(`  Δ${result.chainCostDelta.toFixed(2)} vs requested`);
+    lines.push("");
+    lines.push(
+      `  ${theme.secondary("Resolved:")} ${theme.accent(result.resolvedProvider)}${deltaStr}`
+    );
+    if (!result.hasNativeProvider) {
+      lines.push(
+        theme.warning("  No native provider available — running in degraded mode.")
+      );
+    }
+  } else if (result.degradation) {
+    lines.push("");
+    lines.push(
+      `  ${theme.error("DEGRADED")} [${result.degradation.strategy}]: ${result.degradation.message}`
+    );
+    if (result.degradation.substituteTool) {
+      lines.push(
+        `  ${theme.secondary("Substitute:")} ${theme.accent(result.degradation.substituteTool)}`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export function capabilityDebugCommands(): Command[] {
+  return [
+    {
+      name: "/capability-debug",
+      description: "Show fallback chains per tool with cost impact across providers",
+      category: "agent",
+      subcommands: ["all", "provider"],
+      handler: async (args, ctx) => {
+        const cleanArgs = args.trim();
+
+        ctx.addOutput(
+          [
+            "",
+            theme.accentBold("  Capability Fallback Debug  /capability-debug"),
+            "",
+          ].join("\n")
+        );
+
+        // ── /capability-debug all ──────────────────────────────────────────
+        // Show fallback chains for all registered tools from every provider
+        if (cleanArgs === "all") {
+          const toolNames = globalCapabilityRegistry.allToolNames().sort();
+          ctx.addOutput(
+            theme.muted(`  Showing fallback chains for ${toolNames.length} tools × ${ALL_PROVIDERS.length} providers\n`)
+          );
+          for (const toolName of toolNames) {
+            for (const provider of ALL_PROVIDERS) {
+              ctx.addOutput(
+                formatChainCostImpact(toolName, provider as ProviderId)
+              );
+            }
+            ctx.addOutput("");
+          }
+          return true;
+        }
+
+        // ── /capability-debug provider <provider> ──────────────────────────
+        // Show all tools from a specific provider perspective
+        if (cleanArgs.startsWith("provider ")) {
+          const providerArg = cleanArgs.slice(9).trim() as ProviderId;
+          if (!ALL_PROVIDERS.includes(providerArg)) {
+            ctx.addOutput(
+              theme.error(
+                `\n  Unknown provider: "${providerArg}"\n` +
+                  `  Valid providers: ${ALL_PROVIDERS.join(", ")}\n`
+              )
+            );
+            return true;
+          }
+          const toolNames = globalCapabilityRegistry.allToolNames().sort();
+          ctx.addOutput(
+            theme.muted(
+              `  Fallback chains for provider "${providerArg}" across ${toolNames.length} tools\n`
+            )
+          );
+          for (const toolName of toolNames) {
+            const result = buildCapabilityFallbackChain(toolName, providerArg);
+            // Only show tools that have a non-trivial chain (fallback or degradation)
+            const isTrivial =
+              result.chain.length > 0 &&
+              result.chain[0]!.provider === providerArg &&
+              result.chain[0]!.supportLevel === "native" &&
+              result.chainCostDelta === 0;
+            if (!isTrivial) {
+              ctx.addOutput(formatChainCostImpact(toolName, providerArg));
+            }
+          }
+          ctx.addOutput("");
+          return true;
+        }
+
+        // ── /capability-debug <toolName> [provider] ────────────────────────
+        // Show fallback chain for a specific tool, optionally from a provider
+        const parts = cleanArgs.split(" ");
+        const toolArg = parts[0];
+        const providerArg = parts[1] as ProviderId | undefined;
+
+        if (!toolArg) {
+          // No args — show summary: tools with non-trivial fallback chains from anthropic
+          const defaultProvider: ProviderId = "anthropic";
+          const toolNames = globalCapabilityRegistry.allToolNames().sort();
+          ctx.addOutput(
+            theme.secondary(`  Showing non-trivial fallback chains from "${defaultProvider}" (use /capability-debug <tool> [provider] for details)\n`)
+          );
+          let shown = 0;
+          for (const toolName of toolNames) {
+            const result = buildCapabilityFallbackChain(toolName, defaultProvider);
+            if (result.degradation || result.chainCostDelta !== 0 || !result.hasNativeProvider) {
+              ctx.addOutput(formatChainCostImpact(toolName, defaultProvider));
+              shown++;
+            }
+          }
+          if (shown === 0) {
+            ctx.addOutput(
+              theme.success(`  All tools have native support on "${defaultProvider}" with no overhead.\n`)
+            );
+          }
+        } else {
+          // Specific tool
+          const cap = globalCapabilityRegistry.get(toolArg);
+          if (!cap) {
+            ctx.addOutput(
+              theme.error(`\n  Unknown tool: "${toolArg}". Use /capability-debug all to list all tools.\n`)
+            );
+            return true;
+          }
+          if (providerArg) {
+            if (!ALL_PROVIDERS.includes(providerArg)) {
+              ctx.addOutput(
+                theme.error(
+                  `\n  Unknown provider: "${providerArg}"\n` +
+                    `  Valid providers: ${ALL_PROVIDERS.join(", ")}\n`
+                )
+              );
+              return true;
+            }
+            ctx.addOutput(formatChainCostImpact(toolArg, providerArg));
+          } else {
+            // Show chain from all providers for this tool
+            ctx.addOutput(
+              theme.secondary(`  Fallback chains for "${toolArg}" from each provider:\n`)
+            );
+            for (const provider of ALL_PROVIDERS) {
+              ctx.addOutput(formatChainCostImpact(toolArg, provider as ProviderId));
+            }
+          }
+          ctx.addOutput("");
+        }
+
+        ctx.addOutput(
+          [
+            theme.secondary("  Sub-commands:"),
+            `    ${theme.accent("/capability-debug <tool>")}               — chains for one tool from all providers`,
+            `    ${theme.accent("/capability-debug <tool> <provider>")}    — chain for one tool from one provider`,
+            `    ${theme.accent("/capability-debug provider <provider>")}  — non-trivial chains for all tools from provider`,
+            `    ${theme.accent("/capability-debug all")}                  — full matrix (verbose)`,
+            "",
+          ].join("\n")
+        );
+
+        return true;
+      },
+    },
+  ];
+}
+
 export function toolGraphCommands(): Command[] {
   return [
     ...toolDispatchStatsCommands(),
+    ...capabilityDebugCommands(),
     {
       name: "/tool-graph",
       description: "Visualise tool call dependency DAG, parallel waves, and coalescence decisions",
