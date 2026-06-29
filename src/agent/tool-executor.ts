@@ -15,6 +15,7 @@ import type { ToolContext } from "../tools/types.ts";
 import type { Tool } from "../tools/types.ts";
 import type { ToolCall } from "../providers/types.ts";
 import type { SpeculationCache } from "./speculation.ts";
+import type { PersistentSpeculationCache } from "./speculation.ts";
 import { trackFileModification } from "./verification.ts";
 import { recordStep } from "./time-travel.ts";
 
@@ -198,6 +199,20 @@ export function getSpeculationCache(): SpeculationCache | null {
 }
 
 // ---------------------------------------------------------------------------
+// Module-level persistent speculation cache (cross-provider, cross-session)
+// ---------------------------------------------------------------------------
+
+let _persistentCache: PersistentSpeculationCache | null = null;
+
+export function setPersistentSpeculationCache(cache: PersistentSpeculationCache): void {
+  _persistentCache = cache;
+}
+
+export function getPersistentSpeculationCache(): PersistentSpeculationCache | null {
+  return _persistentCache;
+}
+
+// ---------------------------------------------------------------------------
 // Tool execution metrics — cumulative timing and success tracking
 // ---------------------------------------------------------------------------
 
@@ -349,7 +364,7 @@ async function executeSingle(
   const startTime = performance.now();
   const tool = registry.get(tc.name);
 
-  // Check speculation cache for read-only tools (skip the full execute path)
+  // Check in-memory speculation cache for read-only tools (skip the full execute path)
   if (tool?.isReadOnly() && _speculationCache) {
     const cached = _speculationCache.get(tc.name, tc.input);
     if (cached !== null) {
@@ -370,16 +385,47 @@ async function executeSingle(
     }
   }
 
+  // Check persistent cross-provider cache for read-only tools
+  if (tool?.isReadOnly() && _persistentCache) {
+    const persistedHit = await _persistentCache.get(tc.name, tc.input);
+    if (persistedHit !== null) {
+      const { result: cachedResult } = persistedHit;
+      callbacks?.onToolStart?.(tc.name, tc.input);
+      callbacks?.onToolEnd?.(tc.name, cachedResult, false);
+      recordToolMetric(tc.name, performance.now() - startTime, false);
+
+      // Also populate the in-memory cache so subsequent calls in this session
+      // don't need to hit disk
+      _speculationCache?.set(tc.name, tc.input, cachedResult);
+
+      trackAndSpeculate(tc.name, tc.input, cachedResult);
+
+      return {
+        toolCallId: tc.id,
+        name: tc.name,
+        input: tc.input,
+        result: cachedResult,
+        isError: false,
+      };
+    }
+  }
+
   callbacks?.onToolStart?.(tc.name, tc.input);
 
   const { result, isError } = await registry.execute(tc.name, tc.input, context);
 
   callbacks?.onToolEnd?.(tc.name, result, isError);
-  recordToolMetric(tc.name, performance.now() - startTime, isError);
+  const executionMs = performance.now() - startTime;
+  recordToolMetric(tc.name, executionMs, isError);
 
   // Cache successful read-only results for future speculation
   if (tool?.isReadOnly() && _speculationCache && !isError) {
     _speculationCache.set(tc.name, tc.input, result);
+  }
+
+  // Also persist to the cross-provider cache so other agents/sessions can reuse
+  if (tool?.isReadOnly() && _persistentCache && !isError) {
+    _persistentCache.set(tc.name, tc.input, result, executionMs).catch(() => {});
   }
 
   // Invalidate cache and track modifications when write tools execute
@@ -387,6 +433,7 @@ async function executeSingle(
     const filePath = tc.input.file_path;
     if (typeof filePath === "string") {
       _speculationCache?.invalidateForFile(filePath);
+      _persistentCache?.invalidateForFile(filePath).catch(() => {});
       trackFileModification(filePath);
     }
   }

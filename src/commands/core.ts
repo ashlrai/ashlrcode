@@ -39,16 +39,22 @@ export function coreCommands(deps: {
       description: "Tool metrics + speculation cache stats",
       category: "session",
       handler: async (_args, ctx) => {
-        const { formatToolMetrics } = await import("../agent/tool-executor.ts");
+        const { formatToolMetrics, getPersistentSpeculationCache } = await import("../agent/tool-executor.ts");
         const specStats = deps.speculationCache.getStats();
         const specTotal = specStats.hits + specStats.misses;
         const specRate = specTotal > 0 ? Math.round((specStats.hits / specTotal) * 100) : 0;
+        const persistentCache = getPersistentSpeculationCache();
+        const persistentLines: string[] = [];
+        if (persistentCache) {
+          persistentLines.push("", persistentCache.formatStats());
+        }
         ctx.addOutput(
           [
             "",
             formatToolMetrics(),
             "",
-            `Speculation Cache: ${specStats.size} entries, ${specStats.hits} hits / ${specStats.misses} misses (${specRate}% hit rate)`,
+            `Speculation Cache (in-memory): ${specStats.size} entries, ${specStats.hits} hits / ${specStats.misses} misses (${specRate}% hit rate)`,
+            ...persistentLines,
             "",
           ].join("\n"),
         );
