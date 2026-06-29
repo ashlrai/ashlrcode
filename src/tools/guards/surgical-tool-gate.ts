@@ -73,6 +73,24 @@ export interface SurgicalGateOptions {
     /** Current conversation turn (1-based). */
     turn: number;
   };
+  /**
+   * Optional rollback manager hook.  When provided, every blocked verdict is
+   * forwarded to the manager so it can detect dead-end turns and propose widen.
+   */
+  rollback?: {
+    /** The active SurgicalScopeRollbackManager instance. */
+    manager: import("../../agent/surgical-scope-rollback.ts").SurgicalScopeRollbackManager;
+    /**
+     * Optional callback invoked when the manager decides a widen proposal
+     * should be generated (≥ blockThreshold distinct tools blocked this turn).
+     * The caller can use this to surface the proposal to the user immediately.
+     */
+    onWidenProposed?: (
+      proposal: import("../../agent/surgical-scope-rollback.ts").RollbackProposal,
+    ) => void;
+    /** Goal string — forwarded to the rollback manager for cost-delta display. */
+    goal?: string;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -278,6 +296,28 @@ export function checkSurgicalToolGate(
       .catch(() => {
         // silently ignore — audit must never break main UX
       });
+  }
+
+  // Rollback hook — forward blocked verdicts to the rollback manager (fire-and-forget)
+  if (result.verdict === "block" && opts.rollback) {
+    const { manager, onWidenProposed, goal } = opts.rollback;
+    // Only track rollbacks for numeric tiers (4-tier system)
+    const numericTier = typeof opts.tier === "number" ? (opts.tier as SurgicalTier) : null;
+    if (numericTier !== null) {
+      const shouldPropose = manager.trackBlockedTool(
+        toolName,
+        result.reason ?? "blocked by surgical-tool-gate",
+        numericTier,
+      );
+      if (shouldPropose && onWidenProposed) {
+        // Propose widen asynchronously — never block the gate result
+        manager.proposeWiden(numericTier).then((proposal) => {
+          onWidenProposed(proposal);
+        }).catch(() => {
+          // silently ignore — rollback must never break main UX
+        });
+      }
+    }
   }
 
   return result;

@@ -255,6 +255,183 @@ export async function handleSurgicalPerf(
   return true;
 }
 
+// ── Command: /surgical widen ──────────────────────────────────────────────
+
+/**
+ * Handle /surgical widen.
+ *
+ * Accepts the pending rollback proposal (if any) from the session's
+ * SurgicalScopeRollbackManager. If no proposal is pending, informs the user.
+ */
+export async function handleSurgicalWiden(
+  _args: string,
+  ctx: CommandContext,
+): Promise<boolean> {
+  const { getGlobalRollbackManager } = await import("../agent/surgical-scope-rollback.ts");
+  const sessionId = resolveSessionId(ctx);
+  const manager = getGlobalRollbackManager(sessionId);
+  const pending = manager.getPendingProposal();
+
+  if (!pending) {
+    ctx.addOutput(
+      theme.muted(
+        "\n  No pending rollback proposal. Scope widening proposals are " +
+        "generated automatically when ≥2 distinct tools are blocked in one turn.\n",
+      ),
+    );
+    return true;
+  }
+
+  const toTier = await manager.acceptWiden();
+  if (toTier === null) {
+    ctx.addOutput(theme.warning("\n  Failed to accept widen proposal.\n"));
+    return true;
+  }
+
+  const { TIER_DESCRIPTORS } = await import("../tools/guards/surgical-tier-promoter.ts");
+  const desc = TIER_DESCRIPTORS[toTier];
+  ctx.addOutput(
+    [
+      "",
+      theme.success("  Scope widened."),
+      `  Now at: ${desc.label} — ${desc.description}`,
+      theme.muted("  Tip: use /surgical audit to review blocked-tool history."),
+      "",
+    ].join("\n"),
+  );
+
+  return true;
+}
+
+// ── Command: /surgical stay ───────────────────────────────────────────────
+
+/**
+ * Handle /surgical stay.
+ *
+ * Rejects the pending rollback proposal so the session continues
+ * at the current (narrower) tier.
+ */
+export async function handleSurgicalStay(
+  _args: string,
+  ctx: CommandContext,
+): Promise<boolean> {
+  const { getGlobalRollbackManager } = await import("../agent/surgical-scope-rollback.ts");
+  const sessionId = resolveSessionId(ctx);
+  const manager = getGlobalRollbackManager(sessionId);
+  const pending = manager.getPendingProposal();
+
+  if (!pending) {
+    ctx.addOutput(
+      theme.muted("\n  No pending rollback proposal to reject.\n"),
+    );
+    return true;
+  }
+
+  const { TIER_DESCRIPTORS } = await import("../tools/guards/surgical-tier-promoter.ts");
+  const fromDesc = TIER_DESCRIPTORS[pending.fromTier];
+  await manager.rejectWiden();
+
+  ctx.addOutput(
+    [
+      "",
+      theme.warning("  Staying constrained."),
+      `  Keeping: ${fromDesc.label} — ${fromDesc.description}`,
+      theme.muted("  Some tools will remain blocked. Use /surgical widen to reconsider."),
+      "",
+    ].join("\n"),
+  );
+
+  return true;
+}
+
+// ── Command: /surgical capability-analysis <goal> ─────────────────────────
+
+/**
+ * Handle /surgical capability-analysis <goal>.
+ *
+ * Shows which tools are needed for the given goal and the recommended
+ * minimum scope tier. Also shows cost delta vs. Tier 4 (broad).
+ */
+export async function handleSurgicalCapabilityAnalysis(
+  args: string,
+  ctx: CommandContext,
+): Promise<boolean> {
+  const goal = args.trim();
+  if (!goal) {
+    ctx.addOutput(
+      theme.warning(
+        "\n  Usage: /surgical capability-analysis <goal>\n" +
+        "  Example: /surgical capability-analysis fix the failing auth test\n",
+      ),
+    );
+    return true;
+  }
+
+  const { SurgicalScopeRollbackManager } = await import("../agent/surgical-scope-rollback.ts");
+  const sessionId = resolveSessionId(ctx);
+  // Use a local manager for analysis (no need for the global singleton here)
+  const analyzer = new SurgicalScopeRollbackManager(sessionId, { logToDisk: false });
+  const result = analyzer.capabilityAnalysis(goal);
+
+  ctx.addOutput(
+    theme.accentBold("\n  Surgical Capability Analysis") +
+    analyzer.formatCapabilityAnalysis(result),
+  );
+
+  return true;
+}
+
+// ── Command: /surgical rollback-log ──────────────────────────────────────
+
+/**
+ * Handle /surgical rollback-log.
+ *
+ * Display the rollback event log (~/.ashlrcode/surgical-rollbacks.jsonl),
+ * most-recent first. Accepts an optional count argument (default: 10).
+ */
+export async function handleSurgicalRollbackLog(
+  args: string,
+  ctx: CommandContext,
+): Promise<boolean> {
+  const { readRollbackLog } = await import("../agent/surgical-scope-rollback.ts");
+  const entries = await readRollbackLog();
+
+  if (entries.length === 0) {
+    ctx.addOutput(
+      theme.muted(
+        "\n  No rollback events recorded yet.\n" +
+        "  Events are written when ≥2 distinct tools are blocked in one turn.\n",
+      ),
+    );
+    return true;
+  }
+
+  const countArg = parseInt(args.trim(), 10);
+  const count = Number.isNaN(countArg) ? 10 : Math.max(1, countArg);
+  const recent = entries.slice(-count).reverse();
+
+  const lines: string[] = ["", theme.accentBold("  Surgical Rollback Log"), ""];
+  for (const e of recent) {
+    const status =
+      e.status === "accepted"
+        ? theme.success("accepted")
+        : e.status === "rejected"
+          ? theme.warning("rejected")
+          : theme.muted("pending");
+    lines.push(
+      `  [${e.timestamp.slice(0, 19)}] Turn ${e.turn} — ${e.fromTier}→${e.toTier} [${status}]`,
+      `    ${e.reason}`,
+    );
+    if (e.resolvedAt) {
+      lines.push(theme.muted(`    Resolved: ${e.resolvedAt.slice(0, 19)}`));
+    }
+    lines.push("");
+  }
+
+  ctx.addOutput(lines.join("\n"));
+  return true;
+}
+
 // ── Command registry ───────────────────────────────────────────────────────
 
 /**
@@ -294,6 +471,39 @@ export function surgicalAuditCommands(): Command[] {
       category: "agent",
       handler: async (args, ctx) => {
         return handleSurgicalPerf(args, ctx);
+      },
+    },
+    {
+      name: "/surgical widen",
+      description: "Accept pending scope-widen proposal (auto-generated when ≥2 tools blocked/turn)",
+      category: "agent",
+      handler: async (args, ctx) => {
+        return handleSurgicalWiden(args, ctx);
+      },
+    },
+    {
+      name: "/surgical stay",
+      description: "Reject pending scope-widen proposal — continue at current (narrow) tier",
+      category: "agent",
+      handler: async (args, ctx) => {
+        return handleSurgicalStay(args, ctx);
+      },
+    },
+    {
+      name: "/surgical capability-analysis",
+      description: "Show tools needed for <goal> and recommended minimum scope tier",
+      category: "agent",
+      subcommands: [],
+      handler: async (args, ctx) => {
+        return handleSurgicalCapabilityAnalysis(args, ctx);
+      },
+    },
+    {
+      name: "/surgical rollback-log",
+      description: "Show rollback event log from ~/.ashlrcode/surgical-rollbacks.jsonl",
+      category: "agent",
+      handler: async (args, ctx) => {
+        return handleSurgicalRollbackLog(args, ctx);
       },
     },
   ];
