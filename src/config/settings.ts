@@ -82,6 +82,22 @@ export interface Settings {
   /** Optional API key for authenticated binshield requests. */
   binshieldKey?: string;
 
+  // ── Streaming tool result compression ────────────────────────────────────
+
+  /**
+   * Maximum bytes a tool result may occupy in the LLM context before
+   * streaming compression activates. Results up to this size are emitted
+   * verbatim. Default: 15360 (15 KB).
+   */
+  toolResultMaxBytes?: number;
+
+  /**
+   * After the verbatim head is emitted, every additional chunk of this size
+   * is summarised inline as `[SUMMARY: N lines, pattern P detected]` rather
+   * than being forwarded to the LLM context. Default: 2048 (2 KB).
+   */
+  toolChunkSummaryThreshold?: number;
+
   /**
    * Record a replayable, branchable timeline of every agent step (tool name,
    * args, result, and a cheap working-tree marker) to

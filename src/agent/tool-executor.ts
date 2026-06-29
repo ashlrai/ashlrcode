@@ -4,14 +4,181 @@
  * Partitions tool calls by isConcurrencySafe():
  * - Safe tools run in parallel via Promise.all()
  * - Unsafe tools run sequentially
+ *
+ * Also exports streamResultCompressor() which wraps tool.call() and yields
+ * delta events, truncating large outputs mid-stream with inline summaries so
+ * LLM context stays bounded.
  */
 
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
+import type { Tool } from "../tools/types.ts";
 import type { ToolCall } from "../providers/types.ts";
 import type { SpeculationCache } from "./speculation.ts";
 import { trackFileModification } from "./verification.ts";
 import { recordStep } from "./time-travel.ts";
+
+// ---------------------------------------------------------------------------
+// Streaming result compression
+// ---------------------------------------------------------------------------
+
+/** Default: emit first 15 KB verbatim, then start summarising. */
+export const DEFAULT_TOOL_RESULT_MAX_BYTES = 15_360; // 15 KB
+
+/** Default: summarise every subsequent 2 KB chunk. */
+export const DEFAULT_TOOL_CHUNK_SUMMARY_THRESHOLD = 2_048; // 2 KB
+
+export interface CompressorOptions {
+  /** Byte limit for the verbatim head section. Default: 15 KB. */
+  maxBytes?: number;
+  /** Size of each summary chunk after the head. Default: 2 KB. */
+  chunkSummaryThreshold?: number;
+}
+
+export interface CompressorEvent {
+  type: "delta";
+  text: string;
+}
+
+/**
+ * Summarise a chunk of tool output into a compact inline annotation.
+ *
+ * This is intentionally a pure, synchronous heuristic (no LLM call) so it
+ * never blocks the stream.  Pattern detection covers the most common large
+ * outputs: stack-traces, grep results, file listings, and generic repetitive
+ * text.
+ */
+export function summariseChunk(chunk: string): string {
+  const lines = chunk.split("\n");
+  const lineCount = lines.length;
+
+  // Detect dominant pattern
+  let pattern = "text";
+  const errorLike = lines.filter((l) => /\b(error|Error|ERROR|exception|Exception|EXCEPTION|traceback|Traceback)\b/.test(l)).length;
+  const atLike = lines.filter((l) => /^\s+at /.test(l)).length;
+  const grepLike = lines.filter((l) => /^[^:]+:\d+:/.test(l)).length;
+  const listLike = lines.filter((l) => /^[-*+]\s/.test(l) || /^\s*\d+\.\s/.test(l)).length;
+  const pathLike = lines.filter((l) => /^(\/|\.\/|[A-Za-z]:\\)/.test(l.trim())).length;
+
+  if (errorLike + atLike > lineCount * 0.3) pattern = "stack trace";
+  else if (grepLike > lineCount * 0.5) pattern = "grep matches";
+  else if (pathLike > lineCount * 0.5) pattern = "file listing";
+  else if (listLike > lineCount * 0.4) pattern = "list items";
+
+  return `[SUMMARY: ${lineCount} lines, pattern "${pattern}" detected]`;
+}
+
+/**
+ * Wrap a tool's call() and yield delta events for the caller to forward to
+ * the rendering layer (e.g. renderMarkdownDelta).
+ *
+ * Behaviour:
+ * - The first `maxBytes` of the result are yielded verbatim as delta events.
+ * - Every subsequent `chunkSummaryThreshold` bytes are replaced with a
+ *   `[SUMMARY: …]` annotation, keeping the overall result well under
+ *   `maxBytes + a few hundred bytes of annotations`.
+ * - If the result is within `maxBytes`, it is yielded as a single delta
+ *   with no modification.
+ *
+ * @param tool   - The tool whose call() we are wrapping.
+ * @param input  - Raw tool input forwarded to call().
+ * @param context - Tool execution context.
+ * @param opts   - Optional byte thresholds.
+ * @returns      - Final (compressed) result string and an async iterable of
+ *                 CompressorEvents for streaming.
+ */
+export async function* streamResultCompressor(
+  tool: Tool,
+  input: Record<string, unknown>,
+  context: ToolContext,
+  opts?: CompressorOptions
+): AsyncGenerator<CompressorEvent, string, unknown> {
+  const maxBytes = opts?.maxBytes ?? DEFAULT_TOOL_RESULT_MAX_BYTES;
+  const chunkSize = opts?.chunkSummaryThreshold ?? DEFAULT_TOOL_CHUNK_SUMMARY_THRESHOLD;
+
+  // Execute the tool to completion (tools don't natively stream text yet).
+  const rawResult: string = await tool.call(input, context);
+
+  const encoder = new TextEncoder();
+  const rawBytes = encoder.encode(rawResult).length;
+
+  if (rawBytes <= maxBytes) {
+    // Fast path: small result — yield as-is.
+    yield { type: "delta", text: rawResult };
+    return rawResult;
+  }
+
+  // Large result: emit verbatim head then summarise remaining chunks.
+  // We work with the string directly, using character positions as an
+  // approximation of byte positions (safe for ASCII-dominant tool output;
+  // for multi-byte chars the verbatim section may be slightly under maxBytes).
+  const verbatimEnd = approximateCharOffset(rawResult, maxBytes);
+  const head = rawResult.slice(0, verbatimEnd);
+  const tail = rawResult.slice(verbatimEnd);
+
+  // Yield verbatim head
+  yield { type: "delta", text: head };
+
+  // Yield compressed tail in chunks
+  const summaries: string[] = [];
+  let offset = 0;
+  while (offset < tail.length) {
+    const chunkEnd = approximateCharOffset(tail, chunkSize, offset);
+    const chunk = tail.slice(offset, chunkEnd);
+    const summary = summariseChunk(chunk);
+    summaries.push(summary);
+    yield { type: "delta", text: "\n" + summary };
+    offset = chunkEnd;
+  }
+
+  const finalResult = head + "\n" + summaries.join("\n");
+  return finalResult;
+}
+
+/**
+ * Convenience wrapper: runs streamResultCompressor() to completion and
+ * returns the final compressed string without streaming.
+ */
+export async function compressToolResult(
+  tool: Tool,
+  input: Record<string, unknown>,
+  context: ToolContext,
+  opts?: CompressorOptions
+): Promise<string> {
+  const gen = streamResultCompressor(tool, input, context, opts);
+  let result = "";
+  while (true) {
+    const step = await gen.next();
+    if (step.done) {
+      // step.value is the return value (final compressed string)
+      result = step.value ?? result;
+      break;
+    }
+    // Accumulate deltas in case caller ignores the return value
+    result += (step.value as CompressorEvent).text;
+  }
+  return result;
+}
+
+/**
+ * Return the character index in `str` that corresponds approximately to
+ * `targetBytes` UTF-8 bytes from `startChar`.
+ *
+ * For ASCII this is exact.  For multi-byte content it errs on the side of
+ * returning fewer characters (never more than `targetBytes` bytes).
+ */
+function approximateCharOffset(str: string, targetBytes: number, startChar = 0): number {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  let i = startChar;
+  while (i < str.length) {
+    const charBytes = encoder.encode(str[i]).length;
+    if (bytes + charBytes > targetBytes) break;
+    bytes += charBytes;
+    i++;
+  }
+  return i;
+}
 
 // Monotonic per-session step index for the time-travel timeline.
 const _ttStepIndex = new Map<string, number>();
