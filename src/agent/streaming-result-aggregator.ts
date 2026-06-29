@@ -25,11 +25,31 @@
  *     - SemanticPausePointDetector is a state machine that tracks multi-line
  *       boundaries (JSON depth, diff hunks, error blocks) incrementally.
  *
+ * Semantic Tool Result Chunking (v3):
+ *   The OutputClassifier + SemanticsAwareChunker from output-classifier.ts are
+ *   re-exported here so callers have a single import surface for all chunking
+ *   primitives.  The aggregator can also be constructed with an OutputClassifier
+ *   to override its pattern-detection with domain-specific rules.
+ *
  * Usage:
  *   const agg = new StreamingResultAggregator({ onChunk: (chunk) => render(chunk) });
  *   agg.push(partialText);       // feed incremental output
  *   const result = agg.finalize(); // flush remainder, returns full aggregated text
  */
+
+// Re-export the semantic classifier + chunker so callers can import from a
+// single surface (streaming-result-aggregator or output-classifier directly).
+export {
+  OutputClassifier,
+  SemanticsAwareChunker,
+  classifyFromMeta,
+  classifyFromContent,
+  findPausePoint,
+  createSemanticChunkCollector,
+  type SemanticType,
+  type PausePoint,
+  type SemanticChunk,
+} from "./output-classifier.ts";
 
 // ---------------------------------------------------------------------------
 // Pattern detection

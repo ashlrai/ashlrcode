@@ -21,6 +21,22 @@
  */
 
 import { classifyOutputPattern, type OutputPattern } from "./tool-result-predictor.ts";
+import {
+  OutputClassifier,
+  SemanticsAwareChunker,
+  findPausePoint,
+  type SemanticType,
+  type SemanticChunk,
+} from "./output-classifier.ts";
+
+// Re-export so callers can use semantic primitives from this module too
+export {
+  OutputClassifier,
+  SemanticsAwareChunker,
+  findPausePoint,
+  type SemanticType,
+  type SemanticChunk,
+} from "./output-classifier.ts";
 
 // ---------------------------------------------------------------------------
 // Fine-grained output type taxonomy (superset of OutputPattern)
@@ -549,6 +565,8 @@ export class ToolResultStreamer {
   private _outputType: StreamOutputType | null = null;
   private _sizer: AdaptiveChunkSizer;
   private _encoder = new TextEncoder();
+  /** Semantic classifier — drives domain-specific pause-point selection. */
+  private _classifier: OutputClassifier;
 
   private readonly _toolName: string;
   private readonly _toolInput: Record<string, unknown>;
@@ -569,6 +587,9 @@ export class ToolResultStreamer {
     // Pre-warm output type from predictor hint (may be overridden once we have content)
     const pattern = classifyOutputPattern(this._toolName, this._toolInput);
     this._outputType = outputPatternToStreamType(pattern);
+
+    // Pre-warm semantic classifier from tool metadata
+    this._classifier = new OutputClassifier(this._toolName, this._toolInput);
   }
 
   /**
@@ -586,6 +607,8 @@ export class ToolResultStreamer {
     // Re-classify output type from actual content once we have enough
     if (this._buffer.length >= 128) {
       this._outputType = classifyStreamOutputType(this._buffer);
+      // Also refine the semantic classifier from content
+      this._classifier.refine(this._buffer);
     }
 
     this._drain();
@@ -627,6 +650,11 @@ export class ToolResultStreamer {
     return this._sizer;
   }
 
+  /** The semantic output classifier (for inspection/testing). */
+  get classifier(): OutputClassifier {
+    return this._classifier;
+  }
+
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
@@ -638,7 +666,26 @@ export class ToolResultStreamer {
     // Keep draining until no more complete semantic boundaries
     let iterations = 0;
     while (this._buffer.length > 0 && iterations++ < 1000) {
-      const boundary = computeChunkBoundary(this._buffer, outputType, maxSize);
+      // Prefer semantic pause-point from OutputClassifier when classifier is
+      // refined (has seen real content) — these boundaries are domain-aware
+      // (e.g. grep file sections, diff hunks, test-case lines, JSON depth-0).
+      // Fall back to computeChunkBoundary() for pre-refinement phase.
+      let boundary: { end: number; reason: ChunkBoundaryReason } | null = null;
+
+      if (this._classifier.isRefined) {
+        const pp = findPausePoint(this._buffer, this._classifier.semanticType, maxSize);
+        if (pp) {
+          boundary = {
+            end: pp.end,
+            reason: _pausePointReasonToChunkBoundary(pp.reason),
+          };
+        }
+      }
+
+      if (!boundary) {
+        boundary = computeChunkBoundary(this._buffer, outputType, maxSize);
+      }
+
       if (!boundary) break;
 
       // Respect minChunkSize for line-granularity types to prevent micro-flushes
@@ -684,6 +731,30 @@ export class ToolResultStreamer {
     }
 
     this._onChunk(chunk);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Pause-point reason → ChunkBoundaryReason mapper
+// ---------------------------------------------------------------------------
+
+/**
+ * Map a semantic pause-point reason string (from findPausePoint) to the
+ * existing ChunkBoundaryReason enum so ToolResultChunk.boundaryReason
+ * stays typed consistently.
+ */
+function _pausePointReasonToChunkBoundary(reason: string): ChunkBoundaryReason {
+  switch (reason) {
+    case "json_close":           return "block_break";
+    case "test_case":            return "line_break";
+    case "grep_file_section":    return "block_break";
+    case "diff_hunk":            return "block_break";
+    case "line_break":           return "line_break";
+    case "paragraph":            return "paragraph";
+    case "max_size":             return "max_size";
+    case "finalize":             return "finalize";
+    case "function_boundary":    return "function_boundary";
+    default:                     return "line_break";
   }
 }
 
