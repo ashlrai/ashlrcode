@@ -12,6 +12,11 @@ import { toolToDefinition } from "./types.ts";
 import { runPreToolHooks, runPostToolHooks, type HooksConfig } from "../config/hooks.ts";
 import { checkRules } from "../config/permissions.ts";
 import { emitSpan } from "../telemetry/pulse-hud.ts";
+import {
+  checkSurgicalToolGate,
+  formatSurgicalBlockMessage,
+  type SurgicalGateOptions,
+} from "./guards/surgical-tool-gate.ts";
 
 /** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
 let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -70,6 +75,17 @@ function formatInputPreview(toolName: string, input: Record<string, unknown>): s
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private hooks: HooksConfig = {};
+  private _surgicalGate: SurgicalGateOptions | null = null;
+
+  /** Activate surgical-mode tool restrictions for this registry instance. */
+  setSurgicalGate(opts: SurgicalGateOptions): void {
+    this._surgicalGate = opts;
+  }
+
+  /** Deactivate surgical-mode tool restrictions. */
+  clearSurgicalGate(): void {
+    this._surgicalGate = null;
+  }
 
   register(tool: Tool): void {
     this.tools.set(tool.name, tool);
@@ -122,6 +138,20 @@ export class ToolRegistry {
       const semanticError = await tool.validateSemantics(input, context);
       if (semanticError) {
         return { result: `Permission denied (semantic validation): ${semanticError}`, isError: true };
+      }
+    }
+
+    // Surgical tool gate — in surgical mode, restrict which tools and Bash
+    // patterns are allowed based on the active ScopeTier. Runs after semantic
+    // validation but before permission prompts so blocked tools never surface
+    // a permission dialog.
+    if (this._surgicalGate) {
+      const gateResult = checkSurgicalToolGate(toolName, input, this._surgicalGate);
+      if (gateResult.verdict === "block") {
+        return {
+          result: formatSurgicalBlockMessage(gateResult),
+          isError: true,
+        };
       }
     }
 
