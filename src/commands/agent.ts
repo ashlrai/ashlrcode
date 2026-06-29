@@ -479,7 +479,7 @@ export function agentCommands(): Command[] {
       name: "/surgical",
       description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
       category: "agent",
-      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto"],
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis"],
       handler: async (args, ctx) => {
         const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
 
@@ -595,6 +595,30 @@ export function agentCommands(): Command[] {
           ctx.addOutput(
             theme.accent(`\n  Surgical mode: ${tier} (file budget: ${budgets[tier]})\n`) +
             theme.muted("  Use /surgical off to disable.\n"),
+          );
+          return true;
+        }
+
+        // /surgical cost-analysis — show per-tier cost breakdowns + promotion opportunities
+        if (args === "cost-analysis" || args.startsWith("cost-analysis ")) {
+          const { generateCostAnalysisReport, formatCostAnalysisReport } = await import(
+            "../agent/surgical-cost-optimizer.ts"
+          );
+          const { getGlobalIntentTracker } = await import("../agent/surgical-intent-analyzer.ts");
+          const tracker = getGlobalIntentTracker();
+          // Use current session confidence if available, otherwise default 0.75
+          let confidence = 0.75;
+          if (tracker.size() > 0) {
+            const analysis = tracker.analyzeCurrentIntent();
+            confidence = analysis.confidence;
+          }
+          const report = generateCostAnalysisReport(confidence);
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Surgical Cost Analysis"),
+              formatCostAnalysisReport(report),
+            ].join("\n"),
           );
           return true;
         }

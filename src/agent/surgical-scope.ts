@@ -453,8 +453,47 @@ export function analyzeScopeFromIntent(
 /**
  * SurgicalScopeAnalyzer — class wrapper around `analyzeScopeFromIntent` for
  * consumers that prefer an object-oriented API or want to batch multiple analyses.
+ *
+ * Also integrates with SurgicalCostOptimizer to gate tier promotion decisions
+ * on cost/quality scoring.  When a SurgicalCostOptimizer instance is attached
+ * via `setCostOptimizer()`, the `shouldPromoteTier()` helper delegates to it so
+ * that every promotion decision is cost-aware.
  */
 export class SurgicalScopeAnalyzer {
+  private costOptimizer?: import("./surgical-cost-optimizer.ts").SurgicalCostOptimizer;
+
+  /**
+   * Attach a SurgicalCostOptimizer.  When attached, `shouldPromoteTier()` feeds
+   * the current confidence score into the optimizer's promotion scoring logic.
+   */
+  setCostOptimizer(
+    optimizer: import("./surgical-cost-optimizer.ts").SurgicalCostOptimizer,
+  ): void {
+    this.costOptimizer = optimizer;
+  }
+
+  /**
+   * Evaluate whether a tier promotion is advisable by consulting the attached
+   * cost optimizer.  Returns `true` (promote) when no optimizer is attached —
+   * this preserves backward-compatible behavior for callers that have not opted
+   * in to cost-aware promotion.
+   *
+   * @param fromTier  Numeric tier (1–4) currently active.
+   * @param toTier    Numeric tier (1–4) being proposed.
+   * @param confidence Current intent-analysis confidence (0–1).
+   */
+  shouldPromoteTier(
+    fromTier: 1 | 2 | 3 | 4,
+    toTier: 1 | 2 | 3 | 4,
+    confidence: number,
+  ): boolean {
+    if (!this.costOptimizer) return true; // no optimizer → always allow
+
+    this.costOptimizer.setConfidence(confidence);
+    const result = this.costOptimizer.scorePromotion(fromTier, toTier);
+    return result.shouldPromote;
+  }
+
   /**
    * Analyze a user message and optional codebase context, returning a tier
    * suggestion with confidence and human-readable reasoning.
