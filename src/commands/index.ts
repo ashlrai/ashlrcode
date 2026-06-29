@@ -11,6 +11,7 @@ import { coreCommands } from "./core.ts";
 import { gitCommands } from "./git.ts";
 import { CommandRegistry } from "./registry.ts";
 import { sessionCommands } from "./session.ts";
+import { budgetCommands } from "./session-commands.ts";
 import { genomeCommands } from "../genome/commands.ts";
 import { traceCommands } from "./trace.ts";
 import { toolGraphCommands } from "./tool-graph.ts";
@@ -52,6 +53,7 @@ export function createCommandRegistry(deps: {
 
   registry.registerAll(agentCommands());
   registry.registerAll(sessionCommands());
+  registry.registerAll(budgetCommands());
 
   registry.registerAll(
     autopilotCommands({

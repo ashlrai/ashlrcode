@@ -84,6 +84,10 @@ import { renderBuddyWithBubble } from "./ui/speech-bubble.ts";
 import { theme } from "./ui/theme.ts";
 import { VERSION } from "./version.ts";
 import { createCommandRegistry } from "./commands/index.ts";
+import {
+  getContextBudgetMonitor,
+  buildVerboseLogPath,
+} from "./agent/context-budget-monitor.ts";
 import type { CommandContext } from "./commands/types.ts";
 import {
   checkVoiceAvailability,
@@ -138,7 +142,7 @@ const ERROR_RECOVERY_HINTS: Record<ErrorCategory, string> = {
   unknown: "",
 };
 
-export function startInkRepl(state: ReplState, maxCostUSD: number): void {
+export function startInkRepl(state: ReplState, maxCostUSD: number, budgetVerbose = false): void {
   // We need addOutput before overriding requestPermission, but addOutput is
   // defined later. Use a deferred wrapper that gets patched after addOutput exists.
   let _addOutput: (text: string) => void = () => {};
@@ -155,6 +159,17 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
   };
 
   startBuddyAnimation();
+
+  // Initialize context budget monitor
+  const budgetMonitor = getContextBudgetMonitor();
+  budgetMonitor.setProvider(
+    state.router.currentProvider.name,
+    state.router.currentProvider.config.model,
+  );
+  if (budgetVerbose) {
+    const logPath = buildVerboseLogPath(getConfigDir());
+    budgetMonitor.enableVerboseLog(logPath);
+  }
 
   // Track how many messages have been persisted to avoid data loss on exit
   let lastPersistedCount = state.history.length;
@@ -411,6 +426,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       cwd: state.toolContext.cwd,
       pendingQuestionOptionCount: hasPendingQuestion() ? getPendingOptions().length : 0,
       pendingQuestionLabels: hasPendingQuestion() ? getPendingOptions().map((o) => o.label) : [],
+      budgetHeader: budgetMonitor.formatHeaderBar(process.stdout.columns || 80),
     };
   }
 
@@ -755,6 +771,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
               if (usage.outputTokens) turnOutputTokens = usage.outputTokens;
               const tokens = turnOutputTokens || Math.round(turnCharCount / 4);
               tokenStats = computeTokenStats(tokens, false);
+              budgetMonitor.recordTurn(usage);
               update();
             },
             onText: (text) => {

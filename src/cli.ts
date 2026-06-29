@@ -180,6 +180,7 @@ async function main() {
   const noMcp = args.includes("--no-mcp");
   const maxCostArg = getArg(args, "--max-cost");
   maxCostUSD = maxCostArg ? parseFloat(maxCostArg) : Infinity;
+  const budgetVerbose = args.includes("--budget-verbose");
 
   // ── Autonomous mode ────────────────────────────────────────
   const autonomous = args.includes("--autonomous");
@@ -623,7 +624,7 @@ async function main() {
   }
 
   // Interactive REPL — use Ink for proper cursor positioning
-  startInkRepl(state, maxCostUSD);
+  startInkRepl(state, maxCostUSD, budgetVerbose);
 }
 
 function getPrompt(): string {
