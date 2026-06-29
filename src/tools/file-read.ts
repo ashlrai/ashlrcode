@@ -3,9 +3,8 @@
  */
 
 import { readFile } from "fs/promises";
-import { existsSync } from "fs";
-import { resolve } from "path";
-import type { Tool, ToolContext } from "./types.ts";
+import type { Tool } from "./types.ts";
+import { validateFilePath, resolveFilePath, checkFileExists } from "./file-utils.ts";
 
 export const fileReadTool: Tool = {
   name: "Read",
@@ -46,18 +45,14 @@ export const fileReadTool: Tool = {
   },
 
   validateInput(input) {
-    if (!input.file_path || typeof input.file_path !== "string") {
-      return "file_path is required and must be a string";
-    }
-    return null;
+    return validateFilePath(input);
   },
 
   async call(input, context) {
-    const filePath = resolve(context.cwd, input.file_path as string);
+    const filePath = resolveFilePath(context.cwd, input.file_path as string);
 
-    if (!existsSync(filePath)) {
-      return `File not found: ${filePath}`;
-    }
+    const notFound = checkFileExists(filePath);
+    if (notFound) return notFound;
 
     const content = await readFile(filePath, "utf-8");
     const lines = content.split("\n");

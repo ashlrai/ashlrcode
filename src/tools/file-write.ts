@@ -3,10 +3,14 @@
  */
 
 import { writeFile, mkdir } from "fs/promises";
-import { existsSync } from "fs";
-import { dirname, resolve } from "path";
+import { dirname } from "path";
 import type { Tool, ToolContext } from "./types.ts";
-import { getFileHistory } from "../state/file-history.ts";
+import {
+  validateFilePath,
+  resolveFilePath,
+  checkSensitivePath,
+  captureSnapshot,
+} from "./file-utils.ts";
 
 export const fileWriteTool: Tool = {
   name: "Write",
@@ -43,9 +47,8 @@ export const fileWriteTool: Tool = {
   },
 
   validateInput(input) {
-    if (!input.file_path || typeof input.file_path !== "string") {
-      return "file_path is required and must be a string";
-    }
+    const pathErr = validateFilePath(input);
+    if (pathErr) return pathErr;
     if (typeof input.content !== "string") {
       return "content is required and must be a string";
     }
@@ -55,23 +58,15 @@ export const fileWriteTool: Tool = {
   checkPermissions(input: Record<string, unknown>, context: ToolContext): string | null {
     const filePath = input.file_path as string;
     if (!filePath) return null;
-    const resolved = resolve(context.cwd, filePath);
-    const sensitive = ["/etc/", "/usr/bin/", "/sbin/", "/.ssh/"];
-    for (const s of sensitive) {
-      if (resolved.includes(s)) return `Cannot write to sensitive path: ${s}`;
-    }
-    return null;
+    return checkSensitivePath(resolveFilePath(context.cwd, filePath));
   },
 
   async call(input, context) {
-    const filePath = resolve(context.cwd, input.file_path as string);
+    const filePath = resolveFilePath(context.cwd, input.file_path as string);
     const content = input.content as string;
 
     // Snapshot before overwriting (captures new files too for undo-as-delete)
-    const history = getFileHistory();
-    if (history) {
-      await history.capture(filePath, "Write", context.turnNumber ?? 0);
-    }
+    await captureSnapshot(filePath, "Write", context.turnNumber ?? 0);
 
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, content, "utf-8");
