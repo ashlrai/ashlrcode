@@ -29,6 +29,7 @@ import {
 } from "./intent-trace.ts";
 import { getBudgetAllocator } from "./budget-allocator.ts";
 import { checkContextOverflow } from "./context-overflow-handler.ts";
+import { getGlobalReasoningCache } from "./reasoning-cache.ts";
 
 /** Default inactivity timeout for provider streams (5 minutes). */
 const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
@@ -162,6 +163,25 @@ async function _runAgentLoop(
   void recordGoalNormalization(sid, turn, userMessage, userMessage.slice(0, 200));
   void recordTurnBoundary(sid, turn, "start");
 
+  // ── Reasoning Cache: inject prior context into system prompt ─────────────
+  // On the first turn, look up cached reasoning for a similar goal and prepend
+  // it to the system prompt so the model can inherit prior thinking chains.
+  let effectiveSystemPrompt = config.systemPrompt as string;
+  try {
+    const reasoningInjection = await getGlobalReasoningCache().buildPromptInjection(userMessage);
+    if (reasoningInjection) {
+      effectiveSystemPrompt = reasoningInjection + "\n\n" + effectiveSystemPrompt;
+      process.stderr.write("[loop] reasoning-cache: prepended prior reasoning context\n");
+    }
+  } catch {
+    // Cache errors are non-fatal — continue without injection
+  }
+
+  // Use a patched config with the enriched system prompt for this run
+  const effectiveConfig: AgentConfig = effectiveSystemPrompt !== config.systemPrompt
+    ? { ...config, systemPrompt: effectiveSystemPrompt }
+    : config;
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
     // ── Pre-flight context overflow check ────────────────────────────────────
     // Detect imminent context window exhaustion and apply graceful degradation
@@ -190,10 +210,21 @@ async function _runAgentLoop(
     const { text, thinking, thinkingSignature, toolCalls, stopReason } = await streamResponse(
       messages,
       tools,
-      config
+      effectiveConfig
     );
 
     finalText = text;
+
+    // ── Reasoning Cache: store thinking block from first iteration ────────
+    // Capture the thinking block produced on iteration 0 (the primary response
+    // to the user goal) so future similar goals can inherit this reasoning.
+    if (iteration === 0 && thinking) {
+      const providerName = (effectiveConfig.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      void getGlobalReasoningCache()
+        .store(userMessage, thinking, providerName)
+        .catch(() => { /* cache write errors are non-fatal */ });
+    }
 
     // Build assistant message with content blocks.
     // Include thinking blocks so Anthropic's API sees them on subsequent turns.
@@ -376,6 +407,15 @@ export async function* streamAgentLoop(
     }
 
     finalText = text;
+
+    // ── Reasoning Cache: store thinking block from first iteration ────────
+    if (iteration === 0 && thinking) {
+      const providerName = (config.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      void getGlobalReasoningCache()
+        .store(userMessage, thinking, providerName)
+        .catch(() => { /* cache write errors are non-fatal */ });
+    }
 
     // Build assistant message with content blocks
     const contentBlocks: ContentBlock[] = [];

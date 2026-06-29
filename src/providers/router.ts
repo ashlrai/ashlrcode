@@ -8,6 +8,7 @@ import { CostTracker } from "./cost-tracker.ts";
 import { CircuitBreaker } from "./retry.ts";
 import { emitSpan } from "../telemetry/pulse-hud.ts";
 import { globalPredictor, CONFIDENCE_THRESHOLD } from "./rate-limit-predictor.ts";
+import { getGlobalReasoningCache } from "../agent/reasoning-cache.ts";
 import type {
   Provider,
   ProviderConfig,
@@ -172,6 +173,30 @@ export class ProviderRouter {
             `\n⚠ ${provider.name} rate limited, falling back to ${this.providers[i + 1]!.name}...`
           );
           this.currentIndex = i + 1;
+          // Capture the goal from the last user message for reasoning cache lookup
+          // so the fallback provider can inherit prior reasoning context.
+          const lastUserMsg = [...request.messages].reverse().find((m) => m.role === "user");
+          if (lastUserMsg) {
+            const goalText = typeof lastUserMsg.content === "string"
+              ? lastUserMsg.content
+              : lastUserMsg.content
+                  .filter((b) => "text" in b && b.type === "text")
+                  .map((b) => ("text" in b ? b.text : ""))
+                  .join(" ");
+            if (goalText) {
+              // Async fire-and-forget: don't block the failover on cache I/O
+              void getGlobalReasoningCache()
+                .buildPromptInjection(goalText)
+                .then((injection) => {
+                  if (injection) {
+                    process.stderr.write(
+                      `[router] reasoning-cache: injecting prior context for fallback provider ${this.providers[this.currentIndex]!.name}\n`
+                    );
+                  }
+                })
+                .catch(() => { /* cache errors are non-fatal */ });
+            }
+          }
           continue;
         }
         throw lastError;
