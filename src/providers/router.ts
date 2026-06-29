@@ -7,6 +7,7 @@ import { createAnthropicProvider } from "./anthropic.ts";
 import { CostTracker } from "./cost-tracker.ts";
 import { CircuitBreaker } from "./retry.ts";
 import { emitSpan } from "../telemetry/pulse-hud.ts";
+import { globalPredictor, CONFIDENCE_THRESHOLD } from "./rate-limit-predictor.ts";
 import type {
   Provider,
   ProviderConfig,
@@ -113,15 +114,46 @@ export class ProviderRouter {
         );
       }
 
+      // ── Rate-limit prediction pre-check ──────────────────────────────────
+      // Estimate token count for this request (rough: chars / 4)
+      const estimatedTokens = Math.round(
+        request.messages.reduce((sum, m) => {
+          const text = typeof m.content === "string"
+            ? m.content
+            : m.content.map((b) => ("text" in b ? b.text : "thinking" in b ? b.thinking : "")).join("");
+          return sum + text.length;
+        }, 0) / 4,
+      );
+      const prediction = globalPredictor.predict(provider.name, estimatedTokens);
+      if (prediction.confidence >= CONFIDENCE_THRESHOLD) {
+        if (prediction.action === "switch_provider" && i + 1 < this.providers.length) {
+          process.stderr.write(
+            `[router] predictor suggests switching from ${provider.name} (confidence ${(prediction.confidence * 100).toFixed(0)}%): ${prediction.reason}\n`,
+          );
+          this.currentIndex = i + 1;
+          continue;
+        }
+        if (prediction.action === "delay" && prediction.delayMs) {
+          process.stderr.write(
+            `[router] predictor applying ${prediction.delayMs}ms delay before ${provider.name} (confidence ${(prediction.confidence * 100).toFixed(0)}%): ${prediction.reason}\n`,
+          );
+          await new Promise<void>((resolve) => setTimeout(resolve, prediction.delayMs!));
+        }
+      }
+
       try {
+        let usageTokens = 0;
         for await (const event of provider.stream(request)) {
           // Track usage
           if (event.type === "usage" && event.usage) {
             this.trackUsage(provider, event.usage);
+            usageTokens = (event.usage.inputTokens ?? 0) + (event.usage.outputTokens ?? 0);
           }
           yield event;
         }
         breaker.recordSuccess();
+        // Teach the predictor: successful request, actual tokens consumed
+        globalPredictor.record(provider.name, usageTokens || estimatedTokens, false);
         return; // Success — exit
       } catch (err) {
         lastError = err as Error;
@@ -131,6 +163,9 @@ export class ProviderRouter {
           lastError.message.includes("429") ||
           lastError.message.includes("rate_limit") ||
           lastError.message.includes("quota");
+
+        // Teach the predictor regardless of outcome
+        globalPredictor.record(provider.name, estimatedTokens, isRateLimit);
 
         if (isRateLimit && i + 1 < this.providers.length) {
           console.error(
