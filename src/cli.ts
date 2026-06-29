@@ -455,6 +455,36 @@ async function main() {
   // Initialize task persistence
   await initTasks(session.id);
 
+  // ---------------------------------------------------------------------------
+  // Tool capability cache — load on every session; warm-up on AC_WARMUP=1
+  // or when the cache is stale (one-time suggestion per session).
+  // ---------------------------------------------------------------------------
+  {
+    const {
+      loadCapabilityCache,
+      isWarmUpRequested,
+      isCacheStale,
+      runCapabilityWarmUp,
+      formatWarmUpSummary,
+    } = await import("./agent/tool-capability-cache.ts");
+
+    await loadCapabilityCache();
+
+    if (isWarmUpRequested()) {
+      if (!printMode) console.log(chalk.dim("  Running tool capability warm-up (AC_WARMUP=1)..."));
+      try {
+        const summary = await runCapabilityWarmUp();
+        if (!printMode) {
+          console.log(chalk.dim(`  ${summary.summaryLine}`));
+        }
+      } catch {
+        // Warm-up failures are non-fatal
+      }
+    } else if (!printMode && isCacheStale()) {
+      console.log(chalk.dim("  Tip: tool capability cache is stale. Run /tool-warmup to refresh."));
+    }
+  }
+
   // Load skills
   const skillRegistry = new SkillRegistry();
   const skills = await loadSkills(cwd);

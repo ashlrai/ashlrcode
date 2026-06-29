@@ -85,6 +85,10 @@ import {
   recordRetryAttempt,
   getRetryHistory,
 } from "./tool-retry-analyzer.ts";
+import {
+  getCachedCapability,
+  HIGH_LATENCY_THRESHOLD_MS,
+} from "./tool-capability-cache.ts";
 export {
   classifyFailure,
   buildRetryStrategy,
@@ -740,6 +744,52 @@ async function executeSingle(
         result: cachedResult,
         isError: false,
       };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Capability cache consultation
+  //
+  // Before dispatching, consult the tool-capability-cache to:
+  //  1. Skip execution entirely when the cached capability is 'unsupported'
+  //     (saves a round-trip; the fallback chain in capability-check.ts handles
+  //     provider re-routing upstream — here we just guard the executor).
+  //  2. Emit a stderr warning when cached latency > HIGH_LATENCY_THRESHOLD_MS
+  //     so operators can observe degraded-mode tool/provider pairs in logs.
+  // ---------------------------------------------------------------------------
+  {
+    // Determine the active provider id from the agent context when available.
+    const agentCtxForCap = getAgentContext();
+    const activeProvider = (agentCtxForCap as any)?.providerId as string | undefined;
+
+    if (activeProvider) {
+      const { ProviderId } = {} as any; // type-only
+      const cachedCap = getCachedCapability(tc.name, activeProvider as any);
+
+      if (cachedCap) {
+        if (cachedCap.capability === "unsupported") {
+          // Return a structured error so the caller can use the fallback chain.
+          const unsupportedResult = `[capability-cache] Tool "${tc.name}" is cached as unsupported on provider "${activeProvider}". Use capability-check.ts fallback chain to re-route.`;
+          callbacks?.onToolStart?.(tc.name, tc.input);
+          callbacks?.onToolEnd?.(tc.name, unsupportedResult, true);
+          recordToolMetric(tc.name, 0, true);
+          return {
+            toolCallId: tc.id,
+            name: tc.name,
+            input: tc.input,
+            result: unsupportedResult,
+            isError: true,
+          };
+        }
+
+        if (cachedCap.latencyMs > HIGH_LATENCY_THRESHOLD_MS) {
+          process.stderr.write(
+            `[capability-cache] HIGH_LATENCY tool="${tc.name}" provider="${activeProvider}"` +
+              ` cached_latency=${cachedCap.latencyMs.toFixed(1)}ms` +
+              ` (threshold=${HIGH_LATENCY_THRESHOLD_MS}ms)\n`,
+          );
+        }
+      }
     }
   }
 
