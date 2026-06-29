@@ -1,10 +1,13 @@
 /**
  * Trace commands — /replay and /trace for agent intent tracing.
  *
- *   /replay <session-id>          — re-read trace, re-execute tools with
- *                                   cached results, stream with commentary
- *   /trace inspect <session-id>   — decision tree view of all choice points
- *   /trace list                   — list available traces
+ *   /replay <session-id>                — re-read trace, re-execute tools with
+ *                                         cached results, stream with commentary
+ *   /replay <session-id> --viz          — same but renders full ASCII decision-tree
+ *   /trace inspect <session-id>         — decision tree view of all choice points
+ *   /trace replay <session-id> [--viz]  — alias for /replay with optional viz flag
+ *   /trace drill <event-id>             — zoom into a single decision point
+ *   /trace list                         — list available traces
  */
 
 import { theme } from "../ui/theme.ts";
@@ -16,13 +19,18 @@ export function traceCommands(): Command[] {
       name: "/replay",
       description: "Replay a recorded agent session with commentary",
       category: "agent",
-      subcommands: [],
+      subcommands: ["--viz"],
       handler: async (args, ctx) => {
-        const sessionId = args.trim();
+        const parts = (args ?? "").trim().split(/\s+/);
+        const viz = parts.includes("--viz");
+        const sessionId = parts.filter((p) => p !== "--viz").join(" ").trim();
+
         if (!sessionId) {
           ctx.addOutput(
             theme.tertiary(
-              "\n  Usage: /replay <session-id>\n  Use /trace list to see available sessions.\n"
+              "\n  Usage: /replay <session-id> [--viz]\n" +
+              "         --viz  renders a full ASCII decision-tree after replay\n" +
+              "  Use /trace list to see available sessions.\n"
             )
           );
           return true;
@@ -80,6 +88,21 @@ export function traceCommands(): Command[] {
             `\n  Replay complete: ${toolCount} tools replayed, ${hitCount} matched.\n`
           )
         );
+
+        // --viz: render the full ASCII decision-tree visualization
+        if (viz) {
+          const { getTraceNavigator, renderDecisionTreeViz } = await import("../agent/trace-navigator.ts");
+          const nav = getTraceNavigator();
+          nav.invalidate(sessionId);
+          const tree = await nav.getDecisionTree(sessionId);
+          ctx.addOutput(theme.accent("\n  Decision Tree Visualization:\n"));
+          const rendered = renderDecisionTreeViz(tree);
+          for (const line of rendered.split("\n")) {
+            ctx.addOutput(line);
+          }
+          ctx.addOutput("");
+        }
+
         return true;
       },
     },
@@ -88,9 +111,11 @@ export function traceCommands(): Command[] {
       name: "/trace",
       description: "Inspect agent intent traces",
       category: "agent",
-      subcommands: ["inspect", "list"],
+      subcommands: ["inspect", "list", "replay", "drill"],
       handler: async (args, ctx) => {
-        const [sub, ...rest] = (args ?? "").trim().split(/\s+/);
+        const tokens = (args ?? "").trim().split(/\s+/);
+        const sub = tokens[0];
+        const rest = tokens.slice(1);
         const {
           listTraces,
           loadTrace,
@@ -114,7 +139,11 @@ export function traceCommands(): Command[] {
             ctx.addOutput(`    ${s}`);
           }
           ctx.addOutput(
-            theme.tertiary("\n  Use /trace inspect <session-id> for details.\n")
+            theme.tertiary(
+              "\n  Use /trace inspect <session-id> for details.\n" +
+              "      /trace replay <session-id> [--viz] for animated replay.\n" +
+              "      /trace drill <event-id> to zoom into a decision.\n"
+            )
           );
           return true;
         }
@@ -165,10 +194,126 @@ export function traceCommands(): Command[] {
           return true;
         }
 
+        // ── /trace replay <session-id> [--viz] ───────────────────────────────
+        if (sub === "replay") {
+          const viz = rest.includes("--viz");
+          const sessionId = rest.filter((p) => p !== "--viz").join(" ").trim();
+          if (!sessionId) {
+            ctx.addOutput(
+              theme.tertiary(
+                "\n  Usage: /trace replay <session-id> [--viz]\n" +
+                "         --viz  renders full ASCII decision-tree after replay\n"
+              )
+            );
+            return true;
+          }
+          // Delegate to /replay handler by re-entering the replay command with the right args
+          const { replayTrace } = await import("../agent/intent-trace.ts");
+          const available = await listTraces();
+          if (!available.includes(sessionId)) {
+            ctx.addOutput(theme.error(`\n  No trace found for session "${sessionId}".\n`));
+            if (available.length > 0) {
+              for (const s of available.slice(0, 10)) ctx.addOutput(`    ${s}`);
+            }
+            ctx.addOutput("");
+            return true;
+          }
+
+          ctx.addOutput(theme.accent(`\n  Replaying session: ${sessionId}\n`));
+          let toolCount = 0;
+          for await (const event of replayTrace(sessionId)) {
+            switch (event.type) {
+              case "commentary":
+                ctx.addOutput(theme.secondary(event.text ?? ""));
+                ctx.update();
+                break;
+              case "tool_replay":
+                toolCount++;
+                ctx.addOutput(theme.tertiary(`  [replay] ${event.toolName} step=${event.stepIndex} ✓`));
+                ctx.update();
+                break;
+              case "done":
+                break;
+            }
+          }
+          ctx.addOutput(theme.success(`\n  Replay complete: ${toolCount} tools replayed.\n`));
+
+          if (viz) {
+            const { getTraceNavigator, renderDecisionTreeViz } = await import("../agent/trace-navigator.ts");
+            const nav = getTraceNavigator();
+            nav.invalidate(sessionId);
+            const tree = await nav.getDecisionTree(sessionId);
+            ctx.addOutput(theme.accent("\n  Decision Tree Visualization:\n"));
+            for (const line of renderDecisionTreeViz(tree).split("\n")) {
+              ctx.addOutput(line);
+            }
+            ctx.addOutput("");
+          }
+          return true;
+        }
+
+        // ── /trace drill <event-id> ──────────────────────────────────────────
+        if (sub === "drill") {
+          const eventId = rest.join(" ").trim();
+          if (!eventId) {
+            ctx.addOutput(
+              theme.tertiary(
+                "\n  Usage: /trace drill <event-id>\n" +
+                "  Event IDs have the form <session-id>:<seq>\n" +
+                "  Use /trace inspect <session-id> to find event IDs.\n"
+              )
+            );
+            return true;
+          }
+
+          const { getTraceNavigator } = await import("../agent/trace-navigator.ts");
+          const nav = getTraceNavigator();
+          const detail = await nav.getDrillDown(eventId);
+
+          ctx.addOutput(theme.accent(`\n  Drill-down: ${eventId}\n`));
+          ctx.addOutput(theme.accentBold("  Decision Point") + `  [${detail.node.kind}]`);
+          ctx.addOutput(`  ${detail.node.label}`);
+          ctx.addOutput("");
+          ctx.addOutput(theme.accentBold("  Explanation:"));
+          for (const line of detail.explanation.split("\n")) {
+            ctx.addOutput(`  ${line}`);
+          }
+
+          if (detail.siblings.length > 0) {
+            ctx.addOutput("");
+            ctx.addOutput(theme.tertiary(`  Siblings in same turn (${detail.siblings.length}):`));
+            for (const sib of detail.siblings.slice(0, 8)) {
+              ctx.addOutput(`    [${sib.kind}] ${sib.label}`);
+            }
+            if (detail.siblings.length > 8) {
+              ctx.addOutput(theme.muted(`    ... and ${detail.siblings.length - 8} more`));
+            }
+          }
+
+          ctx.addOutput("");
+          ctx.addOutput(theme.tertiary("  Speculation state at this point:"));
+          ctx.addOutput(`    Hits so far   : ${detail.speculationState.hitsSoFar}`);
+          ctx.addOutput(`    Misses so far : ${detail.speculationState.missesSoFar}`);
+          if (detail.speculationState.lastCacheType) {
+            ctx.addOutput(`    Last cache    : ${detail.speculationState.lastCacheType}`);
+          }
+
+          ctx.addOutput("");
+          ctx.addOutput(theme.tertiary("  Token budget at this point:"));
+          ctx.addOutput(`    Approx tokens    : ${detail.tokenBudgetSnapshot.approxTokens}`);
+          ctx.addOutput(`    Compressions     : ${detail.tokenBudgetSnapshot.compressionCount}`);
+          ctx.addOutput("");
+          return true;
+        }
+
         // Unknown sub-command
         ctx.addOutput(
           theme.tertiary(
-            "\n  Usage:\n    /trace list\n    /trace inspect <session-id>\n"
+            "\n  Usage:\n" +
+            "    /trace list\n" +
+            "    /trace inspect <session-id>\n" +
+            "    /trace replay  <session-id> [--viz]\n" +
+            "    /trace drill   <event-id>\n"
           )
         );
         return true;
