@@ -26,20 +26,34 @@ export function agentCommands(): Command[] {
   return [
     {
       name: "/verify",
-      description: "Run verification agent on recent changes",
+      description: "Run verification agent on recent changes. Pass --with-tests to also suggest/generate test stubs.",
       category: "agent",
+      subcommands: ["--with-tests"],
       handler: async (args, ctx) => {
         const { runVerification, formatVerificationReport, getModifiedFiles } = await import(
           "../agent/verification.ts"
         );
+
+        // Parse --with-tests flag
+        const withTests = !!args?.includes("--with-tests");
+        const intent = args?.replace("--with-tests", "").trim() || undefined;
+
         const modFiles = getModifiedFiles();
-        if (modFiles.length === 0 && !args) {
+        if (modFiles.length === 0 && !intent) {
           ctx.addOutput(
             theme.warning("\n  No modified files to verify. Make changes first or specify: /verify <intent>\n"),
           );
+          ctx.addOutput(
+            theme.muted("  Tip: /verify --with-tests also suggests test cases for uncovered branches\n"),
+          );
           return true;
         }
-        ctx.addOutput(theme.accent("\n  🔍 Running verification agent...\n"));
+
+        ctx.addOutput(theme.accent(withTests
+          ? "\n  🔍 Running verification agent with test suggestions...\n"
+          : "\n  🔍 Running verification agent...\n"
+        ));
+
         const vResult = await runVerification(
           {
             router: ctx.state.router,
@@ -51,9 +65,26 @@ export function agentCommands(): Command[] {
               ctx.update();
             },
           },
-          { intent: args || undefined },
+          {
+            intent,
+            withTests,
+            generateStubs: withTests,
+            coverageThreshold: 70,
+          },
         );
+
         ctx.addOutput("\n" + formatVerificationReport(vResult) + "\n");
+
+        // If test suggestions exist but stubs weren't generated (plain /verify),
+        // show a prompt to run with --with-tests
+        if (!withTests && vResult.testSuggestions && vResult.testSuggestions.length > 0) {
+          ctx.addOutput(
+            theme.tertiary(
+              `  💡 ${vResult.testSuggestions.length} test suggestion(s) available — run /verify --with-tests to generate stubs\n`
+            )
+          );
+        }
+
         return true;
       },
     },

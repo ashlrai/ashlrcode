@@ -9,8 +9,12 @@
  *   - Unintended side effects
  *
  * Claude Code's internal verification agent "doubles completion rates."
+ *
+ * With --with-tests mode, also suggests and generates test stubs for uncovered paths.
  */
 
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { dirname, join } from "path";
 import { runSubAgent, type SubAgentResult } from "./sub-agent.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -35,6 +39,10 @@ export interface VerificationResult {
   summary: string;
   filesChecked: string[];
   agentResult: SubAgentResult;
+  /** Test suggestions produced when withTests mode is active */
+  testSuggestions?: TestSuggestion[];
+  /** Paths of generated test stub files (only present when withTests mode wrote files) */
+  generatedTestFiles?: string[];
 }
 
 export interface VerificationIssue {
@@ -42,6 +50,21 @@ export interface VerificationIssue {
   file: string;
   line?: number;
   description: string;
+}
+
+/**
+ * A concrete test recommendation for an uncovered code path.
+ *
+ * coverage: 0–100 — estimated % of the uncovered branch that this test exercises.
+ * estimatedLines: rough line count for the generated stub.
+ */
+export interface TestSuggestion {
+  file: string;
+  testName: string;
+  description: string;
+  /** 0–100 estimated branch coverage gained */
+  coverage: number;
+  estimatedLines: number;
 }
 
 /**
@@ -72,9 +95,27 @@ export function shouldAutoVerify(threshold: number = 2): boolean {
 
 /**
  * Build the verification prompt with context about what changed.
+ * When withTests is true, the agent also performs coverage-gap analysis.
  */
-function buildVerificationPrompt(modifiedFiles: string[], intent?: string): string {
+function buildVerificationPrompt(modifiedFiles: string[], intent?: string, withTests?: boolean): string {
   const fileList = modifiedFiles.map(f => `  - ${f}`).join("\n");
+
+  const testInstructions = withTests ? `
+5. Analyze coverage gaps — identify branches, error paths, and edge cases that lack tests:
+   - Look for if/else branches with no corresponding test
+   - Catch blocks that are never exercised by tests
+   - Public functions with no test coverage
+   - Conditional logic that only has happy-path tests
+
+6. Report test suggestions in this EXACT block after VERIFICATION_RESULT:
+
+TEST_SUGGESTIONS:
+- FILE: src/foo.ts | TEST: should handle null input | DESC: Covers the null-guard branch on line 42 | COVERAGE: 85 | LINES: 8
+- FILE: src/bar.ts | TEST: throws on invalid config | DESC: Exercises the config-validation error path | COVERAGE: 72 | LINES: 5
+
+Only include suggestions with estimated coverage > 50%.
+Limit to the 5 most impactful suggestions.
+` : "";
 
   return `You are a VERIFICATION AGENT. Your job is to review recent code changes for correctness.
 
@@ -102,15 +143,16 @@ ISSUES:
 - [ERROR|WARNING|INFO] file.ts:123 — Description of issue
 - [WARNING] other-file.ts — Description
 SUMMARY: One-line summary of verification outcome
-
+${testInstructions}
 If everything looks correct, report STATUS: PASS with no issues.
 Be thorough but avoid false positives — only flag real problems.`;
 }
 
 /**
  * Parse the verification agent's output into structured results.
+ * Also extracts an optional TEST_SUGGESTIONS block when present.
  */
-function parseVerificationOutput(text: string, files: string[]): Omit<VerificationResult, "agentResult"> {
+export function parseVerificationOutput(text: string, files: string[]): Omit<VerificationResult, "agentResult"> {
   const issues: VerificationIssue[] = [];
   let passed = true;
   let summary = "Verification completed";
@@ -127,10 +169,12 @@ function parseVerificationOutput(text: string, files: string[]): Omit<Verificati
     summary = summaryMatch[1]!.trim();
   }
 
-  // Extract individual issues
+  // Extract individual issues — only within the VERIFICATION_RESULT block,
+  // before any TEST_SUGGESTIONS section, to avoid false positives.
+  const verificationBlock = text.split(/^TEST_SUGGESTIONS:/m)[0] ?? text;
   const issuePattern = /\[(\w+)\]\s*([^\s:]+?)(?::(\d+))?\s*[—-]\s*(.+)/g;
   let match;
-  while ((match = issuePattern.exec(text)) !== null) {
+  while ((match = issuePattern.exec(verificationBlock)) !== null) {
     const severityRaw = match[1]!.toLowerCase();
     const severity: VerificationIssue["severity"] =
       severityRaw === "error" ? "error" :
@@ -146,15 +190,199 @@ function parseVerificationOutput(text: string, files: string[]): Omit<Verificati
     if (severity === "error") passed = false;
   }
 
-  return { passed, issues, summary, filesChecked: files };
+  // Extract TEST_SUGGESTIONS block
+  const testSuggestions = parseTestSuggestions(text);
+
+  return { passed, issues, summary, filesChecked: files, testSuggestions };
+}
+
+/**
+ * Parse the TEST_SUGGESTIONS block from agent output.
+ *
+ * Expected line format (pipe-delimited key:value pairs):
+ *   - FILE: src/foo.ts | TEST: name | DESC: desc | COVERAGE: 85 | LINES: 8
+ */
+export function parseTestSuggestions(text: string): TestSuggestion[] {
+  const suggestions: TestSuggestion[] = [];
+
+  // Find the TEST_SUGGESTIONS section — capture lines starting with "- " until
+  // a blank line, a top-level section header (word chars + colon at line start),
+  // or end of string. We avoid matching "- FILE:" as a section boundary by
+  // requiring the header to start at column 0 with no leading dash/space.
+  const sectionMatch = text.match(/^TEST_SUGGESTIONS:\s*\n((?:[ \t]*-[^\n]*\n?)*)/m);
+  if (!sectionMatch) return suggestions;
+
+  const block = sectionMatch[1]!;
+  for (const raw of block.split("\n")) {
+    const line = raw.replace(/^\s*-\s*/, "").trim();
+    if (!line) continue;
+
+    // Parse pipe-separated key:value tokens
+    const tokens: Record<string, string> = {};
+    for (const segment of line.split("|")) {
+      const colonIdx = segment.indexOf(":");
+      if (colonIdx < 0) continue;
+      const key = segment.slice(0, colonIdx).trim().toUpperCase();
+      const val = segment.slice(colonIdx + 1).trim();
+      tokens[key] = val;
+    }
+
+    const file = tokens["FILE"];
+    const testName = tokens["TEST"];
+    const description = tokens["DESC"] ?? tokens["DESCRIPTION"] ?? "";
+    const coverage = parseInt(tokens["COVERAGE"] ?? "0", 10);
+    const estimatedLines = parseInt(tokens["LINES"] ?? "5", 10);
+
+    if (file && testName && !isNaN(coverage)) {
+      suggestions.push({ file, testName, description, coverage, estimatedLines });
+    }
+  }
+
+  return suggestions;
+}
+
+/**
+ * Derive the test stub file path for a source file.
+ *
+ * src/agent/verification.ts  →  src/__tests__/verification.test.ts
+ * src/ui/theme.ts             →  src/__tests__/theme.test.ts
+ */
+export function testPathForSource(sourceFile: string): string {
+  // Normalise: strip leading ./ or /
+  const rel = sourceFile.replace(/^\.\//, "").replace(/^\/+/, "");
+  // Split into dir segments and filename
+  const parts = rel.split("/");
+  const filename = parts[parts.length - 1]!;
+  const baseName = filename.replace(/\.(ts|tsx|js|jsx)$/, "");
+  // Place test file under <first-segment>/__tests__/<module>.test.ts
+  // e.g. src/agent/foo.ts  → src/__tests__/foo.test.ts
+  const rootDir = parts[0] ?? "src";
+  return `${rootDir}/__tests__/${baseName}.test.ts`;
+}
+
+/**
+ * Build a Bun test stub for a single suggestion.
+ */
+function buildTestStub(suggestion: TestSuggestion, existingContent?: string): string {
+  const importPath = suggestion.file
+    .replace(/^src\//, "../")
+    .replace(/\.(ts|tsx)$/, ".ts");
+
+  const header = existingContent
+    ? "" // Append to existing file — no header needed
+    : `import { describe, test, expect } from "bun:test";\n// Auto-generated by /verify --with-tests\nimport {} from "${importPath}";\n\n`;
+
+  const stub = `describe("${suggestion.file} — auto-suggested coverage", () => {\n  test("${suggestion.testName}", () => {\n    // TODO: ${suggestion.description}\n    // Estimated coverage gain: ${suggestion.coverage}%\n    expect(true).toBe(true); // replace with real assertion\n  });\n});\n`;
+
+  return header + stub;
+}
+
+/**
+ * Write test stubs for suggestions with coverage above threshold.
+ * Returns the list of files written.
+ */
+export function generateTestStubs(
+  suggestions: TestSuggestion[],
+  cwd: string,
+  coverageThreshold: number = 70,
+): string[] {
+  const written: string[] = [];
+
+  // Group suggestions by target test file
+  const byTestFile = new Map<string, TestSuggestion[]>();
+  for (const s of suggestions) {
+    if (s.coverage < coverageThreshold) continue;
+    const testPath = testPathForSource(s.file);
+    const group = byTestFile.get(testPath) ?? [];
+    group.push(s);
+    byTestFile.set(testPath, group);
+  }
+
+  for (const [relPath, group] of byTestFile) {
+    const absPath = join(cwd, relPath);
+    const existing = existsSync(absPath) ? readFileSync(absPath, "utf-8") : undefined;
+
+    let content = existing ?? "";
+    for (const suggestion of group) {
+      content += buildTestStub(suggestion, existing ?? content);
+    }
+
+    mkdirSync(dirname(absPath), { recursive: true });
+    writeFileSync(absPath, content, "utf-8");
+    written.push(relPath);
+  }
+
+  return written;
+}
+
+/**
+ * Call the LLM with modified files and diff to extract uncovered branches
+ * and return structured test suggestions.
+ *
+ * Uses a lightweight read-only sub-agent (no tool calls, max 3 iterations)
+ * so it is consistent with the rest of the verification system.
+ */
+export async function suggestTests(
+  modifiedFiles: string[],
+  diff: string,
+  config: VerificationConfig,
+): Promise<TestSuggestion[]> {
+  if (modifiedFiles.length === 0) return [];
+
+  const fileList = modifiedFiles.map(f => `  - ${f}`).join("\n");
+  const prompt = `You are a TEST COVERAGE ANALYST. Given these modified files and their diff, identify uncovered branches.
+
+## Modified Files
+${fileList}
+
+## Git Diff (truncated to 4000 chars)
+${diff.slice(0, 4000)}
+
+Identify the top 5 most impactful uncovered branches, error paths, or edge cases.
+Respond ONLY with a TEST_SUGGESTIONS block — no other text:
+
+TEST_SUGGESTIONS:
+- FILE: <relative-path> | TEST: <test name> | DESC: <one sentence> | COVERAGE: <0-100> | LINES: <estimated stub lines>
+
+Only include suggestions with COVERAGE > 50.`;
+
+  try {
+    const agentResult = await runSubAgent({
+      name: "test-suggestion-agent",
+      prompt,
+      systemPrompt: "You are a test coverage analyst. Be concise and precise. Do not use any tools — respond only with the TEST_SUGGESTIONS block.",
+      router: config.router,
+      toolRegistry: config.toolRegistry,
+      toolContext: config.toolContext,
+      readOnly: true,
+      maxIterations: 3,
+    });
+
+    return parseTestSuggestions(agentResult.text);
+  } catch {
+    // Non-fatal: suggestions are best-effort
+    return [];
+  }
 }
 
 /**
  * Run a verification sub-agent to check recent changes.
+ *
+ * Pass `withTests: true` to also request test suggestions and (when
+ * `generateStubs` is true) write stub files for high-coverage suggestions.
  */
 export async function runVerification(
   config: VerificationConfig,
-  options?: { intent?: string; files?: string[] }
+  options?: {
+    intent?: string;
+    files?: string[];
+    /** Enable test-suggestion mode */
+    withTests?: boolean;
+    /** Auto-write stub files for suggestions with coverage > coverageThreshold */
+    generateStubs?: boolean;
+    /** Min coverage (0–100) to auto-generate stubs. Default: 70 */
+    coverageThreshold?: number;
+  }
 ): Promise<VerificationResult> {
   const files = options?.files ?? getModifiedFiles();
 
@@ -168,7 +396,8 @@ export async function runVerification(
     };
   }
 
-  const prompt = buildVerificationPrompt(files, options?.intent);
+  const withTests = options?.withTests ?? false;
+  const prompt = buildVerificationPrompt(files, options?.intent, withTests);
 
   config.onOutput?.("  Running verification agent...\n");
 
@@ -195,7 +424,28 @@ export async function runVerification(
       : `  ✗ Verification failed: ${errorCount} errors, ${warnCount} warnings\n`
   );
 
-  return { ...parsed, agentResult };
+  let generatedTestFiles: string[] | undefined;
+
+  if (withTests && parsed.testSuggestions && parsed.testSuggestions.length > 0) {
+    const threshold = options?.coverageThreshold ?? 70;
+    const highCoverage = parsed.testSuggestions.filter(s => s.coverage > threshold);
+    if (highCoverage.length > 0) {
+      config.onOutput?.(`  Found ${highCoverage.length} high-coverage test suggestion(s)\n`);
+    }
+
+    if (options?.generateStubs && highCoverage.length > 0) {
+      const cwd = config.toolContext.cwd ?? process.cwd();
+      generatedTestFiles = generateTestStubs(parsed.testSuggestions, cwd, threshold);
+      if (generatedTestFiles.length > 0) {
+        config.onOutput?.(
+          `  ✓ Generated ${generatedTestFiles.length} test stub file(s):\n` +
+          generatedTestFiles.map(f => `    ${f}`).join("\n") + "\n"
+        );
+      }
+    }
+  }
+
+  return { ...parsed, agentResult, generatedTestFiles };
 }
 
 /**
@@ -216,6 +466,27 @@ export function formatVerificationReport(result: VerificationResult): string {
       const icon = issue.severity === "error" ? "🔴" : issue.severity === "warning" ? "🟡" : "🔵";
       const loc = issue.line ? `${issue.file}:${issue.line}` : issue.file;
       lines.push(`${icon} **${loc}** — ${issue.description}`);
+    }
+  }
+
+  if (result.testSuggestions && result.testSuggestions.length > 0) {
+    lines.push("");
+    lines.push("### Test Suggestions");
+    for (const s of result.testSuggestions) {
+      lines.push(`🧪 **${s.file}** — \`${s.testName}\``);
+      lines.push(`   ${s.description} *(~${s.coverage}% coverage, ~${s.estimatedLines} lines)*`);
+    }
+    if (!result.generatedTestFiles) {
+      lines.push("");
+      lines.push("*Run `/verify --with-tests` to auto-generate stubs for suggestions with coverage > 70%*");
+    }
+  }
+
+  if (result.generatedTestFiles && result.generatedTestFiles.length > 0) {
+    lines.push("");
+    lines.push("### Generated Test Stubs");
+    for (const f of result.generatedTestFiles) {
+      lines.push(`📄 ${f}`);
     }
   }
 

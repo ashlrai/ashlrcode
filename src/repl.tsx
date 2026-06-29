@@ -878,6 +878,7 @@ export function startInkRepl(state: ReplState, maxCostUSD: number): void {
       if (shouldAutoVerify()) {
         const modCount = getModifiedFiles().length;
         addOutput(theme.tertiary(`  💡 ${modCount} files modified — run /verify to validate changes\n`));
+        addOutput(theme.muted(`  Tip: /verify --with-tests also suggests test cases for uncovered branches\n`));
       }
       clearModifiedFiles(); // Reset for next turn
 

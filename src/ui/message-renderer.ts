@@ -462,6 +462,46 @@ export function formatToolResultChunk(chunk: ToolResultChunk): string[] {
   return lines;
 }
 
+/**
+ * Format test suggestions as a compact terminal block.
+ * Used by the REPL after /verify --with-tests completes.
+ */
+export function formatTestSuggestions(
+  suggestions: Array<{ file: string; testName: string; description: string; coverage: number; estimatedLines: number }>,
+  generatedFiles?: string[],
+): string[] {
+  if (suggestions.length === 0) return [];
+
+  const lines: string[] = [];
+  lines.push(theme.accent("  🧪 Test Suggestions"));
+
+  const bodyLines: string[] = [];
+  for (const s of suggestions) {
+    const coverageBar = s.coverage >= 70 ? theme.success(`${s.coverage}%`) : theme.muted(`${s.coverage}%`);
+    bodyLines.push(
+      theme.secondary(shortenPath(s.file)) +
+      theme.muted(" → ") +
+      chalk.bold(s.testName) +
+      " " +
+      theme.muted(`[${coverageBar}${theme.muted(", ~")}${s.estimatedLines}L]`),
+    );
+    if (s.description) {
+      bodyLines.push(theme.muted(`    ${s.description}`));
+    }
+  }
+
+  if (generatedFiles && generatedFiles.length > 0) {
+    bodyLines.push("");
+    bodyLines.push(theme.success(`Generated ${generatedFiles.length} stub file(s):`));
+    for (const f of generatedFiles) {
+      bodyLines.push(theme.muted(`  ${f}`));
+    }
+  }
+
+  lines.push(...wrapWithBorder(bodyLines, `${suggestions.length} suggestion(s)`));
+  return lines;
+}
+
 /** Format a turn separator with stats */
 export function formatTurnSeparator(
   turnNumber: number,
