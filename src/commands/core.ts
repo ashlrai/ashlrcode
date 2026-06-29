@@ -513,6 +513,26 @@ export function coreCommands(deps: {
       },
     },
     {
+      name: "/mcp-status",
+      description: "Show MCP server connectivity and fallback capability matrix",
+      category: "tools",
+      handler: async (_args, ctx) => {
+        const { getMCPFallbackManager } = await import("../mcp/fallback-manager.ts");
+        const mgr = getMCPFallbackManager();
+        // Collect known server names from registered MCP tools in the tool registry
+        // (MCP tools are injected as tools named "mcp__<server>__<tool>")
+        const knownServers = new Set<string>();
+        for (const tool of ctx.state.registry.getAll()) {
+          const parts = tool.name.split("__");
+          if (parts.length >= 3 && parts[0] === "mcp") {
+            knownServers.add(parts[1] ?? "");
+          }
+        }
+        ctx.addOutput(mgr.formatStatus(Array.from(knownServers)));
+        return true;
+      },
+    },
+    {
       name: "/bridge",
       description: "Show bridge server status",
       category: "tools",

@@ -17,6 +17,7 @@ import {
   formatSurgicalBlockMessage,
   type SurgicalGateOptions,
 } from "./guards/surgical-tool-gate.ts";
+import { getMCPFallbackManager } from "../mcp/fallback-manager.ts";
 
 /** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
 let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -121,6 +122,22 @@ export class ToolRegistry {
     /** Override the default tool execution timeout (ms). */
     timeoutMs?: number
   ): Promise<{ result: string; isError: boolean }> {
+    // Pre-execution fallback check: if this looks like an MCP tool name and
+    // the owning server is degraded, suggest the built-in fallback proactively
+    // so the agent can switch without stalling.
+    if (toolName.startsWith("mcp__")) {
+      const fallbackMgr = getMCPFallbackManager();
+      if (fallbackMgr.isServerDegraded(toolName)) {
+        const suggestion = fallbackMgr.resolveFallback(toolName);
+        if (suggestion) {
+          return {
+            result: `MCP server degraded. Suggested fallback for "${toolName}": use "${suggestion}" instead.`,
+            isError: true,
+          };
+        }
+      }
+    }
+
     const tool = this.tools.get(toolName);
     if (!tool) {
       return { result: `Unknown tool: ${toolName}`, isError: true };
