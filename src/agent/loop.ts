@@ -28,6 +28,7 @@ import {
   approxTokens,
 } from "./intent-trace.ts";
 import { getBudgetAllocator } from "./budget-allocator.ts";
+import { checkContextOverflow } from "./context-overflow-handler.ts";
 
 /** Default inactivity timeout for provider streams (5 minutes). */
 const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
@@ -162,6 +163,23 @@ async function _runAgentLoop(
   void recordTurnBoundary(sid, turn, "start");
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // ── Pre-flight context overflow check ────────────────────────────────────
+    // Detect imminent context window exhaustion and apply graceful degradation
+    // before sending to the provider. This prevents hard provider-side errors.
+    {
+      const providerName = (config.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      const overflowResult = checkContextOverflow(messages, providerName);
+      if (overflowResult.degraded) {
+        // Replace messages with the compacted version
+        messages.splice(0, messages.length, ...overflowResult.messages);
+        // Emit the user warning if we're still critically full after degradation
+        if (overflowResult.warning && config.onText) {
+          config.onText(overflowResult.warning.message + "\n");
+        }
+      }
+    }
+
     // Detect context compression: if messages have grown significantly compared
     // to the last iteration, record a compression event (heuristic: block count drops).
     const blocksBefore = messages.reduce(
@@ -287,6 +305,19 @@ export async function* streamAgentLoop(
   let finalText = "";
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // ── Pre-flight context overflow check ────────────────────────────────────
+    {
+      const providerName = (config.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      const overflowResult = checkContextOverflow(messages, providerName);
+      if (overflowResult.degraded) {
+        messages.splice(0, messages.length, ...overflowResult.messages);
+        if (overflowResult.warning) {
+          yield { type: "text_delta", text: overflowResult.warning.message + "\n" };
+        }
+      }
+    }
+
     // Stream API response, yielding text deltas as they arrive
     let text = "";
     let thinking = "";
