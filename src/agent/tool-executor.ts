@@ -897,3 +897,75 @@ function trackAndSpeculate(name: string, input: Record<string, unknown>, result?
   // Fire-and-forget — speculation failures are harmless
   _speculationCache?.speculateFromHistory(recentToolCalls).catch(() => {});
 }
+
+// ---------------------------------------------------------------------------
+// Streaming UI callback factory
+// ---------------------------------------------------------------------------
+
+/**
+ * State entry for a single tool's live streaming result.
+ * Consumed by ActiveStreamingTools / ToolResultRenderer in the UI.
+ */
+export interface StreamingToolState {
+  chunks: ToolResultChunk[];
+  isComplete: boolean;
+  aggChunks?: AggregatorChunk[];
+}
+
+/**
+ * Create a set of executeToolCalls() callbacks that maintain a
+ * Map<string, StreamingToolState> for the UI layer.
+ *
+ * Usage in repl.tsx:
+ *   const [streamingTools, setStreamingTools] = useState(new Map());
+ *   const callbacks = createStreamingToolCallbacks((m) => setStreamingTools(new Map(m)));
+ *   await executeToolCalls(calls, registry, ctx, callbacks);
+ *
+ * The onUpdate function is called after every mutation so the caller
+ * (React state setter) can trigger a re-render.
+ *
+ * The returned map is mutated in-place for performance; onUpdate receives
+ * the same map reference after each mutation so the caller must shallow-copy
+ * (e.g. `new Map(m)`) to trigger React re-renders.
+ */
+export function createStreamingToolCallbacks(
+  onUpdate: (tools: Map<string, StreamingToolState>) => void
+): {
+  onToolStart: (name: string, input: Record<string, unknown>) => void;
+  onToolEnd: (name: string, result: string, isError: boolean) => void;
+  onResult: (name: string, chunk: AggregatorChunk) => void;
+  onToolResultChunk: (name: string, chunk: ToolResultChunk) => void;
+} {
+  const tools = new Map<string, StreamingToolState>();
+
+  return {
+    onToolStart(name) {
+      tools.set(name, { chunks: [], isComplete: false, aggChunks: [] });
+      onUpdate(tools);
+    },
+
+    onToolEnd(name, _result, _isError) {
+      const existing = tools.get(name);
+      if (existing) {
+        existing.isComplete = true;
+        onUpdate(tools);
+      }
+    },
+
+    onResult(name, aggChunk) {
+      const existing = tools.get(name);
+      if (existing) {
+        existing.aggChunks = [...(existing.aggChunks ?? []), aggChunk];
+        onUpdate(tools);
+      }
+    },
+
+    onToolResultChunk(name, chunk) {
+      const existing = tools.get(name);
+      if (existing) {
+        existing.chunks = [...existing.chunks, chunk];
+        onUpdate(tools);
+      }
+    },
+  };
+}

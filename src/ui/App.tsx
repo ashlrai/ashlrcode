@@ -15,6 +15,9 @@ import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
 import { getAction, type InputHistory } from "./keybindings.ts";
 import { SlashInput } from "./SlashInput.tsx";
+import type { AggregatorChunk } from "../agent/streaming-result-aggregator.ts";
+import type { ToolResultChunk } from "../agent/tool-result-streaming.ts";
+import { ActiveStreamingTools } from "./tool-result-view.tsx";
 
 /**
  * Extract a file path suggestion for the last word in the input.
@@ -107,6 +110,19 @@ interface AppProps {
   pendingQuestionOptionCount?: number;
   /** Labels for the pending question options (for arrow-key selection UI). */
   pendingQuestionLabels?: string[];
+  /**
+   * Live streaming tool result state — maps toolName → chunk state.
+   * Updated incrementally as chunks arrive via onToolResultChunk callback.
+   * Rendered between the static output history and the spinner.
+   */
+  streamingTools?: Map<
+    string,
+    {
+      chunks: ToolResultChunk[];
+      isComplete: boolean;
+      aggChunks?: AggregatorChunk[];
+    }
+  >;
 }
 
 export function App({
@@ -137,6 +153,7 @@ export function App({
   cwd,
   pendingQuestionOptionCount = 0,
   pendingQuestionLabels = [],
+  streamingTools,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
@@ -357,6 +374,11 @@ export function App({
     <Box flexDirection="column">
       {/* Scrollable output */}
       <Static items={items}>{(item) => <Text key={item.id}>{item.text}</Text>}</Static>
+
+      {/* Live streaming tool results — appear as each chunk completes, before spinner */}
+      {streamingTools && streamingTools.size > 0 && (
+        <ActiveStreamingTools activeTools={streamingTools} />
+      )}
 
       {/* Animated spinner with rotating phrases + token stats */}
       {isProcessing && <AnimatedSpinner text={spinnerText} tokenStats={tokenStats} />}
