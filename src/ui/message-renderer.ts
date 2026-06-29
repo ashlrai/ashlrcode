@@ -5,6 +5,7 @@
 import chalk from "chalk";
 import { highlightCode } from "./markdown.ts";
 import { stylePath, theme } from "./theme.ts";
+import type { ToolResultChunk } from "../agent/tool-result-streaming.ts";
 
 const MAX_BODY_LINES = 20;
 const BOX_WIDTH = 60;
@@ -324,6 +325,141 @@ function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
   return `${(ms / 60_000).toFixed(1)}m`;
+}
+
+// ── Tool result chunk rendering (progressive / lazy-load) ──────────────────
+
+/**
+ * Visual separator emitted between streamed tool result chunks.
+ *
+ * Shows the chunk's compact summary (when available) and a lazy-load
+ * indicator when more chunks are expected.
+ */
+export function formatChunkSeparator(chunk: ToolResultChunk): string {
+  const parts: string[] = [];
+
+  if (chunk.summary) {
+    parts.push(theme.muted(`  ┄ ${chunk.summary}`));
+  }
+
+  if (chunk.pendingMore) {
+    parts.push(theme.muted("  ┄ loading…"));
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Format a single streamed ToolResultChunk for terminal display.
+ *
+ * Applies per-outputType styling:
+ *   - grep_results  → file path highlight
+ *   - bash_error    → red
+ *   - diff          → +/- colouring
+ *   - json_*        → dim (JSON is verbose; let the summary speak)
+ *   - log_lines     → muted timestamp, normal message
+ *   - file_contents → dim line numbers (mirrors formatReadBody)
+ *   - generic_text  → passthrough
+ *
+ * The separator is prepended when the chunk is not the first chunk (index > 0).
+ */
+export function formatToolResultChunk(chunk: ToolResultChunk): string[] {
+  const lines: string[] = [];
+
+  // Prepend separator between chunks (not before the first one)
+  if (chunk.index > 0) {
+    const sep = formatChunkSeparator(chunk);
+    if (sep) lines.push(sep);
+  }
+
+  const chunkLines = chunk.text.split("\n");
+
+  switch (chunk.outputType) {
+    case "bash_error": {
+      for (const line of chunkLines) {
+        lines.push(chalk.hex("#FF1744")(line));
+      }
+      break;
+    }
+    case "grep_results": {
+      for (const line of chunkLines) {
+        const colonIdx = line.indexOf(":");
+        if (colonIdx > 0) {
+          lines.push(stylePath(line.slice(0, colonIdx)) + line.slice(colonIdx));
+        } else {
+          lines.push(line);
+        }
+      }
+      break;
+    }
+    case "diff": {
+      for (const line of chunkLines) {
+        if (line.startsWith("+") && !line.startsWith("+++")) {
+          lines.push(chalk.hex("#00E676")(line));
+        } else if (line.startsWith("-") && !line.startsWith("---")) {
+          lines.push(chalk.hex("#FF1744")(line));
+        } else if (line.startsWith("@@")) {
+          lines.push(chalk.cyan(line));
+        } else if (/^(diff --git|index |--- |\\+\\+\\+ )/.test(line)) {
+          lines.push(chalk.bold(line));
+        } else {
+          lines.push(line);
+        }
+      }
+      break;
+    }
+    case "json_array":
+    case "json_object": {
+      // JSON is typically large; show dimmed to reduce visual noise.
+      // The summary (shown via separator) carries the meaningful info.
+      for (const line of chunkLines) {
+        lines.push(theme.muted(line));
+      }
+      break;
+    }
+    case "log_lines": {
+      for (const line of chunkLines) {
+        // Dim the timestamp prefix, keep the rest readable
+        const match = line.match(/^(\S+\s+\S+)\s+(.*)/);
+        if (match) {
+          lines.push(theme.muted(match[1]!) + "  " + match[2]!);
+        } else {
+          lines.push(line);
+        }
+      }
+      break;
+    }
+    case "file_contents": {
+      for (const line of chunkLines) {
+        // Dim line-number prefix (NNN | or NNN\t)
+        const match = line.match(/^(\s*\d+\s*[\t|])(.*)/);
+        if (match) {
+          lines.push(theme.muted(match[1]!) + match[2]!);
+        } else {
+          lines.push(line);
+        }
+      }
+      break;
+    }
+    case "file_listing": {
+      for (const line of chunkLines) {
+        lines.push(stylePath(line));
+      }
+      break;
+    }
+    default: {
+      for (const line of chunkLines) {
+        lines.push(line);
+      }
+    }
+  }
+
+  // Lazy-load indicator at the end of the final chunk's pending section
+  if (chunk.isFinal && chunk.index > 0) {
+    lines.push(theme.muted(`  ┄ ${chunk.cumulativeBytes.toLocaleString()} bytes total`));
+  }
+
+  return lines;
 }
 
 /** Format a turn separator with stats */

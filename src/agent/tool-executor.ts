@@ -58,6 +58,21 @@ import {
   getToolResultPredictor,
 } from "./tool-result-predictor.ts";
 import {
+  ToolResultStreamer,
+  type ToolResultChunk,
+} from "./tool-result-streaming.ts";
+export type { ToolResultChunk, StreamOutputType, ChunkBoundaryReason } from "./tool-result-streaming.ts";
+export {
+  ToolResultStreamer,
+  classifyStreamOutputType,
+  computeChunkBoundary,
+  outputPatternToStreamType,
+  generateChunkSummary,
+  AdaptiveChunkSizer,
+  createCollectingStreamer,
+  streamToolResult,
+} from "./tool-result-streaming.ts";
+import {
   buildExecutionPlan,
   recordWaveTiming,
   visualiseExecutionPlan,
@@ -474,6 +489,18 @@ export async function executeToolCalls(
      * the full output or proceed with the summary alone.
      */
     onCheckpoint?: (event: ToolCheckpointEvent) => void;
+    /**
+     * Called for each semantically-chunked fragment of a tool result after
+     * execution completes.  Enables progressive UI updates and smart context
+     * truncation at natural boundaries instead of hard byte cuts.
+     *
+     * Each ToolResultChunk carries:
+     *   - outputType: fine-grained classification (bash_error, grep_results, …)
+     *   - boundaryReason: what triggered this chunk (line_break, block_break, …)
+     *   - pendingMore: true when more chunks will follow (lazy-load indicator)
+     *   - summary: compact description for large chunks (visual separator)
+     */
+    onToolResultChunk?: (name: string, chunk: ToolResultChunk) => void;
   },
   /** Total context window size in tokens — used by the budget allocator. Pass 0 when unknown. */
   totalContextTokens = 0
@@ -596,6 +623,7 @@ async function executeSingle(
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
     onResult?: (name: string, chunk: AggregatorChunk) => void;
     onCheckpoint?: (event: ToolCheckpointEvent) => void;
+    onToolResultChunk?: (name: string, chunk: ToolResultChunk) => void;
   },
   totalContextTokens = 0
 ): Promise<ToolExecutionResult> {
@@ -768,6 +796,22 @@ async function executeSingle(
     });
     agg.push(result);
     agg.finalize();
+  }
+
+  // Dispatch semantically-chunked result fragments via ToolResultStreamer when
+  // the onToolResultChunk callback is registered.  This gives the UI natural
+  // chunk boundaries (line breaks for logs/grep, block breaks for JSON/diff,
+  // function boundaries for code) and lazy-load indicators between chunks.
+  if (!isError && callbacks?.onToolResultChunk) {
+    const streamer = new ToolResultStreamer({
+      toolName: tc.name,
+      toolInput: tc.input,
+      onToolResultChunk: (chunk) => {
+        callbacks.onToolResultChunk!(tc.name, chunk);
+      },
+    });
+    streamer.push(result);
+    streamer.finalize();
   }
 
   callbacks?.onToolEnd?.(tc.name, result, isError);
