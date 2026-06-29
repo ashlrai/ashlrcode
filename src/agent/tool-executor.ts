@@ -19,15 +19,21 @@ import type { PersistentSpeculationCache } from "./speculation.ts";
 import {
   StreamingResultAggregator,
   detectOutputPattern,
+  patternToBoundaryType,
   type AggregatorChunk,
+  type BoundaryType,
 } from "./streaming-result-aggregator.ts";
-export type { AggregatorChunk, OutputPattern } from "./streaming-result-aggregator.ts";
+export type { AggregatorChunk, OutputPattern, BoundaryType } from "./streaming-result-aggregator.ts";
 export {
   StreamingResultAggregator,
   createCollectingAggregator,
+  createPausePointAggregator,
   aggregateStream,
   detectOutputPattern,
   isAtSemanticBoundary,
+  patternToBoundaryType,
+  generatePauseSummary,
+  SemanticPausePointDetector,
 } from "./streaming-result-aggregator.ts";
 import { trackFileModification } from "./verification.ts";
 import { recordStep } from "./time-travel.ts";
@@ -424,6 +430,24 @@ export interface ToolExecutionResult {
  * StreamingResultAggregator as each tool completes, enabling progressive UI
  * updates for long-running tools (Grep, WebSearch, BulkEdit).
  */
+/**
+ * A checkpoint event emitted by executeToolCalls() at semantic pause points
+ * within a tool's result stream.  Callers can use this to:
+ *   - Show progressive summaries in the UI without waiting for the full result.
+ *   - Let the model decide whether to request the full output or accept the summary.
+ *   - Reduce token waste on large, repetitive tool outputs.
+ */
+export interface ToolCheckpointEvent {
+  /** Tool name that produced this checkpoint. */
+  toolName: string;
+  /** The chunk at the pause point. */
+  chunk: AggregatorChunk;
+  /** Compact LLM-facing summary generated at this pause point. */
+  summary: string;
+  /** Bytes accumulated in the stream so far when this checkpoint fired. */
+  bytesSeenSoFar: number;
+}
+
 export async function executeToolCalls(
   toolCalls: ToolCall[],
   registry: ToolRegistry,
@@ -433,6 +457,12 @@ export async function executeToolCalls(
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
     /** Called with each semantic chunk as it is flushed from the aggregator. */
     onResult?: (name: string, chunk: AggregatorChunk) => void;
+    /**
+     * Called at semantic pause points within a tool's result stream.
+     * Provides a compact summary so the model can decide whether to request
+     * the full output or proceed with the summary alone.
+     */
+    onCheckpoint?: (event: ToolCheckpointEvent) => void;
   },
   /** Total context window size in tokens — used by the budget allocator. Pass 0 when unknown. */
   totalContextTokens = 0
@@ -518,6 +548,8 @@ export async function executeToolCalls(
     }
   }
 
+  // (onCheckpoint is forwarded through callbacks to executeSingle above)
+
   // Restore original tool call ordering
   const orderMap = new Map(toolCalls.map((tc, i) => [tc.id, i]));
   results.sort((a, b) => (orderMap.get(a.toolCallId) ?? 0) - (orderMap.get(b.toolCallId) ?? 0));
@@ -537,6 +569,7 @@ async function executeSingle(
     onToolStart?: (name: string, input: Record<string, unknown>) => void;
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
     onResult?: (name: string, chunk: AggregatorChunk) => void;
+    onCheckpoint?: (event: ToolCheckpointEvent) => void;
   },
   totalContextTokens = 0
 ): Promise<ToolExecutionResult> {
@@ -684,9 +717,28 @@ async function executeSingle(
   // callback is registered. This gives the UI semantic chunks (paragraphs,
   // code blocks, grep matches, etc.) as soon as each tool completes, rather
   // than waiting for all tools in a wave to finish.
-  if (callbacks?.onResult && !isError) {
+  //
+  // When onCheckpoint is also registered, enable pause-point detection so the
+  // aggregator fires checkpoint events at JSON/diff/error semantic boundaries.
+  if (!isError && (callbacks?.onResult || callbacks?.onCheckpoint)) {
+    const encoder2 = new TextEncoder();
+    let bytesSeen = 0;
     const agg = new StreamingResultAggregator({
-      onChunk: (chunk) => callbacks.onResult!(tc.name, chunk),
+      enablePausePoints: !!callbacks?.onCheckpoint,
+      onChunk: (chunk) => {
+        bytesSeen += encoder2.encode(chunk.text).length;
+        callbacks?.onResult?.(tc.name, chunk);
+      },
+      onPausePoint: callbacks?.onCheckpoint
+        ? (chunk, summary) => {
+            callbacks.onCheckpoint!({
+              toolName: tc.name,
+              chunk,
+              summary,
+              bytesSeenSoFar: bytesSeen,
+            });
+          }
+        : undefined,
     });
     agg.push(result);
     agg.finalize();
