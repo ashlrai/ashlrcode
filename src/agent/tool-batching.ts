@@ -81,6 +81,18 @@ const SAFE_READ_TOOLS = new Set([
   "web_search",
 ]);
 
+/** Bash commands that are read-only and safe to batch together. */
+const SAFE_BASH_PATTERNS = [
+  /^grep\b/,
+  /^ls\b/,
+  /^find\b/,
+  /^cat\b/,
+  /^echo\b/,
+  /^wc\b/,
+  /^head\b/,
+  /^tail\b/,
+];
+
 /** Tools that can be coalesced when they target the same resource. */
 const COALESABLE_TOOLS = new Set([
   "grep",
@@ -95,6 +107,64 @@ function isSafeReadTool(name: string): boolean {
 
 function isCoalesableTool(name: string): boolean {
   return COALESABLE_TOOLS.has(name.toLowerCase());
+}
+
+/** Return true if a Bash command string is safe to batch with other Bash commands. */
+function isSafeBashCommand(cmd: string): boolean {
+  const trimmed = cmd.trim();
+  return SAFE_BASH_PATTERNS.some((re) => re.test(trimmed));
+}
+
+/**
+ * Extract resource paths touched by a Bash command (best-effort static analysis).
+ * Returns an empty set for commands we can't parse statically.
+ */
+function bashCommandResources(cmd: string): Set<string> {
+  const resources = new Set<string>();
+  // Match path-like tokens: sequences starting with / or ./ or ../
+  const pathTokens = cmd.match(/(?:^|\s)(\.{0,2}\/[^\s;|&>"']+)/g);
+  if (pathTokens) {
+    for (const tok of pathTokens) {
+      resources.add(tok.trim());
+    }
+  }
+  return resources;
+}
+
+/**
+ * Given a list of safe Bash ToolCalls, group them into batches where each
+ * batch contains calls whose resource sets don't overlap with each other.
+ * Returns groups of ToolCall arrays — each group will become one combined
+ * Bash invocation.
+ */
+function groupNonOverlappingBashCalls(calls: ToolCall[]): ToolCall[][] {
+  // Greedy: walk calls in order; add to current group if no resource overlap.
+  const groups: ToolCall[][] = [];
+  const groupResources: Set<string>[] = [];
+
+  for (const tc of calls) {
+    const cmd = typeof tc.input["command"] === "string" ? tc.input["command"] : "";
+    const res = bashCommandResources(cmd);
+
+    // Find first group with no overlapping resources
+    let placed = false;
+    for (let gi = 0; gi < groups.length; gi++) {
+      const existing = groupResources[gi]!;
+      const overlaps = res.size > 0 && [...res].some((r) => existing.has(r));
+      if (!overlaps) {
+        groups[gi]!.push(tc);
+        for (const r of res) existing.add(r);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) {
+      groups.push([tc]);
+      groupResources.push(new Set(res));
+    }
+  }
+
+  return groups;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,14 +413,9 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
   }
 
   // ── Step 2: Coalesce redundant sequential grep calls ─────────────────────
-  // Operate on calls in original order; grouping by path key
-  const grepCoalescedCalls: ToolCall[] = [];
-  const coalescedMap = new Map<number, number>(); // original-index → coalesced-index
-
-  // Build lookup: for each wave, coalesce grepping calls that share a path
+  // Build lookup: for each wave, coalesce grepping calls that share a path.
   // We do this globally rather than per-wave to catch cross-wave redundancy.
   const grepGroups = new Map<string, ToolCall[]>();
-  const grepGroupOrder: string[] = [];
 
   for (let i = 0; i < pending.length; i++) {
     const tc = pending[i]!;
@@ -358,18 +423,20 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
     if (n === "grep") {
       const path = tc.input["path"] ?? tc.input["file_path"] ?? tc.input["directory"] ?? "__global";
       const key = `grep:${path}`;
-      if (!grepGroups.has(key)) {
-        grepGroups.set(key, []);
-        grepGroupOrder.push(key);
-      }
+      if (!grepGroups.has(key)) grepGroups.set(key, []);
       grepGroups.get(key)!.push(tc);
     }
   }
 
-  // Now rebuild a deduplicated pending list, replacing redundant same-path greps
+  // Track merged-call-id → original ToolCalls so we can restore them later.
+  // This is the core fix: coalesced batches must expose the original calls.
+  const mergedIdToOriginals = new Map<string, ToolCall[]>();
+
+  // Rebuild a deduplicated pending list, replacing redundant same-path greps
+  // with a single synthetic merged call for DAG/wave purposes only.
   const deduped: ToolCall[] = [];
   const originalToDeduped = new Map<number, number>(); // orig idx → deduped idx
-  const consumed = new Set<string>(); // tc.id
+  const consumed = new Set<string>(); // tc.id or key+":done"
 
   for (let i = 0; i < pending.length; i++) {
     const tc = pending[i]!;
@@ -381,7 +448,7 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
       const group = grepGroups.get(key);
 
       if (group && group.length > 1 && !consumed.has(key + ":done")) {
-        // Merge: combine all patterns for this group into one call
+        // Merge: combine all patterns for this group into one synthetic call.
         const patterns = group
           .map((g) => {
             const p = g.input["pattern"] ?? g.input["regex"] ?? g.input["query"];
@@ -390,9 +457,10 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
           .filter(Boolean);
 
         const mergedPattern = patterns.length > 1 ? `(?:${patterns.join("|")})` : patterns[0] ?? "";
+        const mergedId = `merged-grep-${seq}-${path}`;
 
         const merged: ToolCall = {
-          id: `merged-grep-${seq}-${path}`,
+          id: mergedId,
           name: "grep",
           input: {
             ...group[0]!.input,
@@ -403,6 +471,9 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
         const dedupedIdx = deduped.length;
         deduped.push(merged);
 
+        // *** Key fix: record originals keyed by merged ID ***
+        mergedIdToOriginals.set(mergedId, [...group]);
+
         // Map all originals in this group to this merged call
         for (const g of group) {
           const origIdx = pending.findIndex((p) => p.id === g.id);
@@ -411,22 +482,21 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
         }
         consumed.add(key + ":done");
       } else if (!consumed.has(tc.id)) {
-        // Already handled (part of a group that was merged above) or solo grep
-        if (!consumed.has(tc.id)) {
-          originalToDeduped.set(i, deduped.length);
-          deduped.push(tc);
-        }
+        originalToDeduped.set(i, deduped.length);
+        deduped.push(tc);
+        consumed.add(tc.id);
       }
     } else {
       if (!consumed.has(tc.id)) {
         originalToDeduped.set(i, deduped.length);
         deduped.push(tc);
+        consumed.add(tc.id);
       }
     }
   }
 
   // ── Step 3: Rebuild DAG on deduped list ───────────────────────────────────
-  const { nodes: dedupedNodes, edges: dedupedEdges } = buildDAG(deduped);
+  const { nodes: dedupedNodes } = buildDAG(deduped);
   const { waves: dedupedWaves } = topologicalWaves(dedupedNodes);
 
   // ── Step 4: Build BatchedToolCall list per wave ───────────────────────────
@@ -435,26 +505,93 @@ export function batchToolCalls(pending: ToolCall[]): BatchedToolCall[] {
     const wave = dedupedWaves[wi]!;
     const waveBatches = buildWaveBatches(wave, deduped, `b${seq}-w${wi}`);
 
-    // Mark coalesced batches (tools that were grep-merged)
+    // Mark coalesced batches and restore original ToolCalls.
+    // A coalesced batch is one whose single tool is a merged-grep synthetic call.
+    // We replace tools[] with the original calls so callers see the real inputs.
     for (const batch of waveBatches) {
-      if (batch.tools.length === 1 && batch.tools[0]!.id.startsWith("merged-grep-")) {
-        batch.batchType = "coalesced";
-        const p = batch.tools[0]!.input["pattern"];
-        batch.mergedPattern = typeof p === "string" ? p : undefined;
+      const firstTool = batch.tools[0];
+      if (firstTool && firstTool.id.startsWith("merged-grep-")) {
+        const originals = mergedIdToOriginals.get(firstTool.id);
+        if (originals && originals.length > 0) {
+          batch.batchType = "coalesced";
+          const p = firstTool.input["pattern"];
+          batch.mergedPattern = typeof p === "string" ? p : undefined;
+          // *** Populate tools with original calls, not synthetic merged call ***
+          batch.tools = originals;
+          batch.estimatedParallelism = 1; // runs as single merged execution
+        }
       }
     }
 
     waveResults.push(waveBatches);
   }
 
-  // ── Step 5: Wire inter-wave dependencies ─────────────────────────────────
+  // ── Step 5: Bash dedup — batch sequential safe Bash calls per wave ─────────
+  // Within each wave, group safe Bash calls whose resource sets don't overlap
+  // into combined shell sessions. Each group becomes a single "coalesced" batch
+  // with batchType "coalesced" and tools containing the original Bash calls.
+  const coalescedWaveResults: BatchedToolCall[][] = waveResults.map((wave, wi) => {
+    const bashBatches: BatchedToolCall[] = [];
+    const otherBatches: BatchedToolCall[] = [];
+
+    for (const batch of wave) {
+      if (
+        batch.batchType === "single" &&
+        batch.tools.length === 1 &&
+        batch.tools[0]!.name.toLowerCase() === "bash" &&
+        typeof batch.tools[0]!.input["command"] === "string" &&
+        isSafeBashCommand(batch.tools[0]!.input["command"] as string)
+      ) {
+        bashBatches.push(batch);
+      } else {
+        otherBatches.push(batch);
+      }
+    }
+
+    if (bashBatches.length < 2) {
+      // Nothing to group — return wave unchanged
+      return wave;
+    }
+
+    // Group non-overlapping bash batches
+    const bashCalls = bashBatches.map((b) => b.tools[0]!);
+    const groups = groupNonOverlappingBashCalls(bashCalls);
+
+    const mergedBashBatches: BatchedToolCall[] = groups.map((group, gi) => {
+      if (group.length === 1) {
+        // Single call — find its original batch and return as-is
+        const orig = bashBatches.find((b) => b.tools[0]!.id === group[0]!.id);
+        return orig ?? bashBatches[0]!;
+      }
+      // Combined shell session: join commands with "; " separator
+      const combinedCmd = group.map((tc) => tc.input["command"] as string).join("; ");
+      const combinedId = `merged-bash-${seq}-w${wi}-${gi}`;
+      const syntheticBash: ToolCall = {
+        id: combinedId,
+        name: group[0]!.name, // preserve original casing
+        input: { command: combinedCmd, _mergedCommands: group.map((tc) => tc.input["command"]) },
+      };
+      return {
+        batchId: `b${seq}-w${wi}-bash-grp-${gi}`,
+        tools: group, // original calls for callers
+        dependencies: [],
+        estimatedParallelism: 1,
+        batchType: "coalesced" as const,
+        mergedPattern: combinedCmd,
+      };
+    });
+
+    return [...otherBatches, ...mergedBashBatches];
+  });
+
+  // ── Step 6: Wire inter-wave dependencies ─────────────────────────────────
   // All batches in wave N depend on ALL batches in wave N-1 that write resources
   // consumed by this wave. For simplicity: every batch depends on every batch
   // from the immediately preceding wave (conservative but correct).
   const allBatches: BatchedToolCall[] = [];
-  for (let wi = 0; wi < waveResults.length; wi++) {
-    const wave = waveResults[wi]!;
-    const prevWave = wi > 0 ? waveResults[wi - 1]! : [];
+  for (let wi = 0; wi < coalescedWaveResults.length; wi++) {
+    const wave = coalescedWaveResults[wi]!;
+    const prevWave = wi > 0 ? coalescedWaveResults[wi - 1]! : [];
     const prevIds = prevWave.map((b) => b.batchId);
 
     for (const batch of wave) {

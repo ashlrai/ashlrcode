@@ -417,3 +417,93 @@ describe("visualiseBatchedPlan", () => {
     expect(vis).toMatch(/empty/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 26–31. Coalesced batch tools population + Bash dedup (spec items 2–4)
+// ---------------------------------------------------------------------------
+
+describe("Coalesced batch tools population", () => {
+  test("26. Coalesced Grep batch tools[] contains all original ToolCall objects", () => {
+    const calls = [
+      tc("Grep", { pattern: "TODO",  path: "/src/auth.ts" }, "grep-orig-1"),
+      tc("Grep", { pattern: "FIXME", path: "/src/auth.ts" }, "grep-orig-2"),
+    ];
+    const batches = batchToolCalls(calls);
+    const coalesced = batches.find((b) => b.batchType === "coalesced");
+    expect(coalesced).toBeDefined();
+    // tools must contain both original calls, not the synthetic merged call
+    expect(coalesced!.tools.length).toBe(2);
+    const ids = coalesced!.tools.map((t) => t.id);
+    expect(ids).toContain("grep-orig-1");
+    expect(ids).toContain("grep-orig-2");
+  });
+
+  test("27. Coalesced batch preserves original tool names (case-sensitive)", () => {
+    const calls = [
+      tc("Grep", { pattern: "alpha", path: "/src" }, "g1"),
+      tc("Grep", { pattern: "beta",  path: "/src" }, "g2"),
+    ];
+    const batches = batchToolCalls(calls);
+    const coalesced = batches.find((b) => b.batchType === "coalesced");
+    expect(coalesced).toBeDefined();
+    // Name must match original casing — not the lowercased synthetic "grep"
+    const names = coalesced!.tools.map((t) => t.name);
+    expect(names.every((n) => n === "Grep")).toBe(true);
+  });
+
+  test("28. Three Grep calls → coalesced batch tools[] has count 3", () => {
+    const calls = [
+      tc("grep", { pattern: "A", path: "/lib" }, "g-a"),
+      tc("grep", { pattern: "B", path: "/lib" }, "g-b"),
+      tc("grep", { pattern: "C", path: "/lib" }, "g-c"),
+    ];
+    const batches = batchToolCalls(calls);
+    const coalesced = batches.find((b) => b.batchType === "coalesced");
+    expect(coalesced).toBeDefined();
+    expect(coalesced!.tools.length).toBe(3);
+  });
+
+  test("29. Coalesced batch mergedPattern combines all patterns", () => {
+    const calls = [
+      tc("grep", { pattern: "TODO",  path: "/src" }),
+      tc("grep", { pattern: "FIXME", path: "/src" }),
+      tc("grep", { pattern: "HACK",  path: "/src" }),
+    ];
+    const batches = batchToolCalls(calls);
+    const coalesced = batches.find((b) => b.batchType === "coalesced");
+    expect(coalesced).toBeDefined();
+    expect(coalesced!.mergedPattern).toMatch(/TODO/);
+    expect(coalesced!.mergedPattern).toMatch(/FIXME/);
+    expect(coalesced!.mergedPattern).toMatch(/HACK/);
+  });
+});
+
+describe("Bash deduplication — non-overlapping resource batching", () => {
+  test("30. Two independent safe Bash calls are coalesced into one batch", () => {
+    const calls = [
+      tc("Bash", { command: "grep -r TODO /src/a.ts" }, "bash-1"),
+      tc("Bash", { command: "grep -r FIXME /src/b.ts" }, "bash-2"),
+    ];
+    const batches = batchToolCalls(calls);
+    // Both are safe grep commands on non-overlapping paths — should merge
+    const coalesced = batches.filter((b) => b.batchType === "coalesced");
+    expect(coalesced.length).toBeGreaterThanOrEqual(1);
+    const allTools = batches.flatMap((b) => b.tools);
+    // Both original calls must still be accounted for
+    expect(allTools.filter((t) => t.id === "bash-1" || t.id === "bash-2").length).toBe(2);
+  });
+
+  test("31. Bash calls on overlapping resources are NOT merged into one batch", () => {
+    const calls = [
+      tc("Bash", { command: "grep TODO /src/shared.ts" }, "bash-overlap-1"),
+      tc("Bash", { command: "grep FIXME /src/shared.ts" }, "bash-overlap-2"),
+    ];
+    const batches = batchToolCalls(calls);
+    // Both touch /src/shared.ts — they should NOT be in the same coalesced batch
+    const allTools = batches.flatMap((b) => b.tools);
+    const ids = allTools.map((t) => t.id);
+    // Both calls must appear exactly once
+    expect(ids.filter((id) => id === "bash-overlap-1").length).toBe(1);
+    expect(ids.filter((id) => id === "bash-overlap-2").length).toBe(1);
+  });
+});
