@@ -33,6 +33,9 @@ import {
   resolveCompressionOptions,
 } from "./tool-metrics.ts";
 export type { CompressorConfig } from "./tool-metrics.ts";
+import {
+  getToolResultPredictor,
+} from "./tool-result-predictor.ts";
 
 // ---------------------------------------------------------------------------
 // Streaming result compression
@@ -515,10 +518,22 @@ async function executeSingle(
   // Apply dynamic compression: if the raw result exceeds the adaptive maxBytes threshold,
   // compress it using the allocator-supplied limits so reasoning-heavy models retain more
   // of each tool result within the available context budget.
+  //
+  // Use ToolResultPredictor for a pre-execution size estimate so thresholds are
+  // tuned before we even measure the raw bytes — this avoids the case where the
+  // budget-allocator defaults are too coarse for the actual output pattern.
+  const predictor = getToolResultPredictor();
+  const prediction = predictor.predict(tc.name, tc.input);
+
   let result = rawResult;
   if (!isError) {
     const encoder = new TextEncoder();
-    if (encoder.encode(rawResult).length > compressionLimits.maxBytes) {
+    const rawBytes = encoder.encode(rawResult).length;
+
+    // Record actual vs predicted for ongoing accuracy tracking.
+    predictor.recordActual(tc.name, prediction, rawBytes);
+
+    if (rawBytes > compressionLimits.maxBytes) {
       // Re-use the pure compression logic from streamResultCompressor by constructing
       // a lightweight shim tool and draining the generator synchronously.
       const shimTool = {
@@ -531,7 +546,12 @@ async function executeSingle(
         validateInput: () => null,
         call: async () => rawResult,
       };
-      result = await compressToolResult(shimTool, tc.input, context, compressionLimits);
+      // Pass predictedSize so resolveCompressionOptions() can pick adaptive thresholds
+      // that match the expected output pattern (file listing, grep results, etc.).
+      result = await compressToolResult(shimTool, tc.input, context, {
+        ...compressionLimits,
+        predictedSize: prediction.estimatedBytes,
+      });
     }
   }
 
