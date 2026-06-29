@@ -479,7 +479,7 @@ export function agentCommands(): Command[] {
       name: "/surgical",
       description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
       category: "agent",
-      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis"],
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats"],
       handler: async (args, ctx) => {
         const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
 
@@ -640,6 +640,109 @@ export function agentCommands(): Command[] {
               "",
             ].join("\n"),
           );
+          return true;
+        }
+
+        // /surgical propose <goal> — LLM-powered tier proposal with confidence scoring
+        if (args.startsWith("propose ") || args === "propose") {
+          const goal = args.startsWith("propose ") ? args.slice("propose ".length).trim() : "";
+          if (!goal) {
+            ctx.addOutput(
+              [
+                "",
+                theme.warning("  Usage: /surgical propose <goal>"),
+                theme.muted("  Example: /surgical propose add caching to login flow"),
+                "",
+              ].join("\n"),
+            );
+            return true;
+          }
+
+          const { proposeTierForGoal, logProposalFeedback, formatProposal } = await import(
+            "../agent/surgical-proposer.ts"
+          );
+
+          // Gather codebase context
+          const cwd = ctx.state.toolContext.cwd ?? process.cwd();
+          let fileCount: number | undefined;
+          let recentEdits: string[] | undefined;
+          try {
+            const proc = Bun.spawn(
+              ["git", "diff", "--name-only", "HEAD~5", "HEAD"],
+              { cwd, stdout: "pipe", stderr: "pipe" },
+            );
+            const out = await new Response(proc.stdout).text();
+            await proc.exited;
+            const edits = out.split("\n").map((l) => l.trim()).filter(Boolean);
+            if (edits.length > 0) recentEdits = edits;
+          } catch { /* non-git dirs OK */ }
+
+          try {
+            const proc = Bun.spawn(
+              ["bash", "-c", "find . -type f \\( -name '*.ts' -o -name '*.js' -o -name '*.tsx' -o -name '*.jsx' -o -name '*.py' -o -name '*.go' \\) | wc -l"],
+              { cwd, stdout: "pipe", stderr: "pipe" },
+            );
+            const out = await new Response(proc.stdout).text();
+            await proc.exited;
+            const n = parseInt(out.trim(), 10);
+            if (!isNaN(n) && n > 0) fileCount = n;
+          } catch { /* best effort */ }
+
+          const proposal = proposeTierForGoal(goal, { fileCount, recentEdits, cwd });
+
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Surgical Tier Proposal"),
+              formatProposal(proposal),
+              "",
+            ].join("\n"),
+          );
+
+          // Auto-apply if confidence >= 0.8
+          if (proposal.confidence >= 0.8) {
+            ctx.state.registry.setSurgicalGate({ enabled: true, tier: proposal.tier });
+            ctx.addOutput(
+              theme.success(
+                `  Auto-applied: surgical mode set to ${proposal.tier} ` +
+                `(confidence ${Math.round(proposal.confidence * 100)}% ≥ 80%)\n`,
+              ) +
+              theme.muted(
+                "  Override with: /surgical narrow | /surgical medium | /surgical wide\n" +
+                "  Log override feedback: /surgical propose-feedback <goal> <chosen-tier>\n",
+              ),
+            );
+
+            // Log accepted feedback
+            await logProposalFeedback({
+              timestamp: new Date().toISOString(),
+              goal,
+              suggestedTier: proposal.tier,
+              suggestedConfidence: proposal.confidence,
+              chosenTier: proposal.tier,
+              outcome: "accepted",
+              chosenNumericTier: proposal.numericTier,
+            });
+          } else {
+            ctx.addOutput(
+              theme.warning(
+                `  Confidence ${Math.round(proposal.confidence * 100)}% below 80% threshold.\n` +
+                "  Pick a tier manually: /surgical narrow | /surgical medium | /surgical wide\n",
+              ),
+            );
+          }
+
+          return true;
+        }
+
+        // /surgical stats — show suggestion accuracy and calibration
+        if (args === "stats") {
+          const { loadProposalFeedback, computeProposalStats, formatProposalStats } = await import(
+            "../agent/surgical-proposer.ts"
+          );
+          const feedback = await loadProposalFeedback();
+          const stats = computeProposalStats(feedback);
+          ctx.addOutput(formatProposalStats(stats));
           return true;
         }
 
