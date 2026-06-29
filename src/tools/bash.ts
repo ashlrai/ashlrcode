@@ -14,9 +14,37 @@ import { applyPhantomSeal } from "./guards/phantom-seal.ts";
 import { checkBinshieldGate } from "./guards/binshield-gate.ts";
 import { validateBash } from "./validators/index.ts";
 import type { Settings } from "../config/settings.ts";
+import {
+  ToolResultStreamer,
+  type ToolResultChunk,
+} from "../agent/tool-result-streaming.ts";
 
 const DEFAULT_TIMEOUT = 120_000; // 2 minutes
 const LIVE_OUTPUT_THRESHOLD = 5_000; // Stream live after 5s
+
+/**
+ * Optional streaming callback injected by the executor layer.
+ * When set, bash output is fed through a ToolResultStreamer so the UI
+ * receives semantic chunks (log lines, JSON blocks, diffs) progressively.
+ */
+export let _bashStreamingCallback:
+  | ((name: string, chunk: ToolResultChunk) => void)
+  | undefined;
+
+/**
+ * Wire a streaming callback so BashTool feeds chunks to the UI layer.
+ * Call with undefined to unregister.
+ */
+export function setBashStreamingCallback(
+  cb: ((name: string, chunk: ToolResultChunk) => void) | undefined
+): void {
+  _bashStreamingCallback = cb;
+}
+
+/** Reset for tests. */
+export function _resetBashStreamingCallback(): void {
+  _bashStreamingCallback = undefined;
+}
 
 // ── Guard settings cache ──────────────────────────────────────────────────────
 // Loaded lazily on first autonomous call; never throws.
@@ -209,7 +237,27 @@ export const bashTool: Tool = {
           result.slice(-20_000);
       }
 
-      return result || "(no output)";
+      const finalResult = result || "(no output)";
+
+      // Feed result through ToolResultStreamer when a streaming callback is wired.
+      // This gives the UI semantic chunks (log lines, JSON blocks, diffs, errors)
+      // as progressive updates rather than a single large string.
+      if (_bashStreamingCallback) {
+        try {
+          const cb = _bashStreamingCallback;
+          const streamer = new ToolResultStreamer({
+            toolName: "Bash",
+            toolInput: input as Record<string, unknown>,
+            onToolResultChunk: (chunk: ToolResultChunk) => cb("Bash", chunk),
+          });
+          streamer.push(finalResult);
+          streamer.finalize();
+        } catch {
+          // Streaming is best-effort; never block normal tool execution
+        }
+      }
+
+      return finalResult;
     } catch {
       clearTimeout(timeoutId);
       // Release stdout reader lock and drain stderr

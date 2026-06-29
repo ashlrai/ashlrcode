@@ -688,6 +688,508 @@ export class ToolResultStreamer {
 }
 
 // ---------------------------------------------------------------------------
+// Output type auto-detection from tool metadata
+// ---------------------------------------------------------------------------
+
+/**
+ * Auto-detect the expected StreamOutputType from tool name and input metadata,
+ * before any content is available.  Used by the UI to pick the right renderer
+ * before the first chunk arrives.
+ */
+export function detectOutputTypeFromMeta(
+  toolName: string,
+  toolInput: Record<string, unknown>
+): StreamOutputType {
+  const name = toolName.toLowerCase();
+  if (name === "grep" || name === "search") return "grep_results";
+  if (name === "bash" || name === "shell") {
+    const cmd = String(toolInput.command ?? "");
+    if (/^\s*(cat|head|tail|less)\s/.test(cmd)) return "file_contents";
+    if (/^\s*(ls|find|fd)\s/.test(cmd)) return "file_listing";
+    if (/^\s*(curl|wget|http)\s/.test(cmd)) return "json_object";
+    if (/^\s*(git diff|git show)\s/.test(cmd)) return "diff";
+    if (/^\s*(git log|npm|bun|yarn|pip)\s/.test(cmd)) return "log_lines";
+    return "generic_text";
+  }
+  if (name === "read" || name === "fileread") return "file_contents";
+  if (name === "glob" || name === "ls" || name === "listfiles") return "file_listing";
+  if (name === "webfetch" || name === "fetch") return "json_object";
+  if (name === "websearch") return "generic_text";
+  if (name === "diff") return "diff";
+  return "generic_text";
+}
+
+// ---------------------------------------------------------------------------
+// JSON tree rendering
+// ---------------------------------------------------------------------------
+
+export interface JsonTreeNode {
+  key: string;
+  value: unknown;
+  depth: number;
+  isLeaf: boolean;
+  /** Pre-formatted display string for this node */
+  displayLine: string;
+  /** Child nodes (only populated when !isLeaf) */
+  children: JsonTreeNode[];
+}
+
+/**
+ * Build a flat list of JsonTreeNodes from a parsed JSON value.
+ * Each node carries its depth and a pre-formatted display line.
+ *
+ * @param value   - Parsed JSON value (any type)
+ * @param key     - Key name for this node ("root" at top level)
+ * @param depth   - Current nesting depth
+ * @param maxDepth - Stop expanding beyond this depth (default: 4)
+ */
+export function buildJsonTree(
+  value: unknown,
+  key = "root",
+  depth = 0,
+  maxDepth = 4
+): JsonTreeNode {
+  const indent = "  ".repeat(depth);
+
+  if (value === null) {
+    return { key, value, depth, isLeaf: true, displayLine: `${indent}${key}: null`, children: [] };
+  }
+
+  if (Array.isArray(value)) {
+    if (depth >= maxDepth || value.length === 0) {
+      return {
+        key,
+        value,
+        depth,
+        isLeaf: true,
+        displayLine: `${indent}${key}: [${value.length} item${value.length !== 1 ? "s" : ""}]`,
+        children: [],
+      };
+    }
+    const children = value.slice(0, 50).map((item, i) =>
+      buildJsonTree(item, `[${i}]`, depth + 1, maxDepth)
+    );
+    const truncated = value.length > 50;
+    return {
+      key,
+      value,
+      depth,
+      isLeaf: false,
+      displayLine: `${indent}${key}: [ (${value.length} item${value.length !== 1 ? "s" : ""})`,
+      children: truncated
+        ? [
+            ...children,
+            {
+              key: "...",
+              value: null,
+              depth: depth + 1,
+              isLeaf: true,
+              displayLine: `${"  ".repeat(depth + 1)}... ${value.length - 50} more items`,
+              children: [],
+            },
+          ]
+        : children,
+    };
+  }
+
+  if (typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>);
+    if (depth >= maxDepth || entries.length === 0) {
+      return {
+        key,
+        value,
+        depth,
+        isLeaf: true,
+        displayLine: `${indent}${key}: {${entries.length} key${entries.length !== 1 ? "s" : ""}}`,
+        children: [],
+      };
+    }
+    const children = entries.slice(0, 50).map(([k, v]) =>
+      buildJsonTree(v, k, depth + 1, maxDepth)
+    );
+    const truncated = entries.length > 50;
+    return {
+      key,
+      value,
+      depth,
+      isLeaf: false,
+      displayLine: `${indent}${key}: {`,
+      children: truncated
+        ? [
+            ...children,
+            {
+              key: "...",
+              value: null,
+              depth: depth + 1,
+              isLeaf: true,
+              displayLine: `${"  ".repeat(depth + 1)}... ${entries.length - 50} more keys`,
+              children: [],
+            },
+          ]
+        : children,
+    };
+  }
+
+  // Primitive value
+  let displayValue: string;
+  if (typeof value === "string") {
+    displayValue = value.length > 120 ? `"${value.slice(0, 120)}…"` : `"${value}"`;
+  } else {
+    displayValue = String(value);
+  }
+  return {
+    key,
+    value,
+    depth,
+    isLeaf: true,
+    displayLine: `${indent}${key}: ${displayValue}`,
+    children: [],
+  };
+}
+
+/**
+ * Flatten a JsonTreeNode tree into an ordered array of display lines.
+ * Respects collapsed state — collapsed nodes emit only their own line.
+ *
+ * @param node        - Root node
+ * @param collapsed   - Set of node paths (key@depth) that are collapsed
+ * @param path        - Internal recursion path accumulator
+ */
+export function flattenJsonTree(
+  node: JsonTreeNode,
+  collapsed: Set<string> = new Set(),
+  path = ""
+): string[] {
+  const nodePath = path ? `${path}.${node.key}` : node.key;
+  const lines: string[] = [node.displayLine];
+
+  if (!node.isLeaf && !collapsed.has(nodePath)) {
+    for (const child of node.children) {
+      lines.push(...flattenJsonTree(child, collapsed, nodePath));
+    }
+    // Closing brace/bracket
+    const indent = "  ".repeat(node.depth);
+    const firstChar = node.displayLine.trimEnd().slice(-1);
+    if (firstChar === "{") lines.push(`${indent}}`);
+    else if (firstChar === "(") lines.push(`${indent}]`);
+  }
+
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Tabular data rendering
+// ---------------------------------------------------------------------------
+
+export interface TableRow {
+  cells: string[];
+}
+
+export interface ParsedTable {
+  headers: string[];
+  rows: TableRow[];
+  /** Column widths (max content width per column) */
+  columnWidths: number[];
+}
+
+/**
+ * Parse tabular text into a structured ParsedTable.
+ *
+ * Handles two common formats:
+ *   1. Pipe-delimited: "col1 | col2 | col3"
+ *   2. CSV-style: "col1,col2,col3" (only when no pipes found)
+ *   3. JSON array-of-objects: [{k:v}, ...] — each object becomes a row
+ */
+export function parseTableData(text: string): ParsedTable | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  // JSON array-of-objects
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed) && parsed.length > 0 && typeof parsed[0] === "object" && parsed[0] !== null) {
+        const headers = Object.keys(parsed[0] as Record<string, unknown>);
+        const rows: TableRow[] = parsed.map((item: unknown) => ({
+          cells: headers.map((h) => {
+            const val = (item as Record<string, unknown>)[h];
+            return val === null || val === undefined ? "" : String(val);
+          }),
+        }));
+        const columnWidths = headers.map((h, i) =>
+          Math.max(h.length, ...rows.map((r) => r.cells[i]?.length ?? 0))
+        );
+        return { headers, rows, columnWidths };
+      }
+    } catch {
+      // fall through to text parsing
+    }
+  }
+
+  const lines = trimmed.split("\n").filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return null;
+
+  // Pipe-delimited
+  const hasPipes = lines.filter((l) => l.includes("|")).length / lines.length > 0.5;
+  if (hasPipes) {
+    const parseLine = (l: string): string[] =>
+      l.split("|").map((c) => c.trim()).filter((_, i, arr) =>
+        // Drop empty leading/trailing cells from "| a | b |" format
+        !(i === 0 && arr[0] === "") && !(i === arr.length - 1 && arr[arr.length - 1] === "")
+      );
+
+    const [headerLine, ...rest] = lines;
+    const headers = parseLine(headerLine!);
+
+    // Skip separator line (e.g. "---|---|---")
+    const dataLines = rest.filter((l) => !/^[-| :]+$/.test(l.trim()));
+    const rows: TableRow[] = dataLines.map((l) => ({
+      cells: parseLine(l),
+    }));
+
+    if (headers.length === 0) return null;
+    const columnWidths = headers.map((h, i) =>
+      Math.max(h.length, ...rows.map((r) => r.cells[i]?.length ?? 0))
+    );
+    return { headers, rows, columnWidths };
+  }
+
+  // CSV-style (comma-separated)
+  const hasCommas = lines.filter((l) => l.includes(",")).length / lines.length > 0.5;
+  if (hasCommas) {
+    const parseCsvLine = (l: string): string[] => l.split(",").map((c) => c.trim());
+    const [headerLine, ...rest] = lines;
+    const headers = parseCsvLine(headerLine!);
+    const rows: TableRow[] = rest.map((l) => ({ cells: parseCsvLine(l) }));
+    if (headers.length < 2) return null;
+    const columnWidths = headers.map((h, i) =>
+      Math.max(h.length, ...rows.map((r) => r.cells[i]?.length ?? 0))
+    );
+    return { headers, rows, columnWidths };
+  }
+
+  return null;
+}
+
+/**
+ * Render a ParsedTable to aligned column strings for terminal display.
+ *
+ * Returns an array of formatted lines:
+ *   - Header row with column names padded to columnWidths
+ *   - Separator line
+ *   - Data rows, each cell right-padded
+ *
+ * @param table       - Parsed table structure
+ * @param maxRows     - Truncate to this many data rows (default: 50)
+ * @param sortCol     - Optional 0-based column index to sort by
+ * @param sortAsc     - Sort ascending when true (default: true)
+ */
+export function renderTable(
+  table: ParsedTable,
+  maxRows = 50,
+  sortCol?: number,
+  sortAsc = true
+): string[] {
+  const lines: string[] = [];
+  const { headers, columnWidths } = table;
+
+  let rows = [...table.rows];
+
+  // Sort if requested
+  if (sortCol !== undefined && sortCol >= 0 && sortCol < headers.length) {
+    rows.sort((a, b) => {
+      const av = a.cells[sortCol] ?? "";
+      const bv = b.cells[sortCol] ?? "";
+      // Numeric sort when both cells are numeric
+      const an = Number(av);
+      const bn = Number(bv);
+      if (!isNaN(an) && !isNaN(bn)) {
+        return sortAsc ? an - bn : bn - an;
+      }
+      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+  }
+
+  const truncated = rows.length > maxRows;
+  if (truncated) rows = rows.slice(0, maxRows);
+
+  // Header
+  const headerLine = headers.map((h, i) => h.padEnd(columnWidths[i] ?? h.length)).join("  ");
+  lines.push(headerLine);
+
+  // Separator
+  lines.push(headers.map((_, i) => "-".repeat(columnWidths[i] ?? 1)).join("  "));
+
+  // Rows
+  for (const row of rows) {
+    const rowLine = headers.map((_, i) => {
+      const cell = row.cells[i] ?? "";
+      return cell.padEnd(columnWidths[i] ?? cell.length);
+    }).join("  ");
+    lines.push(rowLine);
+  }
+
+  if (truncated) {
+    lines.push(`... ${table.rows.length - maxRows} more rows`);
+  }
+
+  // Sort/filter hints
+  const hints: string[] = [];
+  if (sortCol !== undefined) {
+    hints.push(`sorted by "${headers[sortCol] ?? sortCol}" ${sortAsc ? "asc" : "desc"}`);
+  }
+  hints.push(`${table.rows.length} row${table.rows.length !== 1 ? "s" : ""}, ${headers.length} col${headers.length !== 1 ? "s" : ""}`);
+  lines.push(`[${hints.join(" · ")}]`);
+
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
+// Log pagination
+// ---------------------------------------------------------------------------
+
+export interface LogPage {
+  /** Lines visible on this page */
+  lines: string[];
+  /** 0-based page index */
+  pageIndex: number;
+  /** Total number of pages */
+  totalPages: number;
+  /** Total number of lines across all pages */
+  totalLines: number;
+  /** Whether there are more pages after this one */
+  hasMore: boolean;
+}
+
+/**
+ * Paginate a multi-line log/bash output into fixed-size pages.
+ *
+ * Lines longer than `wrapWidth` are wrapped at word boundaries.
+ *
+ * @param text       - Raw output string
+ * @param pageSize   - Lines per page (default: 40)
+ * @param wrapWidth  - Character width for line wrapping (default: 120)
+ */
+export function paginateLog(
+  text: string,
+  pageSize = 40,
+  wrapWidth = 120
+): LogPage[] {
+  // Wrap long lines first
+  const rawLines = text.split("\n");
+  const wrappedLines: string[] = [];
+  for (const line of rawLines) {
+    if (line.length <= wrapWidth) {
+      wrappedLines.push(line);
+    } else {
+      // Word-wrap at wrapWidth
+      let remaining = line;
+      while (remaining.length > wrapWidth) {
+        // Find last space before wrapWidth
+        const cut = remaining.lastIndexOf(" ", wrapWidth);
+        const breakAt = cut > 0 ? cut : wrapWidth;
+        wrappedLines.push(remaining.slice(0, breakAt));
+        remaining = remaining.slice(breakAt).trimStart();
+      }
+      if (remaining.length > 0) wrappedLines.push(remaining);
+    }
+  }
+
+  const totalLines = wrappedLines.length;
+  const totalPages = Math.max(1, Math.ceil(totalLines / pageSize));
+  const pages: LogPage[] = [];
+
+  for (let i = 0; i < totalPages; i++) {
+    const start = i * pageSize;
+    const end = Math.min(start + pageSize, totalLines);
+    pages.push({
+      lines: wrappedLines.slice(start, end),
+      pageIndex: i,
+      totalPages,
+      totalLines,
+      hasMore: i < totalPages - 1,
+    });
+  }
+
+  // Always return at least one (empty) page
+  if (pages.length === 0) {
+    pages.push({ lines: [], pageIndex: 0, totalPages: 1, totalLines: 0, hasMore: false });
+  }
+
+  return pages;
+}
+
+/**
+ * Get a single page from a log string.  Convenience wrapper around paginateLog().
+ */
+export function getLogPage(
+  text: string,
+  pageIndex: number,
+  pageSize = 40,
+  wrapWidth = 120
+): LogPage {
+  const pages = paginateLog(text, pageSize, wrapWidth);
+  return pages[Math.max(0, Math.min(pageIndex, pages.length - 1))]!;
+}
+
+// ---------------------------------------------------------------------------
+// Semantic pause-point / resume signal
+// ---------------------------------------------------------------------------
+
+/**
+ * A semantic pause point emitted when the buffer fills past a threshold.
+ * The UI shows a "[more...]" indicator and waits for a resume signal.
+ */
+export interface PausePoint {
+  /** Cumulative bytes received when this pause occurred */
+  bytesReceived: number;
+  /** Number of chunks emitted before this pause */
+  chunksEmitted: number;
+  /** A compact human-readable summary for the "[more...]" indicator */
+  label: string;
+}
+
+/**
+ * Resume signal sent by the UI to the streamer to continue emitting chunks.
+ * The UI creates one of these and calls streamer.resume() with it.
+ */
+export interface ResumeSignal {
+  /** Whether to resume streaming (false = cancel) */
+  continue: boolean;
+  /** Optional max additional chunks to emit before pausing again */
+  maxChunks?: number;
+}
+
+/** Default buffer fill threshold before a pause point is emitted (bytes). */
+export const DEFAULT_PAUSE_THRESHOLD = 4_096;
+
+/**
+ * Build the label for a pause point given output type and chunk count.
+ */
+export function buildPauseLabel(
+  outputType: StreamOutputType,
+  chunksEmitted: number,
+  bytesReceived: number
+): string {
+  const kb = (bytesReceived / 1024).toFixed(1);
+  const typeLabel: Record<StreamOutputType, string> = {
+    bash_error: "errors",
+    grep_results: "matches",
+    file_contents: "lines",
+    json_array: "JSON items",
+    json_object: "JSON",
+    log_lines: "log lines",
+    code_block: "code",
+    diff: "diff hunks",
+    file_listing: "paths",
+    table: "table rows",
+    generic_text: "text",
+  };
+  const label = typeLabel[outputType] ?? "output";
+  return `[more... ${kb} KB of ${label} — press Enter to continue]`;
+}
+
+// ---------------------------------------------------------------------------
 // Factory helpers
 // ---------------------------------------------------------------------------
 
