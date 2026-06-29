@@ -1,5 +1,5 @@
 /**
- * Agent commands — /verify, /coordinate, /kairos, /ship, /btw, /cancel, /trigger.
+ * Agent commands — /verify, /coordinate, /kairos, /ship, /btw, /cancel, /trigger, /surgical.
  */
 
 import { theme } from "../ui/theme.ts";
@@ -455,6 +455,127 @@ export function agentCommands(): Command[] {
             ctx.addOutput(theme.muted(`  Active IDs: ${allOps.map((op) => op.id).join(", ")}\n`));
           }
         }
+        return true;
+      },
+    },
+    {
+      name: "/surgical",
+      description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
+      category: "agent",
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze"],
+      handler: async (args, ctx) => {
+        const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
+
+        // /surgical status — show current gate state
+        if (!args || args === "status") {
+          const gate = (ctx.state.registry as any)._surgicalGate as
+            | { enabled: boolean; tier: string }
+            | null
+            | undefined;
+          if (!gate?.enabled) {
+            ctx.addOutput(theme.tertiary("\n  Surgical mode: off\n"));
+          } else {
+            ctx.addOutput(theme.accent(`\n  Surgical mode: ${gate.tier}\n`));
+          }
+          ctx.addOutput(
+            [
+              "",
+              theme.secondary("  Usage:"),
+              `    ${theme.accent("/surgical")}               — auto-detect tier from next message`,
+              `    ${theme.accent("/surgical analyze <msg>")} — analyze scope for a specific message`,
+              `    ${theme.accent("/surgical narrow")}        — force narrow tier (1 file budget)`,
+              `    ${theme.accent("/surgical medium")}        — force medium tier (3 file budget)`,
+              `    ${theme.accent("/surgical wide")}          — force wide tier (6 file budget)`,
+              `    ${theme.accent("/surgical off")}           — disable surgical mode`,
+              `    ${theme.accent("/surgical status")}        — show current tier`,
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        // /surgical off — clear the gate
+        if (args === "off") {
+          ctx.state.registry.clearSurgicalGate();
+          ctx.addOutput(theme.tertiary("\n  Surgical mode disabled.\n"));
+          return true;
+        }
+
+        // /surgical narrow | medium | wide — force a specific tier
+        if (args === "narrow" || args === "medium" || args === "wide") {
+          const tier = args as "narrow" | "medium" | "wide";
+          const budgets: Record<"narrow" | "medium" | "wide", number> = {
+            narrow: 1,
+            medium: 3,
+            wide: 6,
+          };
+          ctx.state.registry.setSurgicalGate({ enabled: true, tier });
+          ctx.addOutput(
+            theme.accent(`\n  Surgical mode: ${tier} (file budget: ${budgets[tier]})\n`) +
+            theme.muted("  Use /surgical off to disable.\n"),
+          );
+          return true;
+        }
+
+        // /surgical analyze <message> — analyze scope for a given message and show suggestion
+        if (args.startsWith("analyze ")) {
+          const msg = args.slice("analyze ".length).trim();
+          if (!msg) {
+            ctx.addOutput(theme.warning("\n  Usage: /surgical analyze <your message>\n"));
+            return true;
+          }
+          const analyzer = new SurgicalScopeAnalyzer();
+          const result = analyzer.analyze(msg, "");
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Scope Analysis"),
+              analyzer.formatSuggestion(result),
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        // /surgical <free-text> — auto-detect tier from the provided message text
+        // This is the primary UX: user types what they want to do and the analyzer
+        // suggests a tier before committing to it.
+        const analyzer = new SurgicalScopeAnalyzer();
+        const result = analyzeScopeFromIntent(args, "");
+        const pct = Math.round(result.confidence * 100);
+
+        ctx.addOutput(
+          [
+            "",
+            theme.accentBold("  Surgical Scope Auto-Detection"),
+            analyzer.formatSuggestion(result),
+            "",
+          ].join("\n"),
+        );
+
+        // Auto-apply when confidence is high enough (≥70%), otherwise prompt
+        if (result.confidence >= 0.7) {
+          const budgets: Record<"narrow" | "medium" | "wide", number> = {
+            narrow: 1,
+            medium: 3,
+            wide: 6,
+          };
+          ctx.state.registry.setSurgicalGate({ enabled: true, tier: result.suggestedTier });
+          ctx.addOutput(
+            theme.success(
+              `  Applied: surgical mode set to ${result.suggestedTier} ` +
+              `(confidence ${pct}% — above 70% threshold)\n`,
+            ) + theme.muted("  Override with: /surgical narrow | /surgical medium | /surgical wide\n"),
+          );
+        } else {
+          ctx.addOutput(
+            theme.warning(
+              `  Confidence ${pct}% below threshold — not auto-applying.\n` +
+              `  Run /surgical narrow, /surgical medium, or /surgical wide to set manually.\n`,
+            ),
+          );
+        }
+
         return true;
       },
     },
