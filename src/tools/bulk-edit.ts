@@ -182,6 +182,50 @@ async function applyPatchToMemory(
   }
 }
 
+// ── ToolTransaction integration ───────────────────────────────────────────────
+
+/**
+ * Apply a BulkEdit-style patch manifest through a ToolTransaction.
+ *
+ * Each patch is translated into the appropriate tx.read() / tx.write() /
+ * tx.edit() call.  The transaction is NOT committed here — callers must call
+ * tx.commit() themselves so they can chain additional operations (e.g. run
+ * tests) before finalising.
+ *
+ * Returns the ToolTransaction so callers can inspect the journal or add more
+ * steps before committing.
+ */
+import { ToolTransaction } from "../agent/tool-transaction.ts";
+
+export async function applyPatchesViaTransaction(
+  patches: Patch[],
+  cwd: string
+): Promise<ToolTransaction> {
+  const tx = new ToolTransaction(cwd);
+  for (const patch of patches) {
+    const resolvedPath = resolvePatchPath(cwd, patch.path);
+
+    // Validate first — mirror BulkEditTool's validation logic
+    const validErr = validatePatch(patch, resolvedPath);
+    if (validErr) throw new Error(validErr);
+
+    switch (patch.operation) {
+      case "read":
+        await tx.read(resolvedPath);
+        break;
+      case "write":
+        await tx.write(resolvedPath, patch.content!);
+        break;
+      case "edit":
+        await tx.edit(resolvedPath, patch.search!, patch.replace!, {
+          replaceAll: patch.replaceAll ?? false,
+        });
+        break;
+    }
+  }
+  return tx;
+}
+
 // ── Tool ─────────────────────────────────────────────────────────────────────
 
 export const bulkEditTool: Tool = {

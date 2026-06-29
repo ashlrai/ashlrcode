@@ -77,6 +77,19 @@ export type {
   ResourceAccess,
 } from "./tool-dependency-scheduler.ts";
 
+// Re-export the transaction layer so callers can import from a single module.
+export {
+  ToolTransaction,
+  withTransaction,
+  isMultiToolSequence,
+} from "./tool-transaction.ts";
+export type {
+  TransactionState,
+  JournalEntry,
+  JournalEntryStatus,
+  ImpactSummary,
+} from "./tool-transaction.ts";
+
 // Re-export the coalescence layer so callers can import from a single module.
 export {
   executeWithCoalescence,
