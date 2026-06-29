@@ -16,6 +16,19 @@ import type { Tool } from "../tools/types.ts";
 import type { ToolCall } from "../providers/types.ts";
 import type { SpeculationCache } from "./speculation.ts";
 import type { PersistentSpeculationCache } from "./speculation.ts";
+import {
+  StreamingResultAggregator,
+  detectOutputPattern,
+  type AggregatorChunk,
+} from "./streaming-result-aggregator.ts";
+export type { AggregatorChunk, OutputPattern } from "./streaming-result-aggregator.ts";
+export {
+  StreamingResultAggregator,
+  createCollectingAggregator,
+  aggregateStream,
+  detectOutputPattern,
+  isAtSemanticBoundary,
+} from "./streaming-result-aggregator.ts";
 import { trackFileModification } from "./verification.ts";
 import { recordStep } from "./time-travel.ts";
 import {
@@ -391,6 +404,10 @@ export interface ToolExecutionResult {
 
 /**
  * Execute tool calls with optimal parallelism.
+ *
+ * The optional `onResult` callback receives semantic chunks from a
+ * StreamingResultAggregator as each tool completes, enabling progressive UI
+ * updates for long-running tools (Grep, WebSearch, BulkEdit).
  */
 export async function executeToolCalls(
   toolCalls: ToolCall[],
@@ -399,6 +416,8 @@ export async function executeToolCalls(
   callbacks?: {
     onToolStart?: (name: string, input: Record<string, unknown>) => void;
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
+    /** Called with each semantic chunk as it is flushed from the aggregator. */
+    onResult?: (name: string, chunk: AggregatorChunk) => void;
   },
   /** Total context window size in tokens — used by the budget allocator. Pass 0 when unknown. */
   totalContextTokens = 0
@@ -502,6 +521,7 @@ async function executeSingle(
   callbacks?: {
     onToolStart?: (name: string, input: Record<string, unknown>) => void;
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
+    onResult?: (name: string, chunk: AggregatorChunk) => void;
   },
   totalContextTokens = 0
 ): Promise<ToolExecutionResult> {
@@ -643,6 +663,18 @@ async function executeSingle(
         predictedSize: prediction.estimatedBytes,
       });
     }
+  }
+
+  // Dispatch result through the StreamingResultAggregator when an onResult
+  // callback is registered. This gives the UI semantic chunks (paragraphs,
+  // code blocks, grep matches, etc.) as soon as each tool completes, rather
+  // than waiting for all tools in a wave to finish.
+  if (callbacks?.onResult && !isError) {
+    const agg = new StreamingResultAggregator({
+      onChunk: (chunk) => callbacks.onResult!(tc.name, chunk),
+    });
+    agg.push(result);
+    agg.finalize();
   }
 
   callbacks?.onToolEnd?.(tc.name, result, isError);
