@@ -27,6 +27,7 @@ import {
   nextTurn,
   approxTokens,
 } from "./intent-trace.ts";
+import { getBudgetAllocator } from "./budget-allocator.ts";
 
 /** Default inactivity timeout for provider streams (5 minutes). */
 const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
@@ -335,7 +336,10 @@ export async function* streamAgentLoop(
           break;
 
         case "usage":
-          if (event.usage) config.onUsage?.(event.usage);
+          if (event.usage) {
+            config.onUsage?.(event.usage);
+            getBudgetAllocator().recordUsage(event.usage);
+          }
           break;
       }
     }
@@ -481,7 +485,10 @@ async function streamResponse(
         break;
 
       case "usage":
-        if (event.usage) config.onUsage?.(event.usage);
+        if (event.usage) {
+          config.onUsage?.(event.usage);
+          getBudgetAllocator().recordUsage(event.usage);
+        }
         break;
     }
   }

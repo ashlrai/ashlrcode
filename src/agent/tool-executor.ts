@@ -24,6 +24,7 @@ import {
   recordSpeculationMiss,
   currentTurn,
 } from "./intent-trace.ts";
+import { getBudgetAllocator } from "./budget-allocator.ts";
 
 // ---------------------------------------------------------------------------
 // Streaming result compression
@@ -311,11 +312,13 @@ export async function executeToolCalls(
   callbacks?: {
     onToolStart?: (name: string, input: Record<string, unknown>) => void;
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
-  }
+  },
+  /** Total context window size in tokens — used by the budget allocator. Pass 0 when unknown. */
+  totalContextTokens = 0
 ): Promise<ToolExecutionResult[]> {
   if (toolCalls.length === 0) return [];
   if (toolCalls.length === 1) {
-    return [await executeSingle(toolCalls[0]!, registry, context, callbacks)];
+    return [await executeSingle(toolCalls[0]!, registry, context, callbacks, totalContextTokens)];
   }
 
   // Partition by concurrency safety
@@ -336,14 +339,14 @@ export async function executeToolCalls(
   // Run safe tools in parallel
   if (safe.length > 0) {
     const parallelResults = await Promise.all(
-      safe.map((tc) => executeSingle(tc, registry, context, callbacks))
+      safe.map((tc) => executeSingle(tc, registry, context, callbacks, totalContextTokens))
     );
     results.push(...parallelResults);
   }
 
   // Run unsafe tools sequentially
   for (const tc of unsafe) {
-    const result = await executeSingle(tc, registry, context, callbacks);
+    const result = await executeSingle(tc, registry, context, callbacks, totalContextTokens);
     results.push(result);
   }
 
@@ -365,7 +368,8 @@ async function executeSingle(
   callbacks?: {
     onToolStart?: (name: string, input: Record<string, unknown>) => void;
     onToolEnd?: (name: string, result: string, isError: boolean) => void;
-  }
+  },
+  totalContextTokens = 0
 ): Promise<ToolExecutionResult> {
   const startTime = performance.now();
   const tool = registry.get(tc.name);
@@ -429,7 +433,33 @@ async function executeSingle(
 
   callbacks?.onToolStart?.(tc.name, tc.input);
 
-  const { result, isError } = await registry.execute(tc.name, tc.input, context);
+  // Compute dynamic compression limits for this tool based on current context budget.
+  const compressionLimits = getBudgetAllocator().getCompressionLimits(tc.name, totalContextTokens);
+
+  const { result: rawResult, isError } = await registry.execute(tc.name, tc.input, context);
+
+  // Apply dynamic compression: if the raw result exceeds the adaptive maxBytes threshold,
+  // compress it using the allocator-supplied limits so reasoning-heavy models retain more
+  // of each tool result within the available context budget.
+  let result = rawResult;
+  if (!isError) {
+    const encoder = new TextEncoder();
+    if (encoder.encode(rawResult).length > compressionLimits.maxBytes) {
+      // Re-use the pure compression logic from streamResultCompressor by constructing
+      // a lightweight shim tool and draining the generator synchronously.
+      const shimTool = {
+        name: tc.name,
+        prompt: () => "",
+        inputSchema: () => ({ type: "object" as const, properties: {} }),
+        isReadOnly: () => true,
+        isDestructive: () => false,
+        isConcurrencySafe: () => true,
+        validateInput: () => null,
+        call: async () => rawResult,
+      };
+      result = await compressToolResult(shimTool, tc.input, context, compressionLimits);
+    }
+  }
 
   callbacks?.onToolEnd?.(tc.name, result, isError);
   const executionMs = performance.now() - startTime;
