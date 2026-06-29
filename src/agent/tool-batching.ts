@@ -36,6 +36,85 @@ export { visualiseExecutionPlan } from "./tool-dependency-scheduler.ts";
 export type { ExecutionPlan, DAGNode, DAGEdge, Wave, ResourceAccess } from "./tool-dependency-scheduler.ts";
 
 // ---------------------------------------------------------------------------
+// Speculation predictor integration
+// ---------------------------------------------------------------------------
+
+import type {
+  PredictionResult,
+  ToolPrediction,
+} from "./speculation-predictor.ts";
+
+/**
+ * Options for speculation-aware batching.
+ * Pass a prediction result (from SpeculationIntentPredictor.predict()) and an
+ * optional confidence threshold; the batcher will fold high-confidence
+ * predicted tools into the speculative-read groups of the first wave.
+ */
+export interface BatchWithSpeculationOptions {
+  /** Result from SpeculationIntentPredictor.predict() */
+  prediction: PredictionResult;
+  /** Minimum confidence for a predicted tool to be auto-batched (default 0.75) */
+  confidenceThreshold?: number;
+}
+
+/**
+ * Wrap `batchToolCalls` with speculation-predictor integration.
+ *
+ * When a prediction result is provided:
+ * 1. High-confidence predicted safe-read tools whose inputs are known from
+ *    `inputHints` are injected as synthetic speculative tool calls.
+ * 2. These synthetic calls are merged into the first wave's speculative-read
+ *    batch so they execute in parallel with the real pending calls.
+ * 3. Returns the normal BatchedToolCall[] plus a summary of which predicted
+ *    tools were injected so the caller can record outcomes.
+ */
+export function batchWithSpeculation(
+  pending: ToolCall[],
+  opts: BatchWithSpeculationOptions,
+): { batches: BatchedToolCall[]; injectedPredictions: ToolPrediction[] } {
+  const { prediction, confidenceThreshold = 0.75 } = opts;
+
+  // Filter to safe-read tools with sufficient confidence and known input hints
+  const safeReadToolNames = new Set([
+    "read", "fileread", "file_read", "grep", "glob", "ls",
+  ]);
+
+  const injectedPredictions: ToolPrediction[] = [];
+  const syntheticCalls: ToolCall[] = [];
+
+  for (const p of prediction.predictions) {
+    if (
+      p.confidence >= confidenceThreshold &&
+      safeReadToolNames.has(p.toolName.toLowerCase()) &&
+      p.inputHints &&
+      Object.keys(p.inputHints).length > 0
+    ) {
+      // Avoid duplicating a pending call that already covers the same input
+      const alreadyPending = pending.some(
+        (tc) =>
+          tc.name.toLowerCase() === p.toolName.toLowerCase() &&
+          JSON.stringify(tc.input) === JSON.stringify(p.inputHints),
+      );
+      if (alreadyPending) continue;
+
+      const synthetic: ToolCall = {
+        id: `spec-predicted-${p.toolName}-${Date.now()}`,
+        name: p.toolName,
+        input: p.inputHints as Record<string, unknown>,
+      };
+      syntheticCalls.push(synthetic);
+      injectedPredictions.push(p);
+    }
+  }
+
+  // Batch with the synthetic calls prepended (they'll land in wave 0 as reads)
+  const combined = [...syntheticCalls, ...pending];
+  const batches = batchToolCalls(combined);
+
+  return { batches, injectedPredictions };
+}
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 

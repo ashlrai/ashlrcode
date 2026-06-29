@@ -1101,6 +1101,78 @@ export function agentCommands(): Command[] {
     },
 
     // -----------------------------------------------------------------------
+    // /speculate <goal> — Speculative execution proposals
+    // -----------------------------------------------------------------------
+    {
+      name: "/speculate",
+      description: "Show speculative tool-call predictions for a goal. Usage: /speculate <goal>",
+      category: "agent",
+      subcommands: ["--stats", "--reset"],
+      handler: async (args, ctx) => {
+        const { getGlobalSpeculationPredictor, formatPredictionProposal, formatSpeculationTelemetry, resetSpeculationTelemetry } = await import(
+          "../agent/speculation-predictor.ts"
+        );
+
+        if (!args?.trim() || args.trim() === "--stats") {
+          if (args?.trim() === "--stats") {
+            ctx.addOutput("\n" + formatSpeculationTelemetry() + "\n");
+            return true;
+          }
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  /speculate — Speculative Tool-Call Proposals"),
+              "",
+              `  ${theme.accent("Usage:")}  /speculate <goal>`,
+              `  ${theme.accent("Stats:")}  /speculate --stats`,
+              `  ${theme.accent("Reset:")}  /speculate --reset`,
+              "",
+              `  ${theme.muted("Analyzes your goal and predicts which tools are likely to be")}`,
+              `  ${theme.muted("called next, with confidence intervals. High-confidence read")}`,
+              `  ${theme.muted("tools are pre-warmed in the speculation cache.")}`,
+              "",
+              `  ${theme.accent("Example:")} /speculate refactor the auth module to use JWT`,
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        if (args.trim() === "--reset") {
+          resetSpeculationTelemetry();
+          ctx.addOutput(theme.success("\n  Speculation telemetry reset.\n"));
+          return true;
+        }
+
+        const predictor = getGlobalSpeculationPredictor();
+
+        // Use the session message history as recent tool context
+        const recentHistory = ctx.state.history
+          .slice(-20)
+          .flatMap((m) => {
+            if (m.role !== "tool") return [];
+            // Tool messages have content as tool_result blocks
+            return [{ name: String((m as any).tool_name ?? ""), input: {}, result: String((m as any).content ?? "") }];
+          });
+
+        const result = predictor.predict(args, recentHistory);
+
+        ctx.addOutput(
+          [
+            "",
+            theme.accentBold("  Speculation Proposal"),
+            theme.muted(`  Goal: ${args.slice(0, 80)}${args.length > 80 ? "..." : ""}`),
+            "",
+            formatPredictionProposal(result),
+            "",
+          ].join("\n"),
+        );
+
+        return true;
+      },
+    },
+
+    // -----------------------------------------------------------------------
     // /estimate <goal> — Pre-flight cost projection
     // -----------------------------------------------------------------------
     {
