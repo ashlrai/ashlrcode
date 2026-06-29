@@ -28,6 +28,11 @@ import {
 import { getBudgetAllocator } from "./budget-allocator.ts";
 import { getAgentContext } from "./async-context.ts";
 import { DedupCache, getGlobalDedupCache } from "./dedup-cache.ts";
+import {
+  getToolMetrics as getToolMetricsSingleton,
+  resolveCompressionOptions,
+} from "./tool-metrics.ts";
+export type { CompressorConfig } from "./tool-metrics.ts";
 
 // ---------------------------------------------------------------------------
 // Streaming result compression
@@ -44,6 +49,13 @@ export interface CompressorOptions {
   maxBytes?: number;
   /** Size of each summary chunk after the head. Default: 2 KB. */
   chunkSummaryThreshold?: number;
+  /**
+   * Pre-computed predicted output size in bytes.  When provided,
+   * streamResultCompressor() adapts its thresholds via resolveCompressionOptions()
+   * before executing the tool.  When omitted the raw CompressorOptions values
+   * (or defaults) are used unchanged.
+   */
+  predictedSize?: number;
 }
 
 export interface CompressorEvent {
@@ -104,14 +116,40 @@ export async function* streamResultCompressor(
   context: ToolContext,
   opts?: CompressorOptions
 ): AsyncGenerator<CompressorEvent, string, unknown> {
-  const maxBytes = opts?.maxBytes ?? DEFAULT_TOOL_RESULT_MAX_BYTES;
-  const chunkSize = opts?.chunkSummaryThreshold ?? DEFAULT_TOOL_CHUNK_SUMMARY_THRESHOLD;
+  // ---------------------------------------------------------------------------
+  // Adaptive threshold resolution
+  // ---------------------------------------------------------------------------
+  // If a predictedSize was supplied (or we can derive one from ToolMetrics),
+  // let resolveCompressionOptions() pick the right maxBytes / chunkSize.
+  // Explicit opts.maxBytes / opts.chunkSummaryThreshold override the adaptive
+  // values when both are present (handled inside resolveCompressionOptions).
+  let maxBytes: number;
+  let chunkSize: number;
+
+  const predictedSize =
+    opts?.predictedSize ??
+    getToolMetricsSingleton().predictOutputSize(tool.name, input);
+
+  const resolved = resolveCompressionOptions(
+    {
+      maxBytes: opts?.maxBytes,
+      chunkSummaryThreshold: opts?.chunkSummaryThreshold,
+    },
+    predictedSize
+  );
+  maxBytes = resolved.maxBytes;
+  chunkSize = resolved.chunkSummaryThreshold;
 
   // Execute the tool to completion (tools don't natively stream text yet).
+  const execStart = performance.now();
   const rawResult: string = await tool.call(input, context);
+  const execDurationMs = performance.now() - execStart;
 
   const encoder = new TextEncoder();
   const rawBytes = encoder.encode(rawResult).length;
+
+  // Record execution stats so future predictions improve over time.
+  getToolMetricsSingleton().record(tool.name, rawBytes, execDurationMs);
 
   if (rawBytes <= maxBytes) {
     // Fast path: small result — yield as-is.
