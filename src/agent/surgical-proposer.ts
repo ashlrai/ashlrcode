@@ -28,6 +28,8 @@ import { analyzeIntent } from "./surgical-intent-analyzer.ts";
 import { analyzeScopeFromIntent } from "./surgical-scope.ts";
 import type { ScopeTier } from "./surgical-scope.ts";
 import type { SurgicalTier } from "../tools/guards/surgical-tier-promoter.ts";
+import { feature } from "../config/features.ts";
+import type { TierBiasWeights } from "./surgical-proposal-retrainer.ts";
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -151,8 +153,12 @@ export interface LLMClient {
  * Build per-tier heuristic scores from intent analysis + codebase context.
  * This is used both as a standalone scorer and as the fallback when no LLM
  * client is available.
+ *
+ * When FEATURE_SURGICAL_RETRAINING is enabled and bias weights have been
+ * computed by ProposalRetrainer, those biases are applied on top of the base
+ * heuristic scores before returning.
  */
-function scoreHeuristic(goal: string, ctx: CodebaseContext): TierScores {
+function scoreHeuristic(goal: string, ctx: CodebaseContext, biasWeights?: TierBiasWeights): TierScores {
   const intentResult = analyzeIntent(goal, []);
   const scopeResult = analyzeScopeFromIntent(goal, ctx.description ?? "");
 
@@ -194,6 +200,13 @@ function scoreHeuristic(goal: string, ctx: CodebaseContext): TierScores {
     scores.medium = Math.min(0.95, scores.medium + scopeResult.confidence * 0.10);
   } else if (scopeResult.suggestedTier === "wide") {
     scores.wide = Math.min(0.95, scores.wide + scopeResult.confidence * 0.10);
+  }
+
+  // Apply learned bias weights when retraining is enabled
+  if (feature("SURGICAL_RETRAINING") && biasWeights) {
+    scores.narrow += biasWeights.narrow;
+    scores.medium += biasWeights.medium;
+    scores.wide += biasWeights.wide;
   }
 
   // Normalize to ensure scores are in [0, 1]
@@ -371,15 +384,43 @@ export function parseLLMTierScores(response: string): TierScores | null {
  * This is the fast-path entry point used when no LLM client is available
  * or when latency is a concern. Results are deterministic for a given input.
  *
- * @param goal  The user's stated goal.
- * @param ctx   Optional codebase context (file count, recent edits, etc.).
+ * When FEATURE_SURGICAL_RETRAINING is enabled, learned bias weights are
+ * applied to the heuristic scores before selecting the winning tier.
+ *
+ * @param goal         The user's stated goal.
+ * @param ctx          Optional codebase context (file count, recent edits, etc.).
+ * @param biasWeights  Optional pre-loaded bias weights (avoids async I/O on hot path).
  */
 export function proposeTierForGoal(
   goal: string,
   ctx: CodebaseContext = {},
+  biasWeights?: TierBiasWeights,
 ): SurgicalProposal {
-  const scores = scoreHeuristic(goal, ctx);
+  const scores = scoreHeuristic(goal, ctx, biasWeights);
   return buildProposalFromScores(scores, goal, ctx, "heuristic");
+}
+
+/**
+ * Async variant of proposeTierForGoal that automatically loads bias weights
+ * from disk when FEATURE_SURGICAL_RETRAINING is enabled.
+ *
+ * Use this in command handlers; use proposeTierForGoal() in sync contexts
+ * where bias weights have already been loaded.
+ */
+export async function proposeTierForGoalAsync(
+  goal: string,
+  ctx: CodebaseContext = {},
+): Promise<SurgicalProposal> {
+  let biasWeights: TierBiasWeights | undefined;
+  if (feature("SURGICAL_RETRAINING")) {
+    try {
+      const { loadCurrentWeights } = await import("./surgical-proposal-retrainer.ts");
+      biasWeights = await loadCurrentWeights();
+    } catch {
+      // Bias loading must never break proposal
+    }
+  }
+  return proposeTierForGoal(goal, ctx, biasWeights);
 }
 
 /**

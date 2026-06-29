@@ -510,7 +510,7 @@ export function agentCommands(): Command[] {
       name: "/surgical",
       description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
       category: "agent",
-      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats", "viz", "confidence", "history"],
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats", "viz", "confidence", "history", "feedback"],
       handler: async (args, ctx) => {
         const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
 
@@ -793,6 +793,52 @@ export function agentCommands(): Command[] {
         if (args === "history" || args.startsWith("history ")) {
           const { handleSurgicalHistory } = await import("./surgical-viz.ts");
           return handleSurgicalHistory(args.slice("history".length).trim(), ctx);
+        }
+
+        // /surgical feedback [retrain] — review recent run outcomes + optional retraining
+        if (args === "feedback" || args.startsWith("feedback")) {
+          const subArg = args === "feedback" ? "" : args.slice("feedback".length).trim();
+          const { feature } = await import("../config/features.ts");
+          const { SurgicalFeedbackRecorder } = await import("../agent/surgical-feedback-recorder.ts");
+          const recorder = new SurgicalFeedbackRecorder();
+
+          if (subArg === "retrain") {
+            // On-demand retraining pass
+            if (!feature("SURGICAL_RETRAINING")) {
+              ctx.addOutput(
+                theme.warning("\n  Surgical retraining is disabled.\n") +
+                theme.muted(
+                  "  Enable with: AC_FEATURE_SURGICAL_RETRAINING=true\n" +
+                  "  Then run /surgical feedback retrain again.\n",
+                ),
+              );
+              return true;
+            }
+            const { ProposalRetrainer } = await import("../agent/surgical-proposal-retrainer.ts");
+            const retrainer = new ProposalRetrainer(recorder);
+            ctx.addOutput(theme.muted("\n  Running retraining pass…\n"));
+            const result = await retrainer.retrain();
+            ctx.addOutput(retrainer.formatResult(result));
+            return true;
+          }
+
+          // Default: show feedback report
+          const records = await recorder.loadRecent(50);
+          ctx.addOutput(recorder.formatReport(records));
+
+          if (!feature("SURGICAL_RETRAINING")) {
+            ctx.addOutput(
+              theme.muted(
+                "  Tip: Enable closed-loop retraining with AC_FEATURE_SURGICAL_RETRAINING=true\n" +
+                "  Then use /surgical feedback retrain to auto-tune heuristic weights.\n",
+              ),
+            );
+          } else {
+            ctx.addOutput(
+              theme.muted("  Run /surgical feedback retrain to update heuristic weights.\n"),
+            );
+          }
+          return true;
         }
 
         // /surgical <free-text> — auto-detect tier from the provided message text

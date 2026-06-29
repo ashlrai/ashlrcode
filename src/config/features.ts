@@ -17,6 +17,7 @@ const FLAGS: Record<string, boolean> = {
   WORKTREE_AGENTS: true, // Git worktree isolation per agent
   ADVANCED_PERMISSIONS: true,
   EFFORT_LEVELS: true,
+  SURGICAL_RETRAINING: false, // Closed-loop feedback + heuristic auto-tuning for surgical proposals
 };
 
 // Runtime overrides from env vars: AC_FEATURE_VOICE_MODE=true
