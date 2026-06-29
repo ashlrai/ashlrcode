@@ -557,6 +557,117 @@ export function coreCommands(deps: {
       },
     },
     {
+      name: "/replay",
+      description: "Replay tool calls for debugging agent failures",
+      category: "session",
+      subcommands: ["debug", "list", "show"],
+      handler: async (args, ctx) => {
+        const {
+          replayDebug,
+          listReplaySessions,
+          loadReplaySession,
+          formatCapture,
+          resetReplayCaptureCache,
+          isReplayCaptureEnabled,
+          DEBUG_WINDOW,
+        } = await import("../agent/replay-engine.ts");
+
+        const sessionId = ctx.state.session.id;
+        const sub = args?.split(" ")[0]?.trim() ?? "";
+        const subArg = args?.split(" ").slice(1).join(" ").trim() ?? "";
+
+        // /replay list — show all saved replay sessions
+        if (sub === "list") {
+          const sessions = await listReplaySessions();
+          if (sessions.length === 0) {
+            ctx.addOutput(theme.tertiary("\n  No replay sessions found.\n"));
+            ctx.addOutput(theme.muted("  Enable capture: ASHLRCODE_REPLAY=1\n"));
+          } else {
+            ctx.addOutput(theme.accent(`\n  ${sessions.length} replay session(s):\n`));
+            for (const sid of sessions) {
+              const marker = sid === sessionId ? theme.success("●") : theme.muted("○");
+              ctx.addOutput(`  ${marker} ${sid}`);
+            }
+            ctx.addOutput(theme.muted("\n  /replay <session-id>  to inspect\n"));
+          }
+          return true;
+        }
+
+        // /replay show <session-id> — show all captures for a specific session
+        if (sub === "show") {
+          const targetId = subArg || sessionId;
+          const session = await loadReplaySession(targetId);
+          if (!session) {
+            ctx.addOutput(theme.error(`\n  No replay session found: ${targetId}\n`));
+            return true;
+          }
+          ctx.addOutput(
+            theme.accent(`\n  Replay session: ${session.sessionId} (${session.captureCount} captures)\n`)
+          );
+          for (const capture of session.captures) {
+            ctx.addOutput(formatCapture(capture));
+            ctx.addOutput("");
+          }
+          return true;
+        }
+
+        // /replay debug — step through last N tool calls of current session
+        // /replay debug <session-id> — step through last N tool calls of given session
+        if (sub === "debug" || sub === "") {
+          const targetId = (sub === "debug" && subArg) ? subArg : (sub === "" && args?.trim() && args.trim() !== "debug" ? args.trim() : sessionId);
+
+          if (!isReplayCaptureEnabled()) {
+            ctx.addOutput(theme.warning("\n  Replay capture is disabled.\n"));
+            ctx.addOutput(theme.muted("  Enable it with: ASHLRCODE_REPLAY=1\n"));
+            ctx.addOutput(theme.muted("  Or add \"replay\": true to ~/.ashlrcode/settings.json\n"));
+            return true;
+          }
+
+          ctx.addOutput(theme.accent(`\n  Replay debug: ${targetId} (last ${DEBUG_WINDOW} tool calls)\n`));
+
+          for await (const event of replayDebug(targetId)) {
+            if (event.type === "header") {
+              ctx.addOutput(
+                `  Session: ${event.sessionId} | Total captures: ${event.totalCaptures} | Showing: ${event.showingLast}`
+              );
+              ctx.addOutput(theme.muted("  " + "─".repeat(60)));
+            } else if (event.type === "step") {
+              ctx.addOutput("");
+              ctx.addOutput(theme.accentBold(`  [${event.stepNumber}/${event.totalShown}]`));
+              ctx.addOutput(formatCapture(event.capture, event.stepNumber - 1));
+            } else if (event.type === "done") {
+              ctx.addOutput("");
+              ctx.addOutput(theme.muted(`  ${event.summary}`));
+            }
+          }
+          ctx.addOutput("");
+          return true;
+        }
+
+        // /replay <session-id> — treat first arg as session id, show debug
+        const targetSessionId = sub;
+        ctx.addOutput(theme.accent(`\n  Replay debug: ${targetSessionId} (last ${DEBUG_WINDOW} tool calls)\n`));
+
+        for await (const event of replayDebug(targetSessionId)) {
+          if (event.type === "header") {
+            ctx.addOutput(
+              `  Session: ${event.sessionId} | Total captures: ${event.totalCaptures} | Showing: ${event.showingLast}`
+            );
+            ctx.addOutput(theme.muted("  " + "─".repeat(60)));
+          } else if (event.type === "step") {
+            ctx.addOutput("");
+            ctx.addOutput(theme.accentBold(`  [${event.stepNumber}/${event.totalShown}]`));
+            ctx.addOutput(formatCapture(event.capture, event.stepNumber - 1));
+          } else if (event.type === "done") {
+            ctx.addOutput("");
+            ctx.addOutput(theme.muted(`  ${event.summary}`));
+          }
+        }
+        ctx.addOutput("");
+        return true;
+      },
+    },
+    {
       name: "/voice",
       description: "Voice input mode",
       category: "other",

@@ -78,6 +78,7 @@ import {
   visualiseExecutionPlan,
 } from "./tool-dependency-scheduler.ts";
 import { batchToolCalls } from "./tool-batching.ts";
+import { captureToolInvocation } from "./replay-engine.ts";
 export {
   buildExecutionPlan,
   recordWaveTiming,
@@ -817,6 +818,16 @@ async function executeSingle(
   callbacks?.onToolEnd?.(tc.name, result, isError);
   const executionMs = performance.now() - startTime;
   recordToolMetric(tc.name, executionMs, isError);
+
+  // Replay capture hook — passively records this invocation when enabled.
+  // Zero perf impact when disabled (single boolean check inside captureToolInvocation).
+  captureToolInvocation(sid, {
+    name: tc.name,
+    input: tc.input,
+    output: result,
+    durationMs: executionMs,
+    isError,
+  });
 
   // Record to ToolAnalytics for aggregated/persistent metrics
   const agentCtxForAnalytics = getAgentContext();
