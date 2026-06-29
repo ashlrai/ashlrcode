@@ -36,6 +36,31 @@ export type { CompressorConfig } from "./tool-metrics.ts";
 import {
   getToolResultPredictor,
 } from "./tool-result-predictor.ts";
+import {
+  buildExecutionPlan,
+  recordWaveTiming,
+  visualiseExecutionPlan,
+} from "./tool-dependency-scheduler.ts";
+export {
+  buildExecutionPlan,
+  recordWaveTiming,
+  visualiseExecutionPlan,
+  buildDAG,
+  topologicalWaves,
+  extractResourceAccess,
+  planFingerprint,
+  getCachedPlan,
+  cachePlan,
+  clearPlanCache,
+  planCacheSize,
+} from "./tool-dependency-scheduler.ts";
+export type {
+  ExecutionPlan,
+  DAGNode,
+  DAGEdge,
+  Wave,
+  ResourceAccess,
+} from "./tool-dependency-scheduler.ts";
 
 // Re-export the coalescence layer so callers can import from a single module.
 export {
@@ -383,33 +408,80 @@ export async function executeToolCalls(
     return [await executeSingle(toolCalls[0]!, registry, context, callbacks, totalContextTokens)];
   }
 
-  // Partition by concurrency safety
-  const safe: ToolCall[] = [];
-  const unsafe: ToolCall[] = [];
-
-  for (const tc of toolCalls) {
-    const tool = registry.get(tc.name);
-    if (tool?.isConcurrencySafe()) {
-      safe.push(tc);
-    } else {
-      unsafe.push(tc);
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // Dependency-aware wave scheduling (pre-execution analysis phase)
+  //
+  // Build a DAG from tool inputs/outputs to detect data dependencies that the
+  // coarse isConcurrencySafe() flag cannot capture.  Tools in the same wave
+  // have no mutual dependencies and run in parallel; waves are executed in
+  // topological order.
+  //
+  // Falls back to the legacy safe/unsafe partition when the scheduler detects
+  // a cycle (extremely rare; indicates a model-emitted tool sequence that
+  // genuinely must serialise).
+  // ---------------------------------------------------------------------------
+  const plan = buildExecutionPlan(toolCalls);
 
   const results: ToolExecutionResult[] = [];
 
-  // Run safe tools in parallel
-  if (safe.length > 0) {
-    const parallelResults = await Promise.all(
-      safe.map((tc) => executeSingle(tc, registry, context, callbacks, totalContextTokens))
-    );
-    results.push(...parallelResults);
-  }
+  if (plan.hasCycle) {
+    // Cycle detected — fall back to legacy concurrency-safe partition
+    const safe: ToolCall[] = [];
+    const unsafe: ToolCall[] = [];
+    for (const tc of toolCalls) {
+      const tool = registry.get(tc.name);
+      if (tool?.isConcurrencySafe()) {
+        safe.push(tc);
+      } else {
+        unsafe.push(tc);
+      }
+    }
+    if (safe.length > 0) {
+      const parallelResults = await Promise.all(
+        safe.map((tc) => executeSingle(tc, registry, context, callbacks, totalContextTokens))
+      );
+      results.push(...parallelResults);
+    }
+    for (const tc of unsafe) {
+      const result = await executeSingle(tc, registry, context, callbacks, totalContextTokens);
+      results.push(result);
+    }
+  } else {
+    // Wave-based execution: waves run sequentially (topological order).
+    // Within each wave, concurrency-safe tools run in parallel; unsafe tools
+    // run serially (preserving the isConcurrencySafe() contract).
+    for (let wi = 0; wi < plan.waves.length; wi++) {
+      const wave = plan.waves[wi]!;
+      const waveStart = performance.now();
 
-  // Run unsafe tools sequentially
-  for (const tc of unsafe) {
-    const result = await executeSingle(tc, registry, context, callbacks, totalContextTokens);
-    results.push(result);
+      const safeIdx: number[] = [];
+      const unsafeIdx: number[] = [];
+      for (const idx of wave) {
+        const tool = registry.get(toolCalls[idx]!.name);
+        if (tool?.isConcurrencySafe()) {
+          safeIdx.push(idx);
+        } else {
+          unsafeIdx.push(idx);
+        }
+      }
+
+      // Parallel safe tools
+      const waveResults: ToolExecutionResult[] = await Promise.all(
+        safeIdx.map((idx) =>
+          executeSingle(toolCalls[idx]!, registry, context, callbacks, totalContextTokens)
+        )
+      );
+
+      // Serial unsafe tools (in original wave order)
+      for (const idx of unsafeIdx) {
+        waveResults.push(
+          await executeSingle(toolCalls[idx]!, registry, context, callbacks, totalContextTokens)
+        );
+      }
+
+      recordWaveTiming(plan, wi, performance.now() - waveStart);
+      results.push(...waveResults);
+    }
   }
 
   // Restore original tool call ordering
