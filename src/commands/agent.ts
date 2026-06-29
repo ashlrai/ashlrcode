@@ -1099,5 +1099,73 @@ export function agentCommands(): Command[] {
         return true;
       },
     },
+
+    // -----------------------------------------------------------------------
+    // /estimate <goal> — Pre-flight cost projection
+    // -----------------------------------------------------------------------
+    {
+      name: "/estimate",
+      description: "Project token cost before agents run. Usage: /estimate <goal>",
+      category: "agent",
+      handler: async (args, ctx) => {
+        if (!args?.trim()) {
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  /estimate — Pre-Flight Cost Estimator"),
+              "",
+              `  ${theme.accent("Usage:")}  /estimate <goal>`,
+              "",
+              `  ${theme.muted("Analyzes goal complexity, projects token usage, and shows")}`,
+              `  ${theme.muted("provider cost trade-offs BEFORE burning tokens.")}`,
+              "",
+              `  ${theme.accent("Example:")} /estimate refactor auth module with tests`,
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        const { estimateGoalCost, formatCostEstimate } = await import("../agent/cost-estimator.ts");
+        const { historicalAverageCost } = await import("../providers/cost-tracker.ts");
+
+        // Seed with historical data when available
+        const hist = historicalAverageCost(args, ctx.state.router.costTracker);
+        const historicalAvgCostPerTurn = hist && hist.turns > 0
+          ? hist.totalCostUSD / hist.turns
+          : undefined;
+
+        // Retrieve --max-cost from environment or provider config (if set)
+        const maxCostEnv = process.env.ASHLRCODE_MAX_COST ?? process.env.AC_MAX_COST;
+        const maxCostUSD = maxCostEnv ? parseFloat(maxCostEnv) : undefined;
+
+        const defaultProvider = ctx.state.router.currentProvider.name;
+
+        const estimate = estimateGoalCost(args, {
+          maxCostUSD: Number.isFinite(maxCostUSD ?? NaN) ? maxCostUSD : undefined,
+          defaultProvider,
+          historicalAvgCostPerTurn,
+        });
+
+        const formatted = formatCostEstimate(args, estimate, maxCostUSD);
+
+        // Colorize budget status line
+        if (!estimate.budgetOK) {
+          ctx.addOutput(theme.warning(formatted));
+        } else {
+          ctx.addOutput(formatted);
+        }
+
+        if (hist) {
+          ctx.addOutput(
+            theme.muted(
+              `  (Historical session: ${hist.turns} turns, $${hist.totalCostUSD.toFixed(4)} total — used to calibrate estimate)\n`,
+            ),
+          );
+        }
+
+        return true;
+      },
+    },
   ];
 }
