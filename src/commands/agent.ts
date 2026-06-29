@@ -479,35 +479,100 @@ export function agentCommands(): Command[] {
       name: "/surgical",
       description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
       category: "agent",
-      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze"],
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto"],
       handler: async (args, ctx) => {
         const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
 
-        // /surgical status — show current gate state
+        // /surgical status — show current gate state with intent-based enhancement
         if (!args || args === "status") {
           const gate = (ctx.state.registry as any)._surgicalGate as
             | { enabled: boolean; tier: string }
             | null
             | undefined;
+
+          // Pull intent analysis from session history if available
+          const { getGlobalIntentTracker, formatIntentStatus } = await import("../agent/surgical-intent-analyzer.ts");
+          const { getSurgicalAutoMode } = await import("../cli.ts");
+          const tracker = getGlobalIntentTracker();
+          const sessionHistory = tracker.getHistory();
+
+          // Derive current tier for formatIntentStatus
+          type LegacyTier = "narrow" | "medium" | "wide";
+          const currentTier: 1 | 2 | 3 | 4 | LegacyTier | null = gate?.enabled
+            ? (gate.tier as LegacyTier)
+            : null;
+
+          const autoModeOn = getSurgicalAutoMode();
+          const autoStatus = autoModeOn
+            ? theme.success("  Auto-tier mode: ON") + theme.muted(" (/surgical auto to disable)\n")
+            : theme.tertiary("  Auto-tier mode: off") + theme.muted(" (/surgical auto to enable)\n");
+
           if (!gate?.enabled) {
-            ctx.addOutput(theme.tertiary("\n  Surgical mode: off\n"));
+            ctx.addOutput(theme.tertiary("\n  Surgical mode: off\n") + autoStatus);
           } else {
-            ctx.addOutput(theme.accent(`\n  Surgical mode: ${gate.tier}\n`));
+            ctx.addOutput(theme.accent(`\n  Surgical mode: ${gate.tier}\n`) + autoStatus);
           }
-          ctx.addOutput(
-            [
-              "",
-              theme.secondary("  Usage:"),
-              `    ${theme.accent("/surgical")}               — auto-detect tier from next message`,
-              `    ${theme.accent("/surgical analyze <msg>")} — analyze scope for a specific message`,
-              `    ${theme.accent("/surgical narrow")}        — force narrow tier (1 file budget)`,
-              `    ${theme.accent("/surgical medium")}        — force medium tier (3 file budget)`,
-              `    ${theme.accent("/surgical wide")}          — force wide tier (6 file budget)`,
-              `    ${theme.accent("/surgical off")}           — disable surgical mode`,
-              `    ${theme.accent("/surgical status")}        — show current tier`,
-              "",
-            ].join("\n"),
-          );
+
+          // Show enhanced intent status — always when history exists, or with a
+          // placeholder message if the session hasn't started yet.
+          const hasContext = sessionHistory.length > 0 || tracker.size() > 0;
+
+          if (hasContext) {
+            const analysis = tracker.analyzeCurrentIntent();
+            const pct = Math.round(analysis.confidence * 100);
+            ctx.addOutput(formatIntentStatus(currentTier, analysis));
+            ctx.addOutput(
+              [
+                `  Confidence:  ${pct}%${analysis.confidence < 0.75 ? theme.warning(" (low — tier picker will show on first message)") : ""}`,
+                `  Reasoning:   ${analysis.reasoning}`,
+                analysis.scopeCreepDetected ? theme.warning("  Scope creep detected in tool history!") : "",
+                "",
+              ].filter(Boolean).join("\n"),
+            );
+          } else {
+            ctx.addOutput(
+              [
+                "",
+                theme.secondary("  Usage:"),
+                `    ${theme.accent("/surgical auto")}          — toggle auto-tier mode (intent picker on first message)`,
+                `    ${theme.accent("/surgical")}               — auto-detect tier from next message`,
+                `    ${theme.accent("/surgical analyze <msg>")} — analyze scope for a specific message`,
+                `    ${theme.accent("/surgical narrow")}        — force narrow tier (1 file budget)`,
+                `    ${theme.accent("/surgical medium")}        — force medium tier (3 file budget)`,
+                `    ${theme.accent("/surgical wide")}          — force wide tier (6 file budget)`,
+                `    ${theme.accent("/surgical off")}           — disable surgical mode`,
+                `    ${theme.accent("/surgical status")}        — show current tier + intent analysis`,
+                "",
+                theme.muted("  Confidence and reasoning will appear once a session goal is set."),
+                "",
+              ].join("\n"),
+            );
+          }
+          return true;
+        }
+
+        // /surgical auto — toggle surgical auto-tier mode
+        // When enabled, the first message of each session triggers an intent
+        // analysis: if confidence ≥ 0.8 the tier is silently applied; if
+        // confidence is 0.5–0.79 an interactive tier picker is shown.
+        if (args === "auto") {
+          const { getSurgicalAutoMode, setSurgicalAutoMode } = await import("../cli.ts");
+          const current = getSurgicalAutoMode();
+          const next = !current;
+          setSurgicalAutoMode(next);
+          if (next) {
+            ctx.addOutput(
+              theme.success("\n  Surgical auto-tier mode ENABLED.\n") +
+              theme.muted(
+                "  On your first message this session, intent will be analysed and\n" +
+                "  a surgical tier applied automatically (or you'll be prompted if\n" +
+                "  confidence is between 50–79%).\n" +
+                "  Disable with: /surgical auto\n"
+              )
+            );
+          } else {
+            ctx.addOutput(theme.tertiary("\n  Surgical auto-tier mode DISABLED.\n"));
+          }
           return true;
         }
 

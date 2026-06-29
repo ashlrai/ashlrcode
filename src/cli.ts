@@ -107,6 +107,17 @@ let maxCostUSD = Infinity;
 let configMaxIterations = 25;
 let configStreamTimeoutMs = 300_000;
 let configToolTimeoutMs = 120_000;
+/** When true, runTurn will auto-detect surgical tier from the first message. */
+let surgicalAutoMode = false;
+
+/** Enable or disable surgical auto-tier mode (toggled by `/surgical auto`). */
+export function setSurgicalAutoMode(enabled: boolean): void {
+  surgicalAutoMode = enabled;
+}
+/** Return current surgical auto-tier mode state. */
+export function getSurgicalAutoMode(): boolean {
+  return surgicalAutoMode;
+}
 
 interface AppState {
   router: ProviderRouter;
@@ -1014,6 +1025,107 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     if (state.history.length === 0) {
       const title = input.length > 60 ? input.slice(0, 57) + "..." : input;
       await state.session.setTitle(title);
+
+      // Surgical auto-tier: on first message, analyze intent and prompt user if
+      // confidence is below 0.75 so they can confirm or override the suggested tier.
+      if (surgicalAutoMode) {
+        const { autoPromoteTierFromGoal, formatIntentStatus, getGlobalIntentTracker } = await import(
+          "./agent/surgical-intent-analyzer.ts"
+        );
+        const tracker = getGlobalIntentTracker();
+        tracker.setGoal(input);
+        const { analysis, shouldAutoApply, shouldPromptUser } = autoPromoteTierFromGoal(input);
+
+        if (shouldAutoApply) {
+          // High confidence — silently apply
+          const tierMap: Record<number, "narrow" | "medium" | "wide"> = {
+            1: "narrow",
+            2: "narrow",
+            3: "medium",
+            4: "wide",
+          };
+          const gateTier = tierMap[analysis.tier] ?? "medium";
+          state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+          if (!printMode) {
+            console.log(
+              chalk.dim(
+                `  [surgical auto] Tier ${analysis.tier} applied (${Math.round(analysis.confidence * 100)}% confidence — ${analysis.reasoning})`
+              )
+            );
+          }
+        } else if (shouldPromptUser) {
+          // Medium confidence — show tier picker before proceeding
+          if (!printMode) {
+            const pct = Math.round(analysis.confidence * 100);
+            console.log(
+              chalk.yellow(
+                `\n  Surgical auto-tier: confidence ${pct}% — manual confirmation recommended`
+              )
+            );
+            console.log(formatIntentStatus(null, analysis));
+            console.log(
+              chalk.cyan(
+                `  Suggested tier: Tier ${analysis.tier} (${analysis.scope})\n` +
+                `  Reasoning: ${analysis.reasoning}\n`
+              )
+            );
+            console.log(
+              chalk.dim(
+                `  Press Enter to apply Tier ${analysis.tier}, or type a tier override:\n` +
+                `    1 = narrow (read-only)  2 = fine (edit)  3 = medium (Bash)  4 = wide (all)\n` +
+                `    Enter = accept suggestion   s = skip (no surgical mode)\n`
+              )
+            );
+
+            // Synchronous readline prompt for tier selection
+            const { createInterface: createRl } = await import("readline");
+            const rl2 = createRl({ input: process.stdin, output: process.stdout, terminal: false });
+            const answer = await new Promise<string>((resolve) => {
+              rl2.question("  > ", (ans) => {
+                rl2.close();
+                resolve(ans.trim().toLowerCase());
+              });
+            });
+
+            const tierMap: Record<number, "narrow" | "medium" | "wide"> = {
+              1: "narrow",
+              2: "narrow",
+              3: "medium",
+              4: "wide",
+            };
+            const overrideMap: Record<string, "narrow" | "medium" | "wide"> = {
+              "1": "narrow",
+              "2": "narrow",
+              "3": "medium",
+              "4": "wide",
+              "narrow": "narrow",
+              "medium": "medium",
+              "wide": "wide",
+              "n": "narrow",
+              "m": "medium",
+              "w": "wide",
+            };
+
+            if (answer === "" || answer === "y" || answer === "yes") {
+              const gateTier = tierMap[analysis.tier] ?? "medium";
+              state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+              console.log(chalk.green(`  Applied Tier ${analysis.tier} (${gateTier})\n`));
+            } else if (overrideMap[answer]) {
+              const gateTier = overrideMap[answer]!;
+              state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+              console.log(chalk.green(`  Applied surgical mode: ${gateTier}\n`));
+            } else if (answer === "s" || answer === "skip") {
+              console.log(chalk.dim("  Skipped — no surgical mode applied.\n"));
+            } else {
+              // Unknown input — apply suggestion
+              const gateTier = tierMap[analysis.tier] ?? "medium";
+              state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+              console.log(chalk.green(`  Applied Tier ${analysis.tier} (${gateTier})\n`));
+            }
+          }
+        }
+        // Low confidence (< 0.5): skip — not worth guessing
+      }
     }
 
     // Capture message count AFTER compaction (not before)
