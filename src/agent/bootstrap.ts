@@ -48,6 +48,7 @@ import { sleepTool } from "../tools/sleep.ts";
 import { todoWriteTool } from "../tools/todo-write.ts";
 import { diffTool } from "../tools/diff.ts";
 import { lspTool } from "../tools/lsp.ts";
+import { bulkEditTool } from "../tools/bulk-edit.ts";
 import { webBrowserTool } from "../tools/web-browser.ts";
 import { verifyTool } from "../tools/verify.ts";
 import { coordinateTool } from "../tools/coordinate.ts";
@@ -106,6 +107,7 @@ export function registerStandardTools(registry: ToolRegistry): void {
   // Editing helpers
   registry.register(notebookEditTool);
   registry.register(lspTool);
+  registry.register(bulkEditTool);
 
   // Worktree
   registry.register(enterWorktreeTool);

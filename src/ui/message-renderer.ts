@@ -93,6 +93,10 @@ function getCompactInput(name: string, input: Record<string, unknown>): string {
       return String(input.description ?? "").slice(0, 50);
     case "LSP":
       return `${input.action ?? ""} ${shortenPath(String(input.file ?? ""))}`;
+    case "BulkEdit": {
+      const patches = input.patches as Array<{ path: string }> | undefined;
+      return patches ? `${patches.length} patch(es)` : "";
+    }
     default: {
       const first = Object.entries(input)[0];
       return first ? String(first[1]).slice(0, 50) : "";
@@ -173,6 +177,39 @@ function formatGrepBody(result: string): string[] {
   );
 }
 
+function formatBulkEditBody(result: string): string[] {
+  const lines = result.split("\n");
+  const body: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("✓")) {
+      body.push(chalk.hex("#00E676")(line));
+    } else if (line.startsWith("✗")) {
+      body.push(chalk.hex("#FF1744")(line));
+    } else if (line.startsWith("  ↩")) {
+      body.push(chalk.hex("#FFA726")(line));
+    } else if (line.startsWith(">> Preview of")) {
+      body.push(chalk.bold(line));
+    } else if (line.startsWith("   - ")) {
+      body.push(chalk.hex("#FF1744")(line));
+    } else if (line.startsWith("   + ")) {
+      body.push(chalk.hex("#00E676")(line));
+    } else if (line.startsWith("   @@")) {
+      body.push(chalk.cyan(line));
+    } else if (line.includes("DRY RUN")) {
+      body.push(chalk.bold.yellow(line));
+    } else if (line.includes("Rolling back")) {
+      body.push(chalk.hex("#FFA726")(line));
+    } else if (line.includes("Rollback complete")) {
+      body.push(chalk.hex("#FFA726").bold(line));
+    } else if (line.includes("file(s) updated")) {
+      body.push(chalk.bold(line));
+    } else {
+      body.push(theme.tertiary(line));
+    }
+  }
+  return truncateLines(body, 40);
+}
+
 function formatAgentBody(result: string): string[] {
   const lines = result.split("\n");
   return truncateLines(
@@ -229,6 +266,9 @@ export function formatToolExecution(
   // Body — per-tool formatting
   let bodyLines: string[];
   switch (name) {
+    case "BulkEdit":
+      bodyLines = formatBulkEditBody(result);
+      break;
     case "Edit":
     case "Write":
       bodyLines = formatEditBody(result);
