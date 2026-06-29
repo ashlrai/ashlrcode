@@ -2,10 +2,11 @@
  * Guard: Surgical Tool Gate
  *
  * In --surgical mode, restricts which tools and Bash patterns are allowed
- * based on the active ScopeTier. Prevents a "fix typo" run from accidentally
- * installing packages, spawning sub-agents, or piping to `curl | sh`.
+ * based on the active ScopeTier (legacy 3-tier) or SurgicalTier (new 4-tier).
+ * Prevents a "fix typo" run from accidentally installing packages, spawning
+ * sub-agents, or piping to `curl | sh`.
  *
- * Restriction matrix:
+ * Legacy 3-tier restriction matrix (backward-compat):
  *
  *   narrow — Read, Grep, Bash (safe patterns only), Diff
  *            Blocked: Write, Edit, Agent, Bash with install/curl|sh/eval/exec
@@ -15,14 +16,29 @@
  *
  *   wide   — All tools allowed (no restrictions — normal mode behavior)
  *
- * Bash pattern whitelist (narrow & medium):
+ * New 4-tier restriction matrix (progressive constraints):
+ *
+ *   Tier 1 (micro)    — Read, Glob, Grep, LS only
+ *                       Blocked: Write, Edit, Bash, Agent, Coordinate, all others
+ *
+ *   Tier 2 (fine)     — Read, Glob, Grep, LS + Edit (single file)
+ *                       Blocked: Bash, Write, Agent, Coordinate
+ *
+ *   Tier 3 (balanced) — Read, Glob, Grep, LS, Edit (multi-file), Bash (safe patterns)
+ *                       Blocked: npm/pip install, curl|sh, eval, exec, Agent, Coordinate
+ *
+ *   Tier 4 (broad)    — All tools allowed (equivalent to old "wide" mode)
+ *
+ * Bash pattern whitelist (tiers 1–3):
+ *   Tier 1: no Bash at all
+ *   Tiers 2–3: Bash blocked for install/curl|sh/eval/exec
  *   Allowed command prefixes: grep, sed, awk, find, ls, cat, diff, git, head, tail, wc
- *   Blocked patterns: install (any package manager), curl|bash, curl|sh, eval, exec
  *
  * Never throws. If surgical mode is inactive, always returns { verdict: "allow" }.
  */
 
 import type { ScopeTier } from "../../agent/surgical-scope.ts";
+import type { SurgicalTier } from "./surgical-tier-promoter.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -41,8 +57,12 @@ export interface SurgicalGateResult {
 export interface SurgicalGateOptions {
   /** Whether surgical mode is active. Gate is a no-op when false. */
   enabled: boolean;
-  /** The detected scope tier for this surgical run. */
-  tier: ScopeTier;
+  /**
+   * The detected scope tier for this surgical run.
+   * Accepts either the legacy ScopeTier ("narrow"/"medium"/"wide") for
+   * backward-compat, or the new numeric SurgicalTier (1–4).
+   */
+  tier: ScopeTier | SurgicalTier;
 }
 
 // ---------------------------------------------------------------------------
@@ -50,28 +70,90 @@ export interface SurgicalGateOptions {
 // ---------------------------------------------------------------------------
 
 /**
- * Tools fully blocked per tier.
+ * Tools fully blocked per legacy ScopeTier.
  *
  * Note: "Bash" is not listed here — it is conditionally allowed subject to
  * pattern checks (see BASH_BLOCKED_PATTERNS / BASH_ALLOWED_PREFIXES).
  * "Write" in narrow is blocked entirely; in medium it is allowed only for
  * existing files (handled via context — we block it at gate level conservatively).
  */
-const BLOCKED_TOOLS_BY_TIER: Record<ScopeTier, ReadonlySet<string>> = {
+const BLOCKED_TOOLS_BY_SCOPE_TIER: Record<ScopeTier, ReadonlySet<string>> = {
   narrow: new Set(["Write", "Edit", "Agent", "Coordinate"]),
   medium: new Set(["Agent", "Coordinate"]),
   wide: new Set(),
 };
 
 /**
- * Tools explicitly allowed at each tier. Used for the fast-allow path.
+ * Tools explicitly allowed per legacy ScopeTier. Used for the fast-allow path.
  * Any tool NOT in this set falls through to the per-tool logic.
  */
-const ALLOWED_TOOLS_BY_TIER: Record<ScopeTier, ReadonlySet<string>> = {
+const ALLOWED_TOOLS_BY_SCOPE_TIER: Record<ScopeTier, ReadonlySet<string>> = {
   narrow: new Set(["Read", "Grep", "Diff", "Glob", "LS", "Ls"]),
   medium: new Set(["Read", "Grep", "Diff", "Glob", "LS", "Ls", "Edit", "Write", "Test"]),
   wide: new Set(), // wide allows everything — this set is unused
 };
+
+// ---------------------------------------------------------------------------
+// 4-tier tool restriction matrix (new numeric tiers)
+// ---------------------------------------------------------------------------
+
+/**
+ * Tools fully blocked per numeric SurgicalTier.
+ *
+ * Tier 1 (micro): Read/Glob/Grep/LS only — block everything else
+ * Tier 2 (fine):  + Edit single file, still block Bash/Write/Agent/Coordinate
+ * Tier 3 (balanced): block Agent/Coordinate, Bash allowed with pattern checks
+ * Tier 4 (broad): no restrictions
+ *
+ * Note: Bash for tier 1 is blocked via the BASH_BLOCKED_BY_NUMERIC_TIER flag
+ * rather than this set, to keep Bash checks unified in one path.
+ */
+const BLOCKED_TOOLS_BY_NUMERIC_TIER: Record<SurgicalTier, ReadonlySet<string>> = {
+  1: new Set(["Write", "Edit", "Bash", "Agent", "Coordinate"]),
+  2: new Set(["Write", "Bash", "Agent", "Coordinate"]),
+  3: new Set(["Agent", "Coordinate"]),
+  4: new Set(),
+};
+
+/**
+ * Tools explicitly allowed per numeric SurgicalTier. Used for the fast-allow path.
+ */
+const ALLOWED_TOOLS_BY_NUMERIC_TIER: Record<SurgicalTier, ReadonlySet<string>> = {
+  1: new Set(["Read", "Grep", "Glob", "LS", "Ls", "Diff"]),
+  2: new Set(["Read", "Grep", "Glob", "LS", "Ls", "Diff", "Edit"]),
+  3: new Set(["Read", "Grep", "Glob", "LS", "Ls", "Diff", "Edit", "Write", "Test"]),
+  4: new Set(), // tier 4 allows everything — this set is unused
+};
+
+/** Human-readable tier label for block messages. */
+const NUMERIC_TIER_LABELS: Record<SurgicalTier, string> = {
+  1: "Tier 1 (micro) surgical",
+  2: "Tier 2 (fine) surgical",
+  3: "Tier 3 (balanced) surgical",
+  4: "Tier 4 (broad) surgical",
+};
+
+/** Suggestion per blocked tool for numeric tiers. */
+function numericTierBlockSuggestion(toolName: string, tier: SurgicalTier): string {
+  if (toolName === "Bash" && tier === 1) {
+    return "Tier 1 (micro) only allows read-only tools. Use Read/Grep/Glob/LS, or promote to Tier 2+.";
+  }
+  if (toolName === "Bash" && tier === 2) {
+    return "Tier 2 (fine) blocks Bash. Promote to Tier 3 (balanced) to run safe Bash commands.";
+  }
+  if (toolName === "Write") {
+    return tier <= 2
+      ? "Tier 1–2 block file creation. Use Edit for single-file changes, or promote to Tier 3+."
+      : "switch to normal mode for new file creation";
+  }
+  if (toolName === "Edit" && tier === 1) {
+    return "Tier 1 (micro) is read-only. Promote to Tier 2 (fine) to edit a single file.";
+  }
+  if (toolName === "Agent" || toolName === "Coordinate") {
+    return "Surgical mode does not allow spawning sub-agents. Use normal mode or Tier 4 (broad).";
+  }
+  return `Promote to a higher tier or switch to normal mode to use ${toolName}.`;
+}
 
 // ---------------------------------------------------------------------------
 // Bash pattern restrictions
@@ -139,6 +221,11 @@ const BASH_SAFE_PREFIXES: ReadonlyArray<string> = [
 /**
  * Check whether a tool call is allowed under the active surgical scope.
  *
+ * Dispatches to the legacy 3-tier path (string tier) or the new 4-tier path
+ * (numeric tier) based on the type of opts.tier. This preserves full backward
+ * compatibility with callers that pass ScopeTier strings while enabling the
+ * new progressive constraint system for callers that pass SurgicalTier numbers.
+ *
  * @param toolName - The tool being called (e.g. "Bash", "Write").
  * @param input    - The raw tool input (used to inspect Bash commands).
  * @param opts     - Gate options including tier and enabled flag.
@@ -149,15 +236,31 @@ export function checkSurgicalToolGate(
   input: Record<string, unknown>,
   opts: SurgicalGateOptions,
 ): SurgicalGateResult {
-  // Gate is a no-op when surgical mode is inactive or tier is wide
-  if (!opts.enabled || opts.tier === "wide") {
-    return { verdict: "allow" };
+  if (!opts.enabled) return { verdict: "allow" };
+
+  // Numeric tier path (new 4-tier system)
+  if (typeof opts.tier === "number") {
+    return checkByNumericTier(toolName, input, opts.tier as SurgicalTier);
   }
 
-  const tier = opts.tier;
+  // Legacy string tier path — preserves original behavior exactly
+  return checkByLegacyScopeTier(toolName, input, opts.tier as ScopeTier);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy 3-tier path (string "narrow" | "medium" | "wide")
+// Preserves the exact original restriction behavior for backward compatibility.
+// ---------------------------------------------------------------------------
+
+function checkByLegacyScopeTier(
+  toolName: string,
+  input: Record<string, unknown>,
+  tier: ScopeTier,
+): SurgicalGateResult {
+  if (tier === "wide") return { verdict: "allow" };
 
   // --- Unconditionally blocked tools -----------------------------------------
-  const blocked = BLOCKED_TOOLS_BY_TIER[tier];
+  const blocked = BLOCKED_TOOLS_BY_SCOPE_TIER[tier];
   if (blocked.has(toolName)) {
     const tierLabel = tier === "narrow" ? "narrow surgical" : "medium surgical";
     const suggestions: Record<string, string> = {
@@ -177,37 +280,71 @@ export function checkSurgicalToolGate(
 
   // --- Bash-specific pattern checks ------------------------------------------
   if (toolName === "Bash") {
+    return checkBashCommandLegacy(input, tier);
+  }
+
+  // --- Allowed tools fast path -----------------------------------------------
+  if (ALLOWED_TOOLS_BY_SCOPE_TIER[tier].has(toolName)) return { verdict: "allow" };
+
+  // --- Unknown tools: fail-open -----------------------------------------------
+  return { verdict: "allow" };
+}
+
+// ---------------------------------------------------------------------------
+// New 4-tier numeric path
+// ---------------------------------------------------------------------------
+
+/**
+ * Core restriction check using the 4-tier numeric system.
+ */
+function checkByNumericTier(
+  toolName: string,
+  input: Record<string, unknown>,
+  tier: SurgicalTier,
+): SurgicalGateResult {
+  // Tier 4 always allows everything
+  if (tier === 4) return { verdict: "allow" };
+
+  const tierLabel = NUMERIC_TIER_LABELS[tier];
+
+  // --- Unconditionally blocked tools -----------------------------------------
+  const blocked = BLOCKED_TOOLS_BY_NUMERIC_TIER[tier];
+  if (blocked.has(toolName)) {
+    return {
+      verdict: "block",
+      reason: `[surgical-tool-gate] "${toolName}" is not allowed in ${tierLabel} mode`,
+      suggestion: numericTierBlockSuggestion(toolName, tier),
+    };
+  }
+
+  // --- Bash-specific pattern checks (tiers 3 only; tiers 1–2 block Bash via BLOCKED_TOOLS) --
+  if (toolName === "Bash") {
     return checkBashCommand(input, tier);
   }
 
   // --- Allowed tools fast path -----------------------------------------------
-  if (ALLOWED_TOOLS_BY_TIER[tier].has(toolName)) {
-    return { verdict: "allow" };
-  }
+  const allowed = ALLOWED_TOOLS_BY_NUMERIC_TIER[tier];
+  if (allowed.has(toolName)) return { verdict: "allow" };
 
   // --- Unknown / uncategorised tools: allow (fail-open) ----------------------
-  // We only restrict known-risky tools. Unknown tools pass through so future
-  // tool additions are not silently blocked by surgical mode.
   return { verdict: "allow" };
 }
 
 /**
- * Validate a Bash command against surgical-mode pattern rules.
+ * Validate a Bash command for the legacy 3-tier path.
+ * Mirrors the original behavior: pattern-checks for both narrow and medium.
  */
-function checkBashCommand(
+function checkBashCommandLegacy(
   input: Record<string, unknown>,
   tier: "narrow" | "medium",
 ): SurgicalGateResult {
   const command = typeof input.command === "string" ? input.command.trim() : "";
+  if (!command) return { verdict: "allow" };
 
-  if (!command) {
-    return { verdict: "allow" }; // empty command validated elsewhere
-  }
+  const tierLabel = tier === "narrow" ? "narrow surgical" : "medium surgical";
 
-  // Check blocked patterns first
   for (const { pattern, label } of BASH_BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
-      const tierLabel = tier === "narrow" ? "narrow surgical" : "medium surgical";
       return {
         verdict: "block",
         reason: `[surgical-tool-gate] Bash "${label}" is not allowed in ${tierLabel} mode`,
@@ -219,17 +356,61 @@ function checkBashCommand(
     }
   }
 
-  // Narrow tier: additionally warn (but allow) commands outside the safe prefix
-  // list. We don't hard-block unknown prefixes to avoid false positives on
-  // legitimate commands like `jq`, `yq`, `node -e "…"` (short reads), etc.
-  // The blocked-pattern list above already catches the dangerous cases.
   if (tier === "narrow") {
+    const firstWord = command.split(/\s+/)[0]?.toLowerCase() ?? "";
+    const isSafe = BASH_SAFE_PREFIXES.some((prefix) => firstWord === prefix);
+    if (!isSafe && firstWord.length > 0) {
+      console.error(
+        `[surgical-tool-gate] Note: "${firstWord}" is outside the narrow-mode safe-prefix list; allowing but flagging for review`,
+      );
+    }
+  }
+
+  return { verdict: "allow" };
+}
+
+/**
+ * Validate a Bash command against surgical-mode pattern rules (numeric tier path).
+ * Called for numeric tiers 3 only (tiers 1–2 block Bash outright; tier 4 allows all).
+ */
+function checkBashCommand(
+  input: Record<string, unknown>,
+  tier: SurgicalTier,
+): SurgicalGateResult {
+  const command = typeof input.command === "string" ? input.command.trim() : "";
+
+  if (!command) {
+    return { verdict: "allow" }; // empty command validated elsewhere
+  }
+
+  const tierLabel = NUMERIC_TIER_LABELS[tier] ?? "surgical";
+
+  // Check blocked patterns first
+  for (const { pattern, label } of BASH_BLOCKED_PATTERNS) {
+    if (pattern.test(command)) {
+      return {
+        verdict: "block",
+        reason: `[surgical-tool-gate] Bash "${label}" is not allowed in ${tierLabel} mode`,
+        suggestion:
+          label.includes("install")
+            ? "In surgical mode, dependency adds are not permitted. Switch to normal mode if a package is genuinely needed."
+            : "In surgical mode, that shell pattern is too risky. Use a safer alternative or switch to normal mode.",
+      };
+    }
+  }
+
+  // Tier 1 (micro) and Tier 2 (fine): additionally warn (but allow) commands
+  // outside the safe prefix list. We don't hard-block unknown prefixes to avoid
+  // false positives on legitimate commands like `jq`, `yq`, `node -e "…"`.
+  // The blocked-pattern list above already catches the dangerous cases.
+  // Note: tier 1 never reaches here (Bash is in BLOCKED_TOOLS_BY_NUMERIC_TIER[1]).
+  if (tier <= 2) {
     const firstWord = command.split(/\s+/)[0]?.toLowerCase() ?? "";
     const isSafe = BASH_SAFE_PREFIXES.some((prefix) => firstWord === prefix);
     if (!isSafe && firstWord.length > 0) {
       // Allow but emit a console note — does not block
       console.error(
-        `[surgical-tool-gate] Note: "${firstWord}" is outside the narrow-mode safe-prefix list; allowing but flagging for review`,
+        `[surgical-tool-gate] Note: "${firstWord}" is outside the ${tierLabel} safe-prefix list; allowing but flagging for review`,
       );
     }
   }
