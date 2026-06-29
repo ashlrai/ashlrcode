@@ -15,6 +15,7 @@ import { genomeCommands } from "../genome/commands.ts";
 import { traceCommands } from "./trace.ts";
 import { toolGraphCommands } from "./tool-graph.ts";
 import { toolBatchStatsCommands } from "./tool-batch-stats.ts";
+import { toolRetryDebugCommands } from "./tool-retry-debug.ts";
 
 /**
  * Create a fully populated command registry with all built-in commands.
@@ -65,6 +66,7 @@ export function createCommandRegistry(deps: {
   registry.registerAll(traceCommands());
   registry.registerAll(toolGraphCommands());
   registry.registerAll(toolBatchStatsCommands());
+  registry.registerAll(toolRetryDebugCommands());
 
   return registry;
 }

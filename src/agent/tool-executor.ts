@@ -79,6 +79,28 @@ import {
 } from "./tool-dependency-scheduler.ts";
 import { batchToolCalls } from "./tool-batching.ts";
 import { captureToolInvocation } from "./replay-engine.ts";
+import {
+  classifyFailure,
+  buildRetryStrategy,
+  recordRetryAttempt,
+  getRetryHistory,
+} from "./tool-retry-analyzer.ts";
+export {
+  classifyFailure,
+  buildRetryStrategy,
+  recordRetryAttempt,
+  getRetryHistory,
+  getRetryStats,
+  formatRetryStats,
+  resetRetryHistory,
+} from "./tool-retry-analyzer.ts";
+export type {
+  FailureCategory,
+  FailureClassification,
+  RetryStrategy,
+  RetryAttemptRecord,
+  ToolRetryStats,
+} from "./tool-retry-analyzer.ts";
 export {
   buildExecutionPlan,
   recordWaveTiming,
@@ -726,7 +748,83 @@ async function executeSingle(
   // Compute dynamic compression limits for this tool based on current context budget.
   const compressionLimits = getBudgetAllocator().getCompressionLimits(tc.name, totalContextTokens);
 
-  const { result: rawResult, isError } = await registry.execute(tc.name, tc.input, context);
+  // ---------------------------------------------------------------------------
+  // Retry-with-mutation wrapper
+  //
+  // classifyFailure() inspects the error message and returns a category
+  // (timeout | permission | not-found | parse | transient).  buildRetryStrategy()
+  // maps the category to a { maxRetries, delay, mutate? } descriptor.
+  //
+  // Each retry:
+  //  1. Optionally mutates the input (e.g. increases timeout by 50%).
+  //  2. Waits `delay` ms (exponential back-off for transient errors).
+  //  3. Re-calls registry.execute() with the mutated input.
+  //  4. Records the attempt in the retry history ring buffer.
+  //  5. Logs a telemetry "retry" event via event-log.ts.
+  // ---------------------------------------------------------------------------
+  let currentInput = tc.input;
+  let execResult: { result: string; isError: boolean };
+
+  {
+    // First attempt (not counted as a retry)
+    execResult = await registry.execute(tc.name, currentInput, context);
+
+    if (execResult.isError) {
+      // Classify and build strategy
+      const err = new Error(execResult.result);
+      const classification = classifyFailure(
+        tc.name,
+        err,
+        { input: currentInput }
+      );
+
+      if (classification.recoverable) {
+        const sessionHistory = getRetryHistory().filter((r) => r.toolName === tc.name);
+        const strategy = buildRetryStrategy(classification, Array.from(sessionHistory));
+
+        for (let attempt = 1; attempt <= strategy.maxRetries && execResult.isError; attempt++) {
+          // Apply optional input mutation (e.g. increase timeout)
+          if (strategy.mutate) {
+            currentInput = strategy.mutate(currentInput, attempt);
+          }
+
+          // Exponential back-off delay
+          if (strategy.delay > 0) {
+            await new Promise<void>((resolve) => setTimeout(resolve, strategy.delay * attempt));
+          }
+
+          // Retry execution
+          execResult = await registry.execute(tc.name, currentInput, context);
+
+          // Record this attempt in the ring buffer
+          recordRetryAttempt({
+            toolName: tc.name,
+            attempt,
+            category: classification.category,
+            succeeded: !execResult.isError,
+            timestamp: new Date().toISOString(),
+            errorMessage: execResult.isError ? execResult.result.slice(0, 200) : "",
+          });
+
+          // Log to telemetry (fire-and-forget, never throws)
+          void (async () => {
+            try {
+              const { logEvent } = await import("../telemetry/event-log.ts");
+              await logEvent("retry", {
+                tool: tc.name,
+                attempt,
+                category: classification.category,
+                succeeded: !execResult.isError,
+                suggestedAction: classification.suggestedAction,
+              });
+            } catch { /* telemetry must never crash execution */ }
+          })();
+        }
+      }
+    }
+  }
+
+  const { result: rawResult, isError } = execResult;
 
   // Apply dynamic compression: if the raw result exceeds the adaptive maxBytes threshold,
   // compress it using the allocator-supplied limits so reasoning-heavy models retain more
