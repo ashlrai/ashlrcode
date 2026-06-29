@@ -37,6 +37,24 @@ import {
   getToolResultPredictor,
 } from "./tool-result-predictor.ts";
 
+// Re-export the coalescence layer so callers can import from a single module.
+export {
+  executeWithCoalescence,
+  getCoalescenceStats,
+  resetCoalescenceStats,
+  formatCoalescenceStats,
+  buildCoalescedGroups,
+  areCoalescible,
+  mergeCommands,
+  splitSentinelOutput,
+  levenshtein,
+  similarityRatio,
+  COALESCENCE_MAX_WINDOW,
+  COALESCIBLE_TOOLS,
+  COALESCENCE_SIMILARITY_THRESHOLD,
+} from "./tool-coalescence.ts";
+export type { CoalescedGroup, CoalescenceStats } from "./tool-coalescence.ts";
+
 // ---------------------------------------------------------------------------
 // Streaming result compression
 // ---------------------------------------------------------------------------
