@@ -12,6 +12,7 @@ import chalk from "chalk";
 import type { Tool, ToolContext } from "./types.ts";
 import { applyPhantomSeal } from "./guards/phantom-seal.ts";
 import { checkBinshieldGate } from "./guards/binshield-gate.ts";
+import { validateBash } from "./validators/index.ts";
 import type { Settings } from "../config/settings.ts";
 
 const DEFAULT_TIMEOUT = 120_000; // 2 minutes
@@ -86,6 +87,10 @@ export const bashTool: Tool = {
       return "command is required and must be a string";
     }
     return null;
+  },
+
+  validateSemantics(input: Record<string, unknown>): string | null {
+    return validateBash(input.command as string);
   },
 
   checkPermissions(input: Record<string, unknown>): string | null {

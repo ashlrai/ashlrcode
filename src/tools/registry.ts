@@ -116,6 +116,15 @@ export class ToolRegistry {
       return { result: `Validation error: ${validationError}`, isError: true };
     }
 
+    // Semantic validation — deeper checks (path traversal, dangerous patterns, glob breadth).
+    // Runs after schema validation but before permission prompts.
+    if (tool.validateSemantics) {
+      const semanticError = await tool.validateSemantics(input, context);
+      if (semanticError) {
+        return { result: `Permission denied (semantic validation): ${semanticError}`, isError: true };
+      }
+    }
+
     // Check permissions for non-read-only tools.
     // Uses mutex to prevent parallel agents from showing duplicate permission dialogs.
     if (!tool.isReadOnly()) {

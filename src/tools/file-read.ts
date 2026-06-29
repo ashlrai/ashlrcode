@@ -3,8 +3,9 @@
  */
 
 import { readFile } from "fs/promises";
-import type { Tool } from "./types.ts";
+import type { Tool, ToolContext } from "./types.ts";
 import { validateFilePath, resolveFilePath, checkFileExists } from "./file-utils.ts";
+import { validatePath } from "./validators/index.ts";
 
 export const fileReadTool: Tool = {
   name: "Read",
@@ -46,6 +47,10 @@ export const fileReadTool: Tool = {
 
   validateInput(input) {
     return validateFilePath(input);
+  },
+
+  validateSemantics(input: Record<string, unknown>, context: ToolContext): string | null {
+    return validatePath(input.file_path as string, context.cwd);
   },
 
   async call(input, context) {
