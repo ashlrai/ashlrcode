@@ -13,6 +13,12 @@
 
 import { theme } from "../ui/theme.ts";
 import type { Command, CommandContext } from "./types.ts";
+import {
+  warmupTierScoreCache,
+  getTierEvalPerfStats,
+  resetTierEvalPerfStats,
+} from "../agent/surgical-proposer.ts";
+import { getPromotionScoreCache } from "../agent/promotion-score-cache.ts";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -128,6 +134,127 @@ export async function handleSurgicalAudit(
   return true;
 }
 
+// ── Command: /surgical warmup ─────────────────────────────────────────────
+
+/**
+ * Handle /surgical warmup.
+ *
+ * Pre-computes tier scores for a set of representative goals using the
+ * current codebase context, storing results in the PromotionScoreCache.
+ * This primes the cache so the first agent-loop tick returns instantly.
+ *
+ * Also reports current cache stats and perf counters so the user can see
+ * whether warmup has already been run.
+ */
+export async function handleSurgicalWarmup(
+  _args: string,
+  ctx: CommandContext,
+): Promise<boolean> {
+  const t0 = Date.now();
+
+  // Build a lightweight CodebaseContext from whatever the session knows
+  const cwd = (ctx.state.cwd as string | undefined) ?? process.cwd();
+  const codebaseCtx = { cwd };
+
+  let computed = 0;
+  try {
+    computed = await warmupTierScoreCache(codebaseCtx);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    ctx.addOutput(
+      theme.warning(`\n  /surgical warmup failed: ${msg}\n`),
+    );
+    return true;
+  }
+
+  const elapsed = Date.now() - t0;
+  const cache = getPromotionScoreCache();
+  const cacheStats = cache.stats();
+  const perfStats = getTierEvalPerfStats();
+
+  const hitRatePct = Math.round(cacheStats.hitRate * 100);
+
+  ctx.addOutput(
+    [
+      "",
+      theme.accentBold("  Surgical Tier Cache Warmup"),
+      `  Pre-computed entries: ${computed}`,
+      `  Cache size now:       ${cacheStats.size} entries`,
+      `  Warmup duration:      ${elapsed}ms`,
+      "",
+      theme.accentBold("  Cache Stats"),
+      `  Hits:        ${cacheStats.hits}`,
+      `  Misses:      ${cacheStats.misses}`,
+      `  Hit rate:    ${hitRatePct}%`,
+      `  Evictions:   ${cacheStats.evictions}`,
+      "",
+      theme.accentBold("  Perf Stats (since last reset)"),
+      `  Total evaluations:    ${perfStats.totalEvaluations}`,
+      `  Fast-path hits:       ${perfStats.fastPathHits}`,
+      `  Cache hits:           ${perfStats.cacheHits}`,
+      `  Timeout fallbacks:    ${perfStats.timeoutFallbacks}`,
+      `  Avg eval duration:    ${perfStats.avgDurationMs.toFixed(1)}ms`,
+      "",
+      theme.muted("  Tip: run /surgical warmup again after large commits to refresh the cache."),
+      "",
+    ].join("\n"),
+  );
+
+  return true;
+}
+
+// ── Command: /surgical perf ───────────────────────────────────────────────
+
+/**
+ * Handle /surgical perf.
+ *
+ * Displays current tier evaluation performance stats and cache metrics.
+ * Pass "reset" to reset the perf counters.
+ */
+export async function handleSurgicalPerf(
+  args: string,
+  ctx: CommandContext,
+): Promise<boolean> {
+  const trimmed = args.trim().toLowerCase();
+
+  if (trimmed === "reset") {
+    resetTierEvalPerfStats();
+    getPromotionScoreCache().resetStats();
+    ctx.addOutput(theme.muted("\n  Surgical perf stats reset.\n"));
+    return true;
+  }
+
+  const perfStats = getTierEvalPerfStats();
+  const cache = getPromotionScoreCache();
+  const cacheStats = cache.stats();
+  const hitRatePct = Math.round(cacheStats.hitRate * 100);
+
+  ctx.addOutput(
+    [
+      "",
+      theme.accentBold("  Surgical Tier Evaluation — Perf Stats"),
+      `  Total evaluations:  ${perfStats.totalEvaluations}`,
+      `  Fast-path hits:     ${perfStats.fastPathHits}`,
+      `  Cache hits:         ${perfStats.cacheHits}`,
+      `  Timeout fallbacks:  ${perfStats.timeoutFallbacks}`,
+      `  Avg eval duration:  ${perfStats.avgDurationMs.toFixed(1)}ms`,
+      `  Total duration:     ${perfStats.totalDurationMs.toFixed(0)}ms`,
+      "",
+      theme.accentBold("  Cache Stats"),
+      `  Size:       ${cacheStats.size} entries`,
+      `  Hits:       ${cacheStats.hits}`,
+      `  Misses:     ${cacheStats.misses}`,
+      `  Hit rate:   ${hitRatePct}%`,
+      `  Evictions:  ${cacheStats.evictions}`,
+      "",
+      theme.muted("  Use '/surgical perf reset' to clear counters."),
+      "",
+    ].join("\n"),
+  );
+
+  return true;
+}
+
 // ── Command registry ───────────────────────────────────────────────────────
 
 /**
@@ -151,6 +278,22 @@ export function surgicalAuditCommands(): Command[] {
       category: "agent",
       handler: async (args, ctx) => {
         return handleSurgicalAudit(args, ctx);
+      },
+    },
+    {
+      name: "/surgical warmup",
+      description: "Pre-compute tier scores for current codebase (warms the promotion cache)",
+      category: "agent",
+      handler: async (args, ctx) => {
+        return handleSurgicalWarmup(args, ctx);
+      },
+    },
+    {
+      name: "/surgical perf",
+      description: "Show tier evaluation perf stats and cache metrics (pass 'reset' to clear)",
+      category: "agent",
+      handler: async (args, ctx) => {
+        return handleSurgicalPerf(args, ctx);
       },
     },
   ];

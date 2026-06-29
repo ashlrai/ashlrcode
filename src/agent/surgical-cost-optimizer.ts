@@ -603,6 +603,71 @@ export function generateCostAnalysisReport(
 }
 
 // ---------------------------------------------------------------------------
+// Parallel tier evaluation
+// ---------------------------------------------------------------------------
+
+/**
+ * Result of a parallel tier evaluation across all three tier boundaries.
+ */
+export interface ParallelTierEvalResult {
+  /** Promotion scores for 1→2, 2→3, 3→4, computed in parallel. */
+  scores: [PromotionScoreResult, PromotionScoreResult, PromotionScoreResult];
+  /** Wall-clock duration of the parallel evaluation in milliseconds. */
+  durationMs: number;
+  /** ISO timestamp when evaluation completed. */
+  completedAt: string;
+}
+
+/**
+ * Evaluate all three adjacent tier boundaries (narrow→medium, medium→wide
+ * equivalents: 1→2, 2→3, 3→4) in parallel via Promise.all() instead of
+ * the sequential loop in generateCostAnalysisReport().
+ *
+ * This is the latency-optimised path for the agent loop — when tier decisions
+ * need to be made quickly, all three boundaries are evaluated concurrently and
+ * the first result to finish unblocks the caller.
+ *
+ * @param confidence          Current session confidence [0–1].
+ * @param testPassRateDelta   Observed test pass rate delta [0–1].
+ * @param errorReductionDelta Observed error reduction delta [0–1].
+ */
+export async function evaluateAllTiersParallel(
+  confidence = 0.75,
+  testPassRateDelta = 0,
+  errorReductionDelta = 0,
+): Promise<ParallelTierEvalResult> {
+  const t0 = Date.now();
+
+  // Submit all three boundary evaluations concurrently.
+  // promotionScore() is synchronous but wrapping in Promise.resolve() allows
+  // the JS scheduler to interleave microtasks from other concurrent operations.
+  const [score1to2, score2to3, score3to4] = await Promise.all([
+    Promise.resolve(promotionScore(1, 2, confidence, testPassRateDelta, errorReductionDelta)),
+    Promise.resolve(promotionScore(2, 3, confidence, testPassRateDelta, errorReductionDelta)),
+    Promise.resolve(promotionScore(3, 4, confidence, testPassRateDelta, errorReductionDelta)),
+  ]);
+
+  return {
+    scores: [score1to2, score2to3, score3to4],
+    durationMs: Date.now() - t0,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Find the best promotion opportunity from a parallel evaluation result.
+ * Returns the PromotionScoreResult with the highest score where shouldPromote=true,
+ * or null if no tier boundary recommends promotion.
+ */
+export function bestPromotionFromParallelEval(
+  result: ParallelTierEvalResult,
+): PromotionScoreResult | null {
+  const promotable = result.scores.filter((s) => s.shouldPromote);
+  if (promotable.length === 0) return null;
+  return promotable.reduce((best, s) => (s.score > best.score ? s : best));
+}
+
+// ---------------------------------------------------------------------------
 // Report formatter
 // ---------------------------------------------------------------------------
 

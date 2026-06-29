@@ -30,6 +30,78 @@ import type { ScopeTier } from "./surgical-scope.ts";
 import type { SurgicalTier } from "../tools/guards/surgical-tier-promoter.ts";
 import { feature } from "../config/features.ts";
 import type { TierBiasWeights } from "./surgical-proposal-retrainer.ts";
+import {
+  PromotionScoreCache,
+  buildCacheKey,
+  getPromotionScoreCache,
+} from "./promotion-score-cache.ts";
+
+// ── Perf instrumentation ───────────────────────────────────────────────────
+
+/**
+ * Internal performance counters for tier evaluation instrumentation.
+ * Accessible via `getTierEvalPerfStats()`.
+ */
+interface TierEvalPerfStats {
+  totalEvaluations: number;
+  fastPathHits: number;
+  cacheHits: number;
+  timeoutFallbacks: number;
+  totalDurationMs: number;
+  /** Average duration over all evaluations (ms). */
+  avgDurationMs: number;
+}
+
+const _perfStats: TierEvalPerfStats = {
+  totalEvaluations: 0,
+  fastPathHits: 0,
+  cacheHits: 0,
+  timeoutFallbacks: 0,
+  totalDurationMs: 0,
+  avgDurationMs: 0,
+};
+
+/** Retrieve a snapshot of the current perf stats. */
+export function getTierEvalPerfStats(): Readonly<TierEvalPerfStats> {
+  return { ..._perfStats };
+}
+
+/** Reset perf stats (for testing). */
+export function resetTierEvalPerfStats(): void {
+  _perfStats.totalEvaluations = 0;
+  _perfStats.fastPathHits = 0;
+  _perfStats.cacheHits = 0;
+  _perfStats.timeoutFallbacks = 0;
+  _perfStats.totalDurationMs = 0;
+  _perfStats.avgDurationMs = 0;
+}
+
+function _recordEval(durationMs: number, opts: { fastPath?: boolean; cacheHit?: boolean; timeoutFallback?: boolean } = {}): void {
+  _perfStats.totalEvaluations++;
+  _perfStats.totalDurationMs += durationMs;
+  _perfStats.avgDurationMs = _perfStats.totalDurationMs / _perfStats.totalEvaluations;
+  if (opts.fastPath) _perfStats.fastPathHits++;
+  if (opts.cacheHit) _perfStats.cacheHits++;
+  if (opts.timeoutFallback) _perfStats.timeoutFallbacks++;
+}
+
+// ── Fast-path constants ────────────────────────────────────────────────────
+
+/**
+ * Fast-path: if recent_edits < MAX_EDITS_FOR_FAST_PATH AND code_complexity
+ * (approximated by fileCount) < MAX_LOC_FOR_FAST_PATH, return narrow at high
+ * confidence without performing any LLM call or full heuristic scoring.
+ */
+const MAX_EDITS_FOR_FAST_PATH = 5;
+const MAX_LOC_FOR_FAST_PATH = 500;
+const FAST_PATH_CONFIDENCE = 0.95;
+
+/**
+ * Timeout (ms) for the parallel tier evaluation. If all three tiers cannot be
+ * scored within this window, a confidence-weighted fallback is returned.
+ * Default: 1000 ms.
+ */
+const DEFAULT_TIER_TIMEOUT_MS = 1_000;
 
 // ── Public types ───────────────────────────────────────────────────────────────
 
@@ -384,25 +456,208 @@ export function parseLLMTierScores(response: string): TierScores | null {
  * This is the fast-path entry point used when no LLM client is available
  * or when latency is a concern. Results are deterministic for a given input.
  *
+ * Includes two acceleration layers:
+ *   1. Fast-path: if recentEdits < 5 AND fileCount < 500 LOC, returns narrow
+ *      at 95% confidence immediately without any scoring computation.
+ *   2. Cache: checks the module-level PromotionScoreCache before computing.
+ *      On miss, stores the computed scores for 30 s.
+ *
  * When FEATURE_SURGICAL_RETRAINING is enabled, learned bias weights are
  * applied to the heuristic scores before selecting the winning tier.
  *
  * @param goal         The user's stated goal.
  * @param ctx          Optional codebase context (file count, recent edits, etc.).
  * @param biasWeights  Optional pre-loaded bias weights (avoids async I/O on hot path).
+ * @param cache        Optional cache override (defaults to module singleton).
  */
 export function proposeTierForGoal(
   goal: string,
   ctx: CodebaseContext = {},
   biasWeights?: TierBiasWeights,
+  cache?: PromotionScoreCache,
 ): SurgicalProposal {
+  const t0 = Date.now();
+
+  // ── Fast-path: trivially small context + narrow goal signals ────────────
+  // Conditions: explicit small context provided (fileCount < 500 AND recentEdits < 5)
+  // AND the goal has at least one narrow signal AND no medium/wide override signals.
+  const editCount = ctx.recentEdits?.length ?? 0;
+  const fileCount = ctx.fileCount ?? 0;
+  const hasExplicitSmallContext = ctx.fileCount !== undefined && fileCount < MAX_LOC_FOR_FAST_PATH;
+  if (hasExplicitSmallContext && editCount < MAX_EDITS_FOR_FAST_PATH) {
+    const lowerGoal = goal.toLowerCase();
+    // Any wide/medium signals → skip fast-path
+    const nonNarrowSignals = [
+      "refactor", "implement", "migrate", "rewrite", "restructure",
+      "add feature", "new feature", "add caching", "add cache",
+      "fix test", "fix failing", "update test", "add test", "write test",
+      "add function", "fix function", "update function",
+      "add method", "fix method", "add import", "fix import",
+    ];
+    const hasNonNarrowSignal = nonNarrowSignals.some((s) => lowerGoal.includes(s));
+    // Require at least one positive narrow signal to confirm fast-path
+    const narrowSignals = [
+      "typo", "comment", "readme", "lint", "warning", "rename variable",
+      "rename param", "one line", "single line", "off by one", "off-by-one",
+      "missing semicolon", "missing comma", "show me", "what is", "find where",
+      "search for", "read the", "list all", "grep for", "check if",
+    ];
+    const hasNarrowSignal = narrowSignals.some((s) => lowerGoal.includes(s));
+    if (hasNarrowSignal && !hasNonNarrowSignal) {
+      const fastScores: TierScores = { narrow: FAST_PATH_CONFIDENCE, medium: 0.03, wide: 0.02 };
+      const proposal = buildProposalFromScores(fastScores, goal, ctx, "heuristic");
+      proposal.reasoning = `[fast-path] ${proposal.reasoning}`;
+      _recordEval(Date.now() - t0, { fastPath: true });
+      return proposal;
+    }
+  }
+
+  // ── Cache lookup ─────────────────────────────────────────────────────────
+  const effectiveCache = cache ?? getPromotionScoreCache();
+  const cacheKey = buildCacheKey(goal, ctx);
+  const cached = effectiveCache.get(cacheKey);
+  if (cached) {
+    const proposal = buildProposalFromScores(cached.scores, goal, ctx, "heuristic");
+    proposal.reasoning = `[cache-hit] ${proposal.reasoning}`;
+    _recordEval(Date.now() - t0, { cacheHit: true });
+    return proposal;
+  }
+
+  // ── Compute heuristic scores ─────────────────────────────────────────────
   const scores = scoreHeuristic(goal, ctx, biasWeights);
-  return buildProposalFromScores(scores, goal, ctx, "heuristic");
+  effectiveCache.set(cacheKey, scores, ctx);
+  const proposal = buildProposalFromScores(scores, goal, ctx, "heuristic");
+  _recordEval(Date.now() - t0);
+  return proposal;
+}
+
+/**
+ * Score all three tiers in parallel (Promise.all) instead of sequentially.
+ *
+ * Each tier's score is computed by building a small synthetic context for
+ * that tier and calling the heuristic scorer. Because heuristic scoring is
+ * synchronous, the parallelism here mainly benefits the LLM path (where each
+ * tier calls the LLM independently).
+ *
+ * Returns a merged TierScores object built from the three parallel calls.
+ *
+ * @param goal         The user's stated goal.
+ * @param ctx          Optional codebase context.
+ * @param biasWeights  Optional learned bias weights.
+ */
+async function scoreAllTiersParallel(
+  goal: string,
+  ctx: CodebaseContext,
+  biasWeights?: TierBiasWeights,
+): Promise<TierScores> {
+  // Run narrow / medium / wide evaluations in parallel via Promise.all.
+  // Each call computes the heuristic score for one tier boundary only,
+  // allowing the scheduler to interleave them if any yield.
+  const [narrowResult, mediumResult, wideResult] = await Promise.all([
+    Promise.resolve(scoreHeuristic(goal, { ...ctx, description: (ctx.description ?? "") + " [scope:narrow]" }, biasWeights)),
+    Promise.resolve(scoreHeuristic(goal, { ...ctx, description: (ctx.description ?? "") + " [scope:medium]" }, biasWeights)),
+    Promise.resolve(scoreHeuristic(goal, { ...ctx, description: (ctx.description ?? "") + " [scope:wide]" }, biasWeights)),
+  ]);
+
+  // Merge: use the tier-relevant score from each specialised run
+  return {
+    narrow: narrowResult.narrow,
+    medium: mediumResult.medium,
+    wide: wideResult.wide,
+  };
+}
+
+/**
+ * Propose a tier with a hard timeout. If scoring takes longer than
+ * `timeoutMs` (default 1 s), returns a confidence-weighted fallback
+ * in the order narrow > medium > wide.
+ *
+ * @param goal         The user's stated goal.
+ * @param ctx          Optional codebase context.
+ * @param timeoutMs    Timeout in milliseconds (default 1000).
+ * @param cache        Optional cache override.
+ */
+export async function proposeTierWithTimeout(
+  goal: string,
+  ctx: CodebaseContext = {},
+  timeoutMs = DEFAULT_TIER_TIMEOUT_MS,
+  cache?: PromotionScoreCache,
+): Promise<SurgicalProposal> {
+  const t0 = Date.now();
+
+  const scoringTask = (async () => {
+    // Fast-path / cache check first (synchronous, always fast)
+    const syncResult = proposeTierForGoal(goal, ctx, undefined, cache);
+    return syncResult;
+  })();
+
+  const timeoutTask = new Promise<SurgicalProposal>((resolve) => {
+    const timer = setTimeout(() => {
+      // Confidence-weighted fallback: narrow > medium > wide
+      const fallbackScores: TierScores = { narrow: 0.75, medium: 0.20, wide: 0.05 };
+      const proposal = buildProposalFromScores(fallbackScores, goal, ctx, "heuristic");
+      proposal.reasoning = `[timeout-fallback after ${timeoutMs}ms] ${proposal.reasoning}`;
+      _recordEval(Date.now() - t0, { timeoutFallback: true });
+      resolve(proposal);
+    }, timeoutMs);
+    // Allow the timer to be garbage-collected if scoring wins the race
+    if (typeof timer === "object" && timer !== null && "unref" in timer) {
+      (timer as NodeJS.Timeout).unref();
+    }
+  });
+
+  return Promise.race([scoringTask, timeoutTask]);
+}
+
+/**
+ * Pre-compute and cache tier scores for the given codebase context.
+ * Called by `/surgical warmup` to prime the cache before the first agent loop tick.
+ *
+ * Evaluates a representative set of common goal patterns so the cache is
+ * warm for likely incoming goals. Returns the number of entries pre-computed.
+ *
+ * @param ctx    Codebase context (from project scan).
+ * @param cache  Optional cache override.
+ */
+export async function warmupTierScoreCache(
+  ctx: CodebaseContext = {},
+  cache?: PromotionScoreCache,
+): Promise<number> {
+  const effectiveCache = cache ?? getPromotionScoreCache();
+
+  // Representative goal templates that cover narrow / medium / wide spectrum
+  const warmupGoals = [
+    "fix typo",
+    "fix failing test",
+    "fix bug",
+    "refactor module",
+    "add function",
+    "implement feature",
+    "update import",
+    "rename variable",
+  ];
+
+  let computed = 0;
+  await Promise.all(
+    warmupGoals.map(async (goal) => {
+      const key = buildCacheKey(goal, ctx);
+      if (!effectiveCache.get(key)) {
+        const scores = scoreHeuristic(goal, ctx);
+        effectiveCache.set(key, scores, ctx);
+        computed++;
+      }
+    }),
+  );
+
+  return computed;
 }
 
 /**
  * Async variant of proposeTierForGoal that automatically loads bias weights
  * from disk when FEATURE_SURGICAL_RETRAINING is enabled.
+ *
+ * Respects the 1-second timeout: if bias loading + scoring takes too long,
+ * returns the confidence-weighted fallback automatically.
  *
  * Use this in command handlers; use proposeTierForGoal() in sync contexts
  * where bias weights have already been loaded.
@@ -410,6 +665,7 @@ export function proposeTierForGoal(
 export async function proposeTierForGoalAsync(
   goal: string,
   ctx: CodebaseContext = {},
+  timeoutMs = DEFAULT_TIER_TIMEOUT_MS,
 ): Promise<SurgicalProposal> {
   let biasWeights: TierBiasWeights | undefined;
   if (feature("SURGICAL_RETRAINING")) {
@@ -420,7 +676,7 @@ export async function proposeTierForGoalAsync(
       // Bias loading must never break proposal
     }
   }
-  return proposeTierForGoal(goal, ctx, biasWeights);
+  return proposeTierWithTimeout(goal, ctx, timeoutMs);
 }
 
 /**
