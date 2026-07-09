@@ -253,6 +253,7 @@ describe("CapabilityRegistry", () => {
     const result = reg.getBestProvider("Read", {
       include: ["groq", "xai"],
     });
+    if (result.provider === null) throw new Error("expected provider");
     expect(["groq", "xai"]).toContain(result.provider);
   });
 

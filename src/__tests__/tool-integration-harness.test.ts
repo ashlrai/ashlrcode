@@ -233,7 +233,7 @@ export class MockFetch {
   }
 
   asFetch(): typeof fetch {
-    return async (input: string | URL | Request): Promise<Response> => {
+    return (async (input: string | URL | Request): Promise<Response> => {
       const url =
         typeof input === "string"
           ? input
@@ -254,7 +254,7 @@ export class MockFetch {
         }
       }
       return new Response('{"error":"not found"}', { status: 404 });
-    };
+    }) as typeof fetch;
   }
 }
 

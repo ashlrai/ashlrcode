@@ -39,7 +39,7 @@ function makeContext(cwd = "/tmp"): ToolContext {
 
 /** Build a minimal mock fetch that returns a binshield ScanJob response. */
 function mockBinshieldFetch(riskLevel: string, ok = true): typeof fetch {
-  return async (_url, _init) => {
+  return (async (_url, _init) => {
     if (!ok) {
       return new Response("Service Unavailable", { status: 503 });
     }
@@ -49,7 +49,7 @@ function mockBinshieldFetch(riskLevel: string, ok = true): typeof fetch {
       result: { riskLevel },
     });
     return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });
-  };
+  }) as typeof fetch;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,9 +186,9 @@ describe("checkBinshieldGate", () => {
   });
 
   test("fail-open when fetch throws (network down)", async () => {
-    const throwingFetch: typeof fetch = async () => {
+    const throwingFetch = (async () => {
       throw new Error("ECONNREFUSED");
-    };
+    }) as unknown as typeof fetch;
     const r = await checkBinshieldGate("npm install some-pkg", {
       ...baseOpts,
       fetchFn: throwingFetch,
@@ -198,7 +198,7 @@ describe("checkBinshieldGate", () => {
 
   test("blocks only the bad package in a multi-package install", async () => {
     let callCount = 0;
-    const selectiveFetch: typeof fetch = async (_url, init) => {
+    const selectiveFetch = (async (_url, init) => {
       callCount++;
       const body = JSON.parse((init?.body as string) ?? "{}");
       // First package is critical, second is safe
@@ -207,7 +207,7 @@ describe("checkBinshieldGate", () => {
         JSON.stringify({ id: "j", status: "complete", result: { riskLevel: risk } }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
-    };
+    }) as typeof fetch;
     const r = await checkBinshieldGate("npm install evil-pkg safe-pkg", {
       ...baseOpts,
       fetchFn: selectiveFetch,
@@ -317,7 +317,7 @@ describe("bashTool guard integration", () => {
       providers: { primary: { provider: "xai", apiKey: "", model: "grok" } },
       binshieldGate: true,
     } as any);
-    _setBinshieldFetch(async () => { throw new Error("network down"); });
+    _setBinshieldFetch((async () => { throw new Error("network down"); }) as unknown as typeof fetch);
 
     // Should NOT block — fail-open means the install runs (or fails for other reasons)
     const result = await bashTool.call(

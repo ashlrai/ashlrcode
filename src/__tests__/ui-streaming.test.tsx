@@ -443,8 +443,9 @@ describe("Error chunk handling", () => {
       callbacks
     );
 
-    if (lastMap && lastMap.size > 0) {
-      for (const [, state] of lastMap.entries()) {
+    const emitted = lastMap as Map<string, StreamingToolState> | null;
+    if (emitted && emitted.size > 0) {
+      for (const [, state] of emitted.entries()) {
         expect(state.chunks).toHaveLength(0);
       }
     }

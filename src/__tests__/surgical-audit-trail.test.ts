@@ -109,9 +109,9 @@ describe("SurgicalAuditTrail.emit() and loadAll()", () => {
       await trail.emit(ev);
       const all = await trail.loadAll();
       expect(all.length).toBe(1);
-      expect(all[0].toolName).toBe("Write");
-      expect(all[0].verdict).toBe("block");
-      expect(all[0].reason).toBe("blocked in narrow");
+      expect(all[0]!.toolName).toBe("Write");
+      expect(all[0]!.verdict).toBe("block");
+      expect(all[0]!.reason).toBe("blocked in narrow");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -142,9 +142,9 @@ describe("SurgicalAuditTrail.emit() and loadAll()", () => {
       });
       await trail.emit(ev);
       const [loaded] = await trail.loadAll();
-      expect(loaded.tier).toBe(2);
-      expect(loaded.suggestion).toBe("Promote to Tier 3");
-      expect(loaded.sessionId).toBe("test-session");
+      expect(loaded!.tier).toBe(2);
+      expect(loaded!.suggestion).toBe("Promote to Tier 3");
+      expect(loaded!.sessionId).toBe("test-session");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -217,10 +217,10 @@ describe("aggregateStats()", () => {
       makeEvent({ toolName: "Write", verdict: "block", reason: "r1" }),
     ];
     const stats = aggregateStats(events);
-    expect(stats.byTool["Read"].allowed).toBe(2);
-    expect(stats.byTool["Read"].blocked).toBe(0);
-    expect(stats.byTool["Write"].allowed).toBe(0);
-    expect(stats.byTool["Write"].blocked).toBe(1);
+    expect(stats.byTool["Read"]!.allowed).toBe(2);
+    expect(stats.byTool["Read"]!.blocked).toBe(0);
+    expect(stats.byTool["Write"]!.allowed).toBe(0);
+    expect(stats.byTool["Write"]!.blocked).toBe(1);
   });
 
   test("byTier breakdown is correct", () => {
@@ -230,10 +230,10 @@ describe("aggregateStats()", () => {
       makeEvent({ tier: 3, verdict: "allow" }),
     ];
     const stats = aggregateStats(events);
-    expect(stats.byTier["narrow"].allowed).toBe(1);
-    expect(stats.byTier["narrow"].blocked).toBe(1);
-    expect(stats.byTier["3"].allowed).toBe(1);
-    expect(stats.byTier["3"].blocked).toBe(0);
+    expect(stats.byTier["narrow"]!.allowed).toBe(1);
+    expect(stats.byTier["narrow"]!.blocked).toBe(1);
+    expect(stats.byTier["3"]!.allowed).toBe(1);
+    expect(stats.byTier["3"]!.blocked).toBe(0);
   });
 
   test("tiersUsed deduplicates correctly", () => {
@@ -426,8 +426,8 @@ describe("Session isolation", () => {
       expect(allA.every((e) => e.sessionId === "session-A")).toBe(true);
 
       expect(allB.length).toBe(1);
-      expect(allB[0].sessionId).toBe("session-B");
-      expect(allB[0].toolName).toBe("Bash");
+      expect(allB[0]!.sessionId).toBe("session-B");
+      expect(allB[0]!.toolName).toBe("Bash");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -491,7 +491,7 @@ describe("Malformed JSONL resilience", () => {
       const events = await trail.loadAll();
 
       expect(events.length).toBe(1);
-      expect(events[0].toolName).toBe("LS");
+      expect(events[0]!.toolName).toBe("LS");
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

@@ -19,6 +19,16 @@ import { CostTracker as _BaseCostTracker, type TokenUsage } from "@ashlr/cost";
  * `totalTokens` object getter for backward compatibility.
  */
 export class CostTracker extends _BaseCostTracker {
+  override record(provider: string, model: string, usage: Partial<TokenUsage> = {}): void {
+    super.record(provider, model, {
+      inputTokens: usage.inputTokens ?? 0,
+      outputTokens: usage.outputTokens ?? 0,
+      reasoningTokens: usage.reasoningTokens,
+      cacheReadTokens: usage.cacheReadTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+    });
+  }
+
   /** @deprecated Use totalInputTokens / totalOutputTokens / totalReasoningTokens. */
   get totalTokens(): Required<TokenUsage> {
     return {

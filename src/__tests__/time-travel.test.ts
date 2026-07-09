@@ -243,10 +243,10 @@ describe("intent-trace event recording", () => {
     const [start, end] = events;
     expect(start!.kind).toBe("turn_boundary");
     expect(end!.kind).toBe("turn_boundary");
-    if (start!.kind === "turn_boundary") expect(start.phase).toBe("start");
+    if (start!.kind === "turn_boundary") expect(start!.phase).toBe("start");
     if (end!.kind === "turn_boundary") {
-      expect(end.phase).toBe("end");
-      expect(end.toolCallCount).toBe(3);
+      expect(end!.phase).toBe("end");
+      expect(end!.toolCallCount).toBe(3);
     }
   });
 
