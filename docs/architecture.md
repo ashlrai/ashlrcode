@@ -22,7 +22,7 @@ User Input
 │  - Auto-failover + retry + cost tracking    │
 ├─────────────────────────────────────────────┤
 │  Tool Registry (src/tools/registry.ts)      │
-│  - 30 built-in tools + MCP tools            │
+│  - 34 built-in tools + MCP tools            │
 │  - Hooks (pre/post) + permissions           │
 ├─────────────────────────────────────────────┤
 │  Persistence Layer                          │

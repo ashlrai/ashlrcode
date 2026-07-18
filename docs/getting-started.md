@@ -23,7 +23,7 @@ This makes `ac` and `ashlrcode` available as global commands.
 
 ```bash
 ac --version
-# AshlrCode v1.5.0
+# AshlrCode v2.1.0
 ```
 
 ## First Run
@@ -71,7 +71,7 @@ ac
 Once inside AshlrCode, just type what you want done:
 
 ```
-  AshlrCode v1.5.0 | xai:grok-4.3
+  AshlrCode v2.1.0 | xai:grok-4.3
   /Users/you/my-project
   Type a message to start. /help for commands, /skills for skills, Ctrl+C to exit.
 
