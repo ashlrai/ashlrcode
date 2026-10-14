@@ -9,6 +9,7 @@ import type {
   ProviderConfig,
   ProviderRequest,
   StreamEvent,
+  TokenUsage,
 } from "./types.ts";
 import { withStreamRetry } from "./retry.ts";
 
@@ -60,85 +61,107 @@ async function* streamAnthropicEvents(
     ...(config.temperature !== undefined ? { temperature: config.temperature } : {}),
   });
 
-  for await (const event of stream) {
-    switch (event.type) {
-      case "content_block_delta": {
-        const delta = event.delta;
-        if (delta.type === "text_delta") {
-          yield { type: "text_delta", text: delta.text };
-        } else if (delta.type === "input_json_delta") {
-          yield {
-            type: "tool_call_delta",
-            text: delta.partial_json,
-          };
-        } else if (delta.type === "thinking_delta" && "thinking" in delta) {
-          yield {
-            type: "thinking_delta",
-            text: (delta as unknown as { thinking: string }).thinking,
-          };
-        } else if (delta.type === "signature_delta" && "signature" in delta) {
-          yield {
-            type: "thinking_delta",
-            text: "",
-            signature: (delta as unknown as { signature: string }).signature,
-          };
+  // SDK usage counters are cumulative within an attempt, not increments. Keep
+  // a snapshot so each attempt records one call with its latest known totals.
+  const usage: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+  let hasUsage = false;
+  try {
+    for await (const event of stream) {
+      switch (event.type) {
+        case "content_block_delta": {
+          const delta = event.delta;
+          if (delta.type === "text_delta") {
+            yield { type: "text_delta", text: delta.text };
+          } else if (delta.type === "input_json_delta") {
+            yield {
+              type: "tool_call_delta",
+              text: delta.partial_json,
+            };
+          } else if (delta.type === "thinking_delta" && "thinking" in delta) {
+            yield {
+              type: "thinking_delta",
+              text: (delta as unknown as { thinking: string }).thinking,
+            };
+          } else if (delta.type === "signature_delta" && "signature" in delta) {
+            yield {
+              type: "thinking_delta",
+              text: "",
+              signature: (delta as unknown as { signature: string }).signature,
+            };
+          }
+          break;
         }
-        break;
-      }
 
-      case "content_block_start": {
-        const block = event.content_block;
-        if (block.type === "tool_use") {
-          yield {
-            type: "tool_call_start",
-            toolCall: { id: block.id, name: block.name },
-          };
+        case "content_block_start": {
+          const block = event.content_block;
+          if (block.type === "tool_use") {
+            yield {
+              type: "tool_call_start",
+              toolCall: { id: block.id, name: block.name },
+            };
+          }
+          break;
         }
-        break;
-      }
 
-      case "content_block_stop":
-        break;
+        case "content_block_stop":
+          break;
 
-      case "message_delta": {
-        const delta = event.delta;
-        yield {
-          type: "message_end",
-          stopReason: mapStopReason(delta.stop_reason),
-          usage: {
-            inputTokens: 0,
-            outputTokens: event.usage?.output_tokens ?? 0,
-          },
-        };
-        break;
-      }
-
-      case "message_start": {
-        if (event.message.usage) {
-          yield {
-            type: "usage",
-            usage: {
-              inputTokens: event.message.usage.input_tokens,
-              outputTokens: event.message.usage.output_tokens,
-            },
-          };
+        case "message_delta": {
+          if (event.usage) {
+            usage.inputTokens = event.usage.input_tokens ?? usage.inputTokens;
+            usage.outputTokens = event.usage.output_tokens;
+            hasUsage = true;
+          }
+          const delta = event.delta;
+          if (delta.stop_reason != null) {
+            yield {
+              type: "message_end",
+              stopReason: mapStopReason(delta.stop_reason),
+              usage: {
+                inputTokens: 0,
+                outputTokens: event.usage?.output_tokens ?? 0,
+              },
+            };
+          }
+          break;
         }
-        break;
+
+        case "message_start": {
+          if (event.message.usage) {
+            usage.inputTokens = event.message.usage.input_tokens;
+            usage.outputTokens = event.message.usage.output_tokens;
+            hasUsage = true;
+          }
+          break;
+        }
       }
     }
-  }
 
-  // Extract completed tool calls from the final message (usage stats)
-  const finalMessage = await stream.finalMessage();
-  for (const block of finalMessage.content) {
-    if (block.type === "tool_use") {
+    // The SDK's completed message is authoritative when the attempt succeeds.
+    const finalMessage = await stream.finalMessage();
+    usage.inputTokens = finalMessage.usage.input_tokens;
+    usage.outputTokens = finalMessage.usage.output_tokens;
+    hasUsage = true;
+    for (const block of finalMessage.content) {
+      if (block.type === "tool_use") {
+        yield {
+          type: "tool_call_end",
+          toolCall: {
+            id: block.id,
+            name: block.name,
+            input: block.input as Record<string, unknown>,
+          },
+        };
+      }
+    }
+  } finally {
+    // Flush known partial usage before an SDK error reaches withStreamRetry.
+    // Retries each own a new snapshot, so a failed attempt is not lost or
+    // combined with the next attempt's cumulative counters.
+    if (hasUsage) {
       yield {
-        type: "tool_call_end",
-        toolCall: {
-          id: block.id,
-          name: block.name,
-          input: block.input as Record<string, unknown>,
-        },
+        type: "usage",
+        usage,
       };
     }
   }
