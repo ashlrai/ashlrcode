@@ -6,6 +6,9 @@
  */
 
 import { describe, test, expect, beforeEach } from "bun:test";
+import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   parseInstallCommand,
@@ -18,23 +21,90 @@ import {
   _resetPhantomPathCache,
 } from "../tools/guards/phantom-seal.ts";
 
-import {
-  bashTool,
-  _resetGuardSettingsCache,
-  _setBinshieldFetch,
-} from "../tools/bash.ts";
-
-import type { ToolContext } from "../tools/types.ts";
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeContext(cwd = "/tmp"): ToolContext {
-  return {
-    cwd,
-    requestPermission: async () => true,
-  };
+type GuardFixtureMode = "disabled" | "critical" | "safe" | "unreachable" | "phantom";
+interface GuardFixtureResult {
+  output: string;
+  scans: Array<{ url: string; body: Record<string, unknown> }>;
+  marker: string | null;
+  networkRequests: number;
+  wrapped?: boolean;
+  command?: string;
+}
+
+async function runGuardFixture(mode: GuardFixtureMode): Promise<GuardFixtureResult> {
+  const home = await mkdtemp(join(tmpdir(), "ashlrcode-guard-fixture-"));
+  const bin = join(home, "bin");
+  const markerPath = join(home, "synthetic-npm-invocation");
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await mkdir(bin);
+    await symlink("/bin/bash", join(bin, "bash"));
+    // This is the only npm on the child's PATH. It records argv and exits;
+    // it cannot resolve dependencies, run lifecycle scripts, or use npm auth.
+    await writeFile(join(bin, "npm"),
+      '#!/bin/sh\nprintf "%s\\n" "$*" > "$FIXTURE_INSTALL_MARKER"\nprintf "synthetic npm executed\\n"\n',
+      { mode: 0o700 });
+    const script = `
+      const mode = ${JSON.stringify(mode)};
+      let networkRequests = 0;
+      globalThis.fetch = async () => { networkRequests++; throw new Error('Unexpected fixture network request'); };
+      const scans = [];
+      let output = '';
+      let seal;
+      if (mode === 'phantom') {
+        const { applyPhantomSeal } = await import(${JSON.stringify(new URL("../tools/guards/phantom-seal.ts", import.meta.url).href)});
+        seal = await applyPhantomSeal('echo fixture-secret', { enabled: true, cwd: process.env.HOME });
+      } else {
+        const { bashTool, _resetGuardSettingsCache, _setBinshieldFetch } = await import(${JSON.stringify(new URL("../tools/bash.ts", import.meta.url).href)});
+        _resetGuardSettingsCache({ binshieldGate: mode !== 'disabled', binshieldUrl: 'https://binshield-fixture.invalid' });
+        _setBinshieldFetch(async (url, init) => {
+          scans.push({ url, body: JSON.parse(init.body) });
+          if (mode === 'unreachable') throw new Error('Synthetic scanner unavailable');
+          return new Response(JSON.stringify({ id: 'fixture-scan', status: 'complete', result: { riskLevel: mode === 'critical' ? 'critical' : 'none' } }), { headers: { 'content-type': 'application/json' } });
+        });
+        output = await bashTool.call({ command: mode === 'disabled' ? 'echo guards-off' : 'npm install synthetic-fixture@1.0.0', timeout: 1000 }, { cwd: process.env.HOME, requestPermission: async () => true });
+      }
+      console.log(JSON.stringify({ output, scans, networkRequests, wrapped: seal?.wrapped, command: seal?.command }));
+    `;
+    // Sentinel is present before imports. Neither test nor native shell can
+    // discover the user's Phantom, npm, HOME, settings, or credential stores.
+    const child = Bun.spawn([process.execPath, "--no-env-file", "--eval", script], {
+      cwd: home,
+      env: {
+        HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, "config"),
+        PATH: bin, FIXTURE_INSTALL_MARKER: markerPath, _AC_TEST_PHANTOM_AVAILABLE: "1",
+      },
+      stdout: "pipe", stderr: "pipe",
+    });
+    deadline = setTimeout(() => child.kill(), 5_000);
+    const [stdout, stderr, code] = await Promise.all([
+      new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited,
+    ]);
+    if (code !== 0) throw new Error(`Guard fixture exited ${code}: ${stderr}`);
+    const report = JSON.parse(stdout.trim()) as Omit<GuardFixtureResult, "marker">;
+    let marker: string | null = null;
+    try {
+      marker = await readFile(markerPath, "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return { ...report, marker };
+  } finally {
+    clearTimeout(deadline);
+    await rm(home, { recursive: true, force: true });
+  }
+}
+
+function expectFixtureScan(result: GuardFixtureResult): void {
+  expect(result.scans).toEqual([{
+    url: "https://binshield-fixture.invalid/public/scan",
+    body: { ecosystem: "npm", packageName: "synthetic-fixture", version: "1.0.0" },
+  }]);
+  expect(result.networkRequests).toBe(0);
 }
 
 /** Build a minimal mock fetch that returns a binshield ScanJob response. */
@@ -234,23 +304,11 @@ describe("applyPhantomSeal", () => {
   });
 
   test("wraps command when phantom is available (test mode)", async () => {
-    // _AC_TEST_PHANTOM_AVAILABLE=1 is set at process level — simulate by
-    // passing a command through the real function under test-env flag.
-    // We use env var already read at module load time; verify behaviour
-    // by checking the wrap logic directly with the test sentinel.
-    const origEnv = process.env._AC_TEST_PHANTOM_AVAILABLE;
-    process.env._AC_TEST_PHANTOM_AVAILABLE = "1";
-    // Re-import to pick up env (module-level const); instead we test the
-    // output shape when phantom IS available via the exported fn directly.
-    const r = await applyPhantomSeal("echo secret", { enabled: true, cwd: "/tmp" });
-    // Under TEST_PHANTOM_AVAILABLE the function wraps
-    if (r.wrapped) {
-      expect(r.command).toContain("phantom exec");
-      expect(r.command).toContain("echo secret");
-    }
-    // Restore
-    if (origEnv === undefined) delete process.env._AC_TEST_PHANTOM_AVAILABLE;
-    else process.env._AC_TEST_PHANTOM_AVAILABLE = origEnv;
+    const result = await runGuardFixture("phantom");
+    expect(result.wrapped).toBe(true);
+    expect(result.command).toBe('phantom exec -- bash -c "echo fixture-secret"');
+    expect(result.networkRequests).toBe(0);
+    expect(result.marker).toBeNull();
   });
 
   test("does not double-wrap already-phantom commands", async () => {
@@ -268,62 +326,33 @@ describe("applyPhantomSeal", () => {
 // ---------------------------------------------------------------------------
 
 describe("bashTool guard integration", () => {
-  beforeEach(() => {
-    _resetGuardSettingsCache();
-    _setBinshieldFetch(undefined);
-  });
-
   test("passes through normal command when both guards disabled (default)", async () => {
-    _resetGuardSettingsCache({ providers: { primary: { provider: "xai", apiKey: "", model: "grok" } } } as any);
-    const result = await bashTool.call({ command: "echo guards-off" }, makeContext());
-    expect(result).toContain("guards-off");
+    const result = await runGuardFixture("disabled");
+    expect(result.output).toBe("guards-off\n");
+    expect(result.scans).toEqual([]);
+    expect(result.networkRequests).toBe(0);
+    expect(result.marker).toBeNull();
   });
 
   test("binshield gate triggers on install command and blocks critical", async () => {
-    _resetGuardSettingsCache({
-      providers: { primary: { provider: "xai", apiKey: "", model: "grok" } },
-      binshieldGate: true,
-      binshieldUrl: "https://api.binshield.dev",
-    } as any);
-    _setBinshieldFetch(mockBinshieldFetch("critical"));
-
-    const result = await bashTool.call(
-      { command: "npm install malicious-package" },
-      makeContext(),
-    );
-    expect(result).toContain("BLOCKED");
-    expect(result).toContain("malicious-package");
+    const result = await runGuardFixture("critical");
+    expectFixtureScan(result);
+    expect(result.output).toContain("BLOCKED");
+    expect(result.output).toContain("synthetic-fixture");
+    expect(result.marker).toBeNull();
   });
 
   test("binshield gate allows safe install command", async () => {
-    _resetGuardSettingsCache({
-      providers: { primary: { provider: "xai", apiKey: "", model: "grok" } },
-      binshieldGate: true,
-      binshieldUrl: "https://api.binshield.dev",
-    } as any);
-    _setBinshieldFetch(mockBinshieldFetch("none"));
-
-    // Runs the actual command — use a no-op safe command
-    const result = await bashTool.call(
-      { command: "npm install lodash" },
-      makeContext("/tmp"),
-    );
-    // Should have executed (not blocked) — exit code from npm may vary but won't say BLOCKED
-    expect(result).not.toContain("BLOCKED");
+    const result = await runGuardFixture("safe");
+    expectFixtureScan(result);
+    expect(result.output).toBe("synthetic npm executed\n");
+    expect(result.marker).toBe("install synthetic-fixture@1.0.0\n");
   });
 
   test("binshield fail-open on unreachable API does not block", async () => {
-    _resetGuardSettingsCache({
-      providers: { primary: { provider: "xai", apiKey: "", model: "grok" } },
-      binshieldGate: true,
-    } as any);
-    _setBinshieldFetch((async () => { throw new Error("network down"); }) as unknown as typeof fetch);
-
-    // Should NOT block — fail-open means the install runs (or fails for other reasons)
-    const result = await bashTool.call(
-      { command: "echo install-would-run" },
-      makeContext(),
-    );
-    expect(result).not.toContain("BLOCKED");
+    const result = await runGuardFixture("unreachable");
+    expectFixtureScan(result);
+    expect(result.output).toBe("synthetic npm executed\n");
+    expect(result.marker).toBe("install synthetic-fixture@1.0.0\n");
   });
 });
