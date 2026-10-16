@@ -1,6 +1,6 @@
 # AshlrCode CLI Reference
 
-AshlrCode (`ac`) is a multi-provider AI coding agent CLI. Version: 1.5.0.
+AshlrCode (`ac`) is a multi-provider AI coding agent CLI. Version: 2.1.0.
 
 ---
 
@@ -24,7 +24,7 @@ Show help text with usage, options, and REPL commands, then exit.
 
 ### `--version`, `-v`
 
-Print the version string (`AshlrCode v1.5.0`) and exit.
+Print the version string (`AshlrCode v2.1.0`) and exit.
 
 ### `--continue`, `-c`
 

@@ -1,6 +1,6 @@
 # AshlrCode Tool Reference
 
-Complete reference for all 30 built-in tools. Each tool implements the `Tool` interface defined in `src/tools/types.ts`.
+Complete reference for all 34 built-in tools. Each tool implements the `Tool` interface defined in `src/tools/types.ts`.
 
 **Flags key:**
 - **Read-only**: Safe to use in plan mode; does not modify the filesystem.
