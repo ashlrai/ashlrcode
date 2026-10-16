@@ -24,6 +24,7 @@ import { runSubAgent } from "./sub-agent.ts";
 import { runVerification, clearModifiedFiles } from "./verification.ts";
 import { detectTerminalFocus, type FocusState } from "./kairos.ts";
 import { sleep } from "./error-handler.ts";
+import { sendNotification } from "../ui/notifications.ts";
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
@@ -96,30 +97,6 @@ function formatDuration(ms: number): string {
   if (m < 60) return `${m}m ${s % 60}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
-}
-
-/**
- * Send a macOS notification (no-op on other platforms).
- * Mirrors the pattern from kairos.ts but kept local to avoid
- * exporting an internal helper.
- */
-async function sendNotification(title: string, message: string): Promise<void> {
-  if (process.platform !== "darwin") return;
-  try {
-    const escaped = message.replace(/"/g, '\\"').slice(0, 200);
-    const escapedTitle = title.replace(/"/g, '\\"');
-    const proc = Bun.spawn(
-      [
-        "osascript",
-        "-e",
-        `display notification "${escaped}" with title "${escapedTitle}"`,
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    await proc.exited;
-  } catch {
-    // Notification failure is not critical
-  }
 }
 
 /**
@@ -688,14 +665,10 @@ Reply with JSON only: {"focusAreas": ["..."], "assessment": "...", "isComplete":
       .join("\n");
 
     try {
-      // Determine complexity: use coordinator for items touching 3+ files
-      const fileCount = item.file
-        ? 1
-        : 0;
+      // Determine complexity: use coordinator for security/test items
       const isComplex =
         item.type === "security" ||
-        item.type === "missing_test" ||
-        fileCount >= 3;
+        item.type === "missing_test";
 
       if (isComplex) {
         // Use coordinator for complex items

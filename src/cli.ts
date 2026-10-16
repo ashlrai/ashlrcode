@@ -107,6 +107,17 @@ let maxCostUSD = Infinity;
 let configMaxIterations = 25;
 let configStreamTimeoutMs = 300_000;
 let configToolTimeoutMs = 120_000;
+/** When true, runTurn will auto-detect surgical tier from the first message. */
+let surgicalAutoMode = false;
+
+/** Enable or disable surgical auto-tier mode (toggled by `/surgical auto`). */
+export function setSurgicalAutoMode(enabled: boolean): void {
+  surgicalAutoMode = enabled;
+}
+/** Return current surgical auto-tier mode state. */
+export function getSurgicalAutoMode(): boolean {
+  return surgicalAutoMode;
+}
 
 interface AppState {
   router: ProviderRouter;
@@ -169,11 +180,16 @@ async function main() {
   const noMcp = args.includes("--no-mcp");
   const maxCostArg = getArg(args, "--max-cost");
   maxCostUSD = maxCostArg ? parseFloat(maxCostArg) : Infinity;
+  const budgetVerbose = args.includes("--budget-verbose");
 
   // ── Autonomous mode ────────────────────────────────────────
   const autonomous = args.includes("--autonomous");
   const goal = getArg(args, "--goal");
   const initialScaffold = args.includes("--initial-scaffold");
+  const surgical = args.includes("--surgical");
+  const selfBisect = args.includes("--self-bisect");
+  const timeTravel = args.includes("--time-travel");
+  const pulseHud = args.includes("--pulse-hud");
   const maxIterationsArg = getArg(args, "--max-iterations");
   const timeoutArg = getArg(args, "--timeout");
 
@@ -187,10 +203,77 @@ async function main() {
       goal,
       cwd: process.cwd(),
       scaffold: initialScaffold,
+      surgical,
+      selfBisect,
+      timeTravel,
+      pulseHud,
       maxIterations: maxIterationsArg ? parseInt(maxIterationsArg, 10) : 200,
       timeout: timeoutArg ? parseInt(timeoutArg, 10) : 3600,
     });
     process.exit(result.success ? 0 : 1);
+  }
+
+  // ── Timeline subcommand ────────────────────────────────────────────────
+  if (args[0] === "timeline") {
+    const sub = args[1];
+    const { listTimelines, loadTimeline, forkFrom } = await import("./agent/time-travel.ts");
+
+    if (!sub || sub === "list") {
+      const sessions = await listTimelines();
+      if (sessions.length === 0) {
+        console.log("No recorded timelines.");
+      } else {
+        console.log(`${sessions.length} timeline(s):`);
+        for (const id of sessions) {
+          console.log(`  ${id}`);
+        }
+      }
+    } else if (sub === "show") {
+      const id = args[2];
+      if (!id) {
+        console.error("Usage: ac timeline show <session-id>");
+        process.exit(1);
+      }
+      const steps = await loadTimeline(id);
+      if (steps.length === 0) {
+        console.log(`No steps recorded for session: ${id}`);
+      } else {
+        console.log(`Timeline: ${id}  (${steps.length} step(s))`);
+        for (const step of steps) {
+          const treeRef = step.tree.sha ? step.tree.sha.slice(0, 8) : "none";
+          const dirty = step.tree.dirty ? "*" : "";
+          console.log(`  [${step.index}] ${step.at}  ${step.toolName}  tree:${treeRef}${dirty}${step.isError ? "  ERROR" : ""}`);
+        }
+      }
+    } else if (sub === "fork") {
+      const id = args[2];
+      const stepStr = args[3];
+      if (!id || !stepStr) {
+        console.error("Usage: ac timeline fork <session-id> <step>");
+        process.exit(1);
+      }
+      const stepIndex = parseInt(stepStr, 10);
+      if (isNaN(stepIndex)) {
+        console.error(`Invalid step index: ${stepStr}`);
+        process.exit(1);
+      }
+      const result = await forkFrom(id, stepIndex);
+      if (!result) {
+        console.error(`Fork failed: session ${id} not found or step ${stepIndex} out of range.`);
+        process.exit(1);
+      }
+      console.log(`Forked session: ${result.sessionId}`);
+      console.log(`  from: ${id} @ step ${result.fromIndex}`);
+      console.log(`  steps copied: ${result.steps}`);
+      if (result.tree.sha) {
+        console.log(`  tree marker: ${result.tree.sha.slice(0, 8)}${result.tree.dirty ? " (dirty)" : ""}`);
+      }
+    } else {
+      console.error(`Unknown timeline subcommand: ${sub}`);
+      console.error("Usage: ac timeline <list|show <id>|fork <id> <step>>");
+      process.exit(1);
+    }
+    process.exit(0);
   }
 
   if (dangerouslySkipPermissions) {
@@ -373,6 +456,36 @@ async function main() {
   // Initialize task persistence
   await initTasks(session.id);
 
+  // ---------------------------------------------------------------------------
+  // Tool capability cache — load on every session; warm-up on AC_WARMUP=1
+  // or when the cache is stale (one-time suggestion per session).
+  // ---------------------------------------------------------------------------
+  {
+    const {
+      loadCapabilityCache,
+      isWarmUpRequested,
+      isCacheStale,
+      runCapabilityWarmUp,
+      formatWarmUpSummary,
+    } = await import("./agent/tool-capability-cache.ts");
+
+    await loadCapabilityCache();
+
+    if (isWarmUpRequested()) {
+      if (!printMode) console.log(chalk.dim("  Running tool capability warm-up (AC_WARMUP=1)..."));
+      try {
+        const summary = await runCapabilityWarmUp();
+        if (!printMode) {
+          console.log(chalk.dim(`  ${summary.summaryLine}`));
+        }
+      } catch {
+        // Warm-up failures are non-fatal
+      }
+    } else if (!printMode && isCacheStale()) {
+      console.log(chalk.dim("  Tip: tool capability cache is stale. Run /tool-warmup to refresh."));
+    }
+  }
+
   // Load skills
   const skillRegistry = new SkillRegistry();
   const skills = await loadSkills(cwd);
@@ -511,7 +624,7 @@ async function main() {
   }
 
   // Interactive REPL — use Ink for proper cursor positioning
-  startInkRepl(state, maxCostUSD);
+  startInkRepl(state, maxCostUSD, budgetVerbose);
 }
 
 function getPrompt(): string {
@@ -943,6 +1056,107 @@ async function runTurn(input: string, state: AppState, printMode = false): Promi
     if (state.history.length === 0) {
       const title = input.length > 60 ? input.slice(0, 57) + "..." : input;
       await state.session.setTitle(title);
+
+      // Surgical auto-tier: on first message, analyze intent and prompt user if
+      // confidence is below 0.75 so they can confirm or override the suggested tier.
+      if (surgicalAutoMode) {
+        const { autoPromoteTierFromGoal, formatIntentStatus, getGlobalIntentTracker } = await import(
+          "./agent/surgical-intent-analyzer.ts"
+        );
+        const tracker = getGlobalIntentTracker();
+        tracker.setGoal(input);
+        const { analysis, shouldAutoApply, shouldPromptUser } = autoPromoteTierFromGoal(input);
+
+        if (shouldAutoApply) {
+          // High confidence — silently apply
+          const tierMap: Record<number, "narrow" | "medium" | "wide"> = {
+            1: "narrow",
+            2: "narrow",
+            3: "medium",
+            4: "wide",
+          };
+          const gateTier = tierMap[analysis.tier] ?? "medium";
+          state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+          if (!printMode) {
+            console.log(
+              chalk.dim(
+                `  [surgical auto] Tier ${analysis.tier} applied (${Math.round(analysis.confidence * 100)}% confidence — ${analysis.reasoning})`
+              )
+            );
+          }
+        } else if (shouldPromptUser) {
+          // Medium confidence — show tier picker before proceeding
+          if (!printMode) {
+            const pct = Math.round(analysis.confidence * 100);
+            console.log(
+              chalk.yellow(
+                `\n  Surgical auto-tier: confidence ${pct}% — manual confirmation recommended`
+              )
+            );
+            console.log(formatIntentStatus(null, analysis));
+            console.log(
+              chalk.cyan(
+                `  Suggested tier: Tier ${analysis.tier} (${analysis.scope})\n` +
+                `  Reasoning: ${analysis.reasoning}\n`
+              )
+            );
+            console.log(
+              chalk.dim(
+                `  Press Enter to apply Tier ${analysis.tier}, or type a tier override:\n` +
+                `    1 = narrow (read-only)  2 = fine (edit)  3 = medium (Bash)  4 = wide (all)\n` +
+                `    Enter = accept suggestion   s = skip (no surgical mode)\n`
+              )
+            );
+
+            // Synchronous readline prompt for tier selection
+            const { createInterface: createRl } = await import("readline");
+            const rl2 = createRl({ input: process.stdin, output: process.stdout, terminal: false });
+            const answer = await new Promise<string>((resolve) => {
+              rl2.question("  > ", (ans) => {
+                rl2.close();
+                resolve(ans.trim().toLowerCase());
+              });
+            });
+
+            const tierMap: Record<number, "narrow" | "medium" | "wide"> = {
+              1: "narrow",
+              2: "narrow",
+              3: "medium",
+              4: "wide",
+            };
+            const overrideMap: Record<string, "narrow" | "medium" | "wide"> = {
+              "1": "narrow",
+              "2": "narrow",
+              "3": "medium",
+              "4": "wide",
+              "narrow": "narrow",
+              "medium": "medium",
+              "wide": "wide",
+              "n": "narrow",
+              "m": "medium",
+              "w": "wide",
+            };
+
+            if (answer === "" || answer === "y" || answer === "yes") {
+              const gateTier = tierMap[analysis.tier] ?? "medium";
+              state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+              console.log(chalk.green(`  Applied Tier ${analysis.tier} (${gateTier})\n`));
+            } else if (overrideMap[answer]) {
+              const gateTier = overrideMap[answer]!;
+              state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+              console.log(chalk.green(`  Applied surgical mode: ${gateTier}\n`));
+            } else if (answer === "s" || answer === "skip") {
+              console.log(chalk.dim("  Skipped — no surgical mode applied.\n"));
+            } else {
+              // Unknown input — apply suggestion
+              const gateTier = tierMap[analysis.tier] ?? "medium";
+              state.registry.setSurgicalGate({ enabled: true, tier: gateTier });
+              console.log(chalk.green(`  Applied Tier ${analysis.tier} (${gateTier})\n`));
+            }
+          }
+        }
+        // Low confidence (< 0.5): skip — not worth guessing
+      }
     }
 
     // Capture message count AFTER compaction (not before)
@@ -1254,9 +1468,18 @@ ${chalk.bold("OPTIONS")}
   --autonomous                        Run in headless autonomous mode (requires --goal)
   --goal <text>                       Goal for autonomous mode
   --initial-scaffold                  Force project scaffolding in autonomous mode
+  --surgical                          Minimal-change mode: one edit, no scaffolding, no new files
+  --self-bisect                       Binary-search edits to isolate culprit on test failure
+  --time-travel                       Record every tool step to a replayable session timeline
+  --pulse-hud                         Emit OTLP telemetry spans for each autonomous step
   --max-iterations <n>                Max agent iterations (default: 200)
   --timeout <seconds>                 Timeout in seconds (default: 3600)
   --migrate                           Import MCP servers and skills from Claude Code
+
+${chalk.bold("TIMELINE")}
+  ac timeline list                    List all recorded session timelines
+  ac timeline show <id>               Print every step in a session timeline
+  ac timeline fork <id> <step>        Fork a new session from a step in an existing timeline
 
 ${chalk.bold("COMMANDS")} (in REPL)
   /plan                     Show plan mode status

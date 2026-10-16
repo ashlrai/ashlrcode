@@ -4,10 +4,13 @@
  */
 
 import { readFile, writeFile } from "fs/promises";
-import { existsSync } from "fs";
-import { resolve } from "path";
-import type { Tool, ToolContext } from "./types.ts";
-import { getFileHistory } from "../state/file-history.ts";
+import type { Tool } from "./types.ts";
+import {
+  validateFilePath,
+  resolveFilePath,
+  checkFileExists,
+  captureSnapshot,
+} from "./file-utils.ts";
 
 export const fileEditTool: Tool = {
   name: "Edit",
@@ -52,9 +55,8 @@ export const fileEditTool: Tool = {
   },
 
   validateInput(input) {
-    if (!input.file_path || typeof input.file_path !== "string") {
-      return "file_path is required";
-    }
+    const pathErr = validateFilePath(input);
+    if (pathErr) return pathErr;
     if (typeof input.old_string !== "string") {
       return "old_string is required";
     }
@@ -68,20 +70,16 @@ export const fileEditTool: Tool = {
   },
 
   async call(input, context) {
-    const filePath = resolve(context.cwd, input.file_path as string);
+    const filePath = resolveFilePath(context.cwd, input.file_path as string);
     const oldString = input.old_string as string;
     const newString = input.new_string as string;
     const replaceAll = (input.replace_all as boolean) ?? false;
 
-    if (!existsSync(filePath)) {
-      return `File not found: ${filePath}`;
-    }
+    const notFound = checkFileExists(filePath);
+    if (notFound) return notFound;
 
     // Snapshot before editing
-    const history = getFileHistory();
-    if (history) {
-      await history.capture(filePath, "Edit", context.turnNumber ?? 0);
-    }
+    await captureSnapshot(filePath, "Edit", context.turnNumber ?? 0);
 
     const content = await readFile(filePath, "utf-8");
 

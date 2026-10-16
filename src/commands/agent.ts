@@ -1,28 +1,59 @@
 /**
- * Agent commands — /verify, /coordinate, /kairos, /ship, /btw, /cancel, /trigger.
+ * Agent commands — /verify, /coordinate, /kairos, /ship, /btw, /cancel, /trigger, /surgical.
  */
 
 import { theme } from "../ui/theme.ts";
 import type { Command, CommandContext } from "./types.ts";
 
+// ---------------------------------------------------------------------------
+// Formatting helpers used by /tool-metrics
+// ---------------------------------------------------------------------------
+function padR(s: string, n: number): string { return s.padEnd(n); }
+function padL(s: string, n: number): string { return s.padStart(n); }
+function fmtMs(ms: number): string {
+  if (ms >= 60_000) return `${(ms / 60_000).toFixed(1)}m`;
+  if (ms >= 1_000) return `${(ms / 1_000).toFixed(1)}s`;
+  return `${Math.round(ms)}ms`;
+}
+function fmtPct(rate: number): string { return `${(rate * 100).toFixed(1)}%`; }
+function fmtBytes(b: number): string {
+  if (b >= 1_048_576) return `${(b / 1_048_576).toFixed(1)}MB`;
+  if (b >= 1_024) return `${(b / 1_024).toFixed(1)}KB`;
+  return `${Math.round(b)}B`;
+}
+
 export function agentCommands(): Command[] {
   return [
     {
       name: "/verify",
-      description: "Run verification agent on recent changes",
+      description: "Run verification agent on recent changes. Pass --with-tests to also suggest/generate test stubs.",
       category: "agent",
+      subcommands: ["--with-tests"],
       handler: async (args, ctx) => {
         const { runVerification, formatVerificationReport, getModifiedFiles } = await import(
           "../agent/verification.ts"
         );
+
+        // Parse --with-tests flag
+        const withTests = !!args?.includes("--with-tests");
+        const intent = args?.replace("--with-tests", "").trim() || undefined;
+
         const modFiles = getModifiedFiles();
-        if (modFiles.length === 0 && !args) {
+        if (modFiles.length === 0 && !intent) {
           ctx.addOutput(
             theme.warning("\n  No modified files to verify. Make changes first or specify: /verify <intent>\n"),
           );
+          ctx.addOutput(
+            theme.muted("  Tip: /verify --with-tests also suggests test cases for uncovered branches\n"),
+          );
           return true;
         }
-        ctx.addOutput(theme.accent("\n  🔍 Running verification agent...\n"));
+
+        ctx.addOutput(theme.accent(withTests
+          ? "\n  🔍 Running verification agent with test suggestions...\n"
+          : "\n  🔍 Running verification agent...\n"
+        ));
+
         const vResult = await runVerification(
           {
             router: ctx.state.router,
@@ -34,9 +65,26 @@ export function agentCommands(): Command[] {
               ctx.update();
             },
           },
-          { intent: args || undefined },
+          {
+            intent,
+            withTests,
+            generateStubs: withTests,
+            coverageThreshold: 70,
+          },
         );
+
         ctx.addOutput("\n" + formatVerificationReport(vResult) + "\n");
+
+        // If test suggestions exist but stubs weren't generated (plain /verify),
+        // show a prompt to run with --with-tests
+        if (!withTests && vResult.testSuggestions && vResult.testSuggestions.length > 0) {
+          ctx.addOutput(
+            theme.tertiary(
+              `  💡 ${vResult.testSuggestions.length} test suggestion(s) available — run /verify --with-tests to generate stubs\n`
+            )
+          );
+        }
+
         return true;
       },
     },
@@ -459,6 +507,395 @@ export function agentCommands(): Command[] {
       },
     },
     {
+      name: "/surgical",
+      description: "Set surgical mode tier (narrow/medium/wide) with auto-detection",
+      category: "agent",
+      subcommands: ["narrow", "medium", "wide", "off", "status", "analyze", "auto", "cost-analysis", "propose", "stats", "viz", "confidence", "history", "feedback", "replay", "audit"],
+      handler: async (args, ctx) => {
+        const { analyzeScopeFromIntent, SurgicalScopeAnalyzer } = await import("../agent/surgical-scope.ts");
+
+        // /surgical status — show current gate state with intent-based enhancement
+        if (!args || args === "status") {
+          const gate = (ctx.state.registry as any)._surgicalGate as
+            | { enabled: boolean; tier: string }
+            | null
+            | undefined;
+
+          // Pull intent analysis from session history if available
+          const { getGlobalIntentTracker, formatIntentStatus } = await import("../agent/surgical-intent-analyzer.ts");
+          const { getSurgicalAutoMode } = await import("../cli.ts");
+          const tracker = getGlobalIntentTracker();
+          const sessionHistory = tracker.getHistory();
+
+          // Derive current tier for formatIntentStatus
+          type LegacyTier = "narrow" | "medium" | "wide";
+          const currentTier: 1 | 2 | 3 | 4 | LegacyTier | null = gate?.enabled
+            ? (gate.tier as LegacyTier)
+            : null;
+
+          const autoModeOn = getSurgicalAutoMode();
+          const autoStatus = autoModeOn
+            ? theme.success("  Auto-tier mode: ON") + theme.muted(" (/surgical auto to disable)\n")
+            : theme.tertiary("  Auto-tier mode: off") + theme.muted(" (/surgical auto to enable)\n");
+
+          if (!gate?.enabled) {
+            ctx.addOutput(theme.tertiary("\n  Surgical mode: off\n") + autoStatus);
+          } else {
+            ctx.addOutput(theme.accent(`\n  Surgical mode: ${gate.tier}\n`) + autoStatus);
+          }
+
+          // Show enhanced intent status — always when history exists, or with a
+          // placeholder message if the session hasn't started yet.
+          const hasContext = sessionHistory.length > 0 || tracker.size() > 0;
+
+          if (hasContext) {
+            const analysis = tracker.analyzeCurrentIntent();
+            const pct = Math.round(analysis.confidence * 100);
+            ctx.addOutput(formatIntentStatus(currentTier, analysis));
+            ctx.addOutput(
+              [
+                `  Confidence:  ${pct}%${analysis.confidence < 0.75 ? theme.warning(" (low — tier picker will show on first message)") : ""}`,
+                `  Reasoning:   ${analysis.reasoning}`,
+                analysis.scopeCreepDetected ? theme.warning("  Scope creep detected in tool history!") : "",
+                "",
+              ].filter(Boolean).join("\n"),
+            );
+          } else {
+            ctx.addOutput(
+              [
+                "",
+                theme.secondary("  Usage:"),
+                `    ${theme.accent("/surgical auto")}          — toggle auto-tier mode (intent picker on first message)`,
+                `    ${theme.accent("/surgical")}               — auto-detect tier from next message`,
+                `    ${theme.accent("/surgical analyze <msg>")} — analyze scope for a specific message`,
+                `    ${theme.accent("/surgical narrow")}        — force narrow tier (1 file budget)`,
+                `    ${theme.accent("/surgical medium")}        — force medium tier (3 file budget)`,
+                `    ${theme.accent("/surgical wide")}          — force wide tier (6 file budget)`,
+                `    ${theme.accent("/surgical off")}           — disable surgical mode`,
+                `    ${theme.accent("/surgical status")}        — show current tier + intent analysis`,
+                "",
+                theme.muted("  Confidence and reasoning will appear once a session goal is set."),
+                "",
+              ].join("\n"),
+            );
+          }
+          return true;
+        }
+
+        // /surgical auto — toggle surgical auto-tier mode
+        // When enabled, the first message of each session triggers an intent
+        // analysis: if confidence ≥ 0.8 the tier is silently applied; if
+        // confidence is 0.5–0.79 an interactive tier picker is shown.
+        if (args === "auto") {
+          const { getSurgicalAutoMode, setSurgicalAutoMode } = await import("../cli.ts");
+          const current = getSurgicalAutoMode();
+          const next = !current;
+          setSurgicalAutoMode(next);
+          if (next) {
+            ctx.addOutput(
+              theme.success("\n  Surgical auto-tier mode ENABLED.\n") +
+              theme.muted(
+                "  On your first message this session, intent will be analysed and\n" +
+                "  a surgical tier applied automatically (or you'll be prompted if\n" +
+                "  confidence is between 50–79%).\n" +
+                "  Disable with: /surgical auto\n"
+              )
+            );
+          } else {
+            ctx.addOutput(theme.tertiary("\n  Surgical auto-tier mode DISABLED.\n"));
+          }
+          return true;
+        }
+
+        // /surgical off — clear the gate
+        if (args === "off") {
+          ctx.state.registry.clearSurgicalGate();
+          ctx.addOutput(theme.tertiary("\n  Surgical mode disabled.\n"));
+          return true;
+        }
+
+        // /surgical narrow | medium | wide — force a specific tier
+        if (args === "narrow" || args === "medium" || args === "wide") {
+          const tier = args as "narrow" | "medium" | "wide";
+          const budgets: Record<"narrow" | "medium" | "wide", number> = {
+            narrow: 1,
+            medium: 3,
+            wide: 6,
+          };
+          ctx.state.registry.setSurgicalGate({ enabled: true, tier });
+          ctx.addOutput(
+            theme.accent(`\n  Surgical mode: ${tier} (file budget: ${budgets[tier]})\n`) +
+            theme.muted("  Use /surgical off to disable.\n"),
+          );
+          return true;
+        }
+
+        // /surgical cost-analysis — show per-tier cost breakdowns + promotion opportunities
+        if (args === "cost-analysis" || args.startsWith("cost-analysis ")) {
+          const { generateCostAnalysisReport, formatCostAnalysisReport } = await import(
+            "../agent/surgical-cost-optimizer.ts"
+          );
+          const { getGlobalIntentTracker } = await import("../agent/surgical-intent-analyzer.ts");
+          const tracker = getGlobalIntentTracker();
+          // Use current session confidence if available, otherwise default 0.75
+          let confidence = 0.75;
+          if (tracker.size() > 0) {
+            const analysis = tracker.analyzeCurrentIntent();
+            confidence = analysis.confidence;
+          }
+          const report = generateCostAnalysisReport(confidence);
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Surgical Cost Analysis"),
+              formatCostAnalysisReport(report),
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        // /surgical analyze <message> — analyze scope for a given message and show suggestion
+        if (args.startsWith("analyze ")) {
+          const msg = args.slice("analyze ".length).trim();
+          if (!msg) {
+            ctx.addOutput(theme.warning("\n  Usage: /surgical analyze <your message>\n"));
+            return true;
+          }
+          const analyzer = new SurgicalScopeAnalyzer();
+          const result = analyzer.analyze(msg, "");
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Scope Analysis"),
+              analyzer.formatSuggestion(result),
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        // /surgical propose <goal> — LLM-powered tier proposal with confidence scoring
+        if (args.startsWith("propose ") || args === "propose") {
+          const goal = args.startsWith("propose ") ? args.slice("propose ".length).trim() : "";
+          if (!goal) {
+            ctx.addOutput(
+              [
+                "",
+                theme.warning("  Usage: /surgical propose <goal>"),
+                theme.muted("  Example: /surgical propose add caching to login flow"),
+                "",
+              ].join("\n"),
+            );
+            return true;
+          }
+
+          const { proposeTierForGoal, logProposalFeedback, formatProposal } = await import(
+            "../agent/surgical-proposer.ts"
+          );
+
+          // Gather codebase context
+          const cwd = ctx.state.toolContext.cwd ?? process.cwd();
+          let fileCount: number | undefined;
+          let recentEdits: string[] | undefined;
+          try {
+            const proc = Bun.spawn(
+              ["git", "diff", "--name-only", "HEAD~5", "HEAD"],
+              { cwd, stdout: "pipe", stderr: "pipe" },
+            );
+            const out = await new Response(proc.stdout).text();
+            await proc.exited;
+            const edits = out.split("\n").map((l) => l.trim()).filter(Boolean);
+            if (edits.length > 0) recentEdits = edits;
+          } catch { /* non-git dirs OK */ }
+
+          try {
+            const proc = Bun.spawn(
+              ["bash", "-c", "find . -type f \\( -name '*.ts' -o -name '*.js' -o -name '*.tsx' -o -name '*.jsx' -o -name '*.py' -o -name '*.go' \\) | wc -l"],
+              { cwd, stdout: "pipe", stderr: "pipe" },
+            );
+            const out = await new Response(proc.stdout).text();
+            await proc.exited;
+            const n = parseInt(out.trim(), 10);
+            if (!isNaN(n) && n > 0) fileCount = n;
+          } catch { /* best effort */ }
+
+          const proposal = proposeTierForGoal(goal, { fileCount, recentEdits, cwd });
+
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  Surgical Tier Proposal"),
+              formatProposal(proposal),
+              "",
+            ].join("\n"),
+          );
+
+          // Auto-apply if confidence >= 0.8
+          if (proposal.confidence >= 0.8) {
+            ctx.state.registry.setSurgicalGate({ enabled: true, tier: proposal.tier });
+            ctx.addOutput(
+              theme.success(
+                `  Auto-applied: surgical mode set to ${proposal.tier} ` +
+                `(confidence ${Math.round(proposal.confidence * 100)}% ≥ 80%)\n`,
+              ) +
+              theme.muted(
+                "  Override with: /surgical narrow | /surgical medium | /surgical wide\n" +
+                "  Log override feedback: /surgical propose-feedback <goal> <chosen-tier>\n",
+              ),
+            );
+
+            // Log accepted feedback
+            await logProposalFeedback({
+              timestamp: new Date().toISOString(),
+              goal,
+              suggestedTier: proposal.tier,
+              suggestedConfidence: proposal.confidence,
+              chosenTier: proposal.tier,
+              outcome: "accepted",
+              chosenNumericTier: proposal.numericTier,
+            });
+          } else {
+            ctx.addOutput(
+              theme.warning(
+                `  Confidence ${Math.round(proposal.confidence * 100)}% below 80% threshold.\n` +
+                "  Pick a tier manually: /surgical narrow | /surgical medium | /surgical wide\n",
+              ),
+            );
+          }
+
+          return true;
+        }
+
+        // /surgical stats — show suggestion accuracy and calibration
+        if (args === "stats") {
+          const { loadProposalFeedback, computeProposalStats, formatProposalStats } = await import(
+            "../agent/surgical-proposer.ts"
+          );
+          const feedback = await loadProposalFeedback();
+          const stats = computeProposalStats(feedback);
+          ctx.addOutput(formatProposalStats(stats));
+          return true;
+        }
+
+        // /surgical replay [turn#] — chronological tool decisions for a turn
+        if (args === "replay" || args.startsWith("replay ")) {
+          const { handleSurgicalReplay } = await import("./surgical-commands.ts");
+          return handleSurgicalReplay(args.slice("replay".length).trim(), ctx);
+        }
+
+        // /surgical audit — summary stats: tiers used, allowed/blocked counts
+        if (args === "audit" || args.startsWith("audit ")) {
+          const { handleSurgicalAudit } = await import("./surgical-commands.ts");
+          return handleSurgicalAudit(args.slice("audit".length).trim(), ctx);
+        }
+
+        // /surgical viz — full tier confidence dashboard
+        if (args === "viz" || args.startsWith("viz ")) {
+          const { handleSurgicalViz } = await import("./surgical-viz.ts");
+          return handleSurgicalViz(args.slice("viz".length).trim(), ctx);
+        }
+
+        // /surgical confidence — confidence distribution chart
+        if (args === "confidence" || args.startsWith("confidence ")) {
+          const { handleSurgicalConfidence } = await import("./surgical-viz.ts");
+          return handleSurgicalConfidence(args.slice("confidence".length).trim(), ctx);
+        }
+
+        // /surgical history — recent tier decisions
+        if (args === "history" || args.startsWith("history ")) {
+          const { handleSurgicalHistory } = await import("./surgical-viz.ts");
+          return handleSurgicalHistory(args.slice("history".length).trim(), ctx);
+        }
+
+        // /surgical feedback [retrain] — review recent run outcomes + optional retraining
+        if (args === "feedback" || args.startsWith("feedback")) {
+          const subArg = args === "feedback" ? "" : args.slice("feedback".length).trim();
+          const { feature } = await import("../config/features.ts");
+          const { SurgicalFeedbackRecorder } = await import("../agent/surgical-feedback-recorder.ts");
+          const recorder = new SurgicalFeedbackRecorder();
+
+          if (subArg === "retrain") {
+            // On-demand retraining pass
+            if (!feature("SURGICAL_RETRAINING")) {
+              ctx.addOutput(
+                theme.warning("\n  Surgical retraining is disabled.\n") +
+                theme.muted(
+                  "  Enable with: AC_FEATURE_SURGICAL_RETRAINING=true\n" +
+                  "  Then run /surgical feedback retrain again.\n",
+                ),
+              );
+              return true;
+            }
+            const { ProposalRetrainer } = await import("../agent/surgical-proposal-retrainer.ts");
+            const retrainer = new ProposalRetrainer(recorder);
+            ctx.addOutput(theme.muted("\n  Running retraining pass…\n"));
+            const result = await retrainer.retrain();
+            ctx.addOutput(retrainer.formatResult(result));
+            return true;
+          }
+
+          // Default: show feedback report
+          const records = await recorder.loadRecent(50);
+          ctx.addOutput(recorder.formatReport(records));
+
+          if (!feature("SURGICAL_RETRAINING")) {
+            ctx.addOutput(
+              theme.muted(
+                "  Tip: Enable closed-loop retraining with AC_FEATURE_SURGICAL_RETRAINING=true\n" +
+                "  Then use /surgical feedback retrain to auto-tune heuristic weights.\n",
+              ),
+            );
+          } else {
+            ctx.addOutput(
+              theme.muted("  Run /surgical feedback retrain to update heuristic weights.\n"),
+            );
+          }
+          return true;
+        }
+
+        // /surgical <free-text> — auto-detect tier from the provided message text
+        // This is the primary UX: user types what they want to do and the analyzer
+        // suggests a tier before committing to it.
+        const analyzer = new SurgicalScopeAnalyzer();
+        const result = analyzeScopeFromIntent(args, "");
+        const pct = Math.round(result.confidence * 100);
+
+        ctx.addOutput(
+          [
+            "",
+            theme.accentBold("  Surgical Scope Auto-Detection"),
+            analyzer.formatSuggestion(result),
+            "",
+          ].join("\n"),
+        );
+
+        // Auto-apply when confidence is high enough (≥70%), otherwise prompt
+        if (result.confidence >= 0.7) {
+          const budgets: Record<"narrow" | "medium" | "wide", number> = {
+            narrow: 1,
+            medium: 3,
+            wide: 6,
+          };
+          ctx.state.registry.setSurgicalGate({ enabled: true, tier: result.suggestedTier });
+          ctx.addOutput(
+            theme.success(
+              `  Applied: surgical mode set to ${result.suggestedTier} ` +
+              `(confidence ${pct}% — above 70% threshold)\n`,
+            ) + theme.muted("  Override with: /surgical narrow | /surgical medium | /surgical wide\n"),
+          );
+        } else {
+          ctx.addOutput(
+            theme.warning(
+              `  Confidence ${pct}% below threshold — not auto-applying.\n` +
+              `  Run /surgical narrow, /surgical medium, or /surgical wide to set manually.\n`,
+            ),
+          );
+        }
+
+        return true;
+      },
+    },
+    {
       name: "/trigger",
       description: "Schedule recurring agent tasks",
       category: "agent",
@@ -527,6 +964,278 @@ export function agentCommands(): Command[] {
             "\n  /trigger add <schedule> <prompt>\n  /trigger list\n  /trigger toggle <id>\n  /trigger delete <id>\n",
           ),
         );
+        return true;
+      },
+    },
+    {
+      name: "/tool-metrics",
+      description: "Show tool execution performance metrics",
+      category: "agent",
+      subcommands: ["compare"],
+      handler: async (args, ctx) => {
+        const { getToolAnalytics } = await import("../agent/tool-analytics.ts");
+        const analytics = getToolAnalytics();
+
+        // /tool-metrics compare <goal1> <goal2>
+        if (args?.startsWith("compare ")) {
+          const parts = args.slice("compare ".length).trim().split(/\s+/);
+          const goal1 = parts[0] ?? "";
+          const goal2 = parts[1] ?? "";
+          if (!goal1 || !goal2) {
+            ctx.addOutput(theme.warning("\n  Usage: /tool-metrics compare <goal1> <goal2>\n"));
+            return true;
+          }
+          const r1 = analytics.rollupByGoal(goal1);
+          const r2 = analytics.rollupByGoal(goal2);
+          const lines: string[] = [
+            "",
+            theme.accentBold("  Tool Metrics Comparison"),
+            theme.muted(`  Goal A: ${goal1}   |   Goal B: ${goal2}`),
+            "",
+            "  " + padR("Tool", 18) + padL("Calls A", 9) + padL("Calls B", 9) +
+              padL("Avg ms A", 10) + padL("Avg ms B", 10) + padL("Err% A", 8) + padL("Err% B", 8),
+            "  " + "-".repeat(72),
+          ];
+          const allTools = new Set([
+            ...r1.byTool.map((t) => t.toolName),
+            ...r2.byTool.map((t) => t.toolName),
+          ]);
+          for (const tool of allTools) {
+            const t1 = r1.byTool.find((t) => t.toolName === tool);
+            const t2 = r2.byTool.find((t) => t.toolName === tool);
+            lines.push(
+              "  " +
+                padR(tool.slice(0, 17), 18) +
+                padL(t1 ? String(t1.calls) : "-", 9) +
+                padL(t2 ? String(t2.calls) : "-", 9) +
+                padL(t1 ? fmtMs(t1.avgDurationMs) : "-", 10) +
+                padL(t2 ? fmtMs(t2.avgDurationMs) : "-", 10) +
+                padL(t1 ? fmtPct(1 - t1.successRate) : "-", 8) +
+                padL(t2 ? fmtPct(1 - t2.successRate) : "-", 8),
+            );
+          }
+          lines.push("");
+          ctx.addOutput(lines.join("\n"));
+          return true;
+        }
+
+        // /tool-metrics <toolname> — detailed histogram for a single tool
+        if (args && args.trim() && !args.startsWith("compare")) {
+          const toolName = args.trim();
+          const rollups = analytics.rollupByTool();
+          const entry = rollups.find(
+            (r) => r.toolName.toLowerCase() === toolName.toLowerCase(),
+          );
+          if (!entry) {
+            ctx.addOutput(theme.warning(`\n  No metrics recorded for tool: ${toolName}\n`));
+            return true;
+          }
+          const anomaly = analytics.anomalyDetect(toolName);
+          const lines: string[] = [
+            "",
+            theme.accentBold(`  Tool Metrics: ${entry.toolName}`),
+            "",
+            `  Calls:        ${entry.calls}`,
+            `  Errors:       ${entry.errors}  (${fmtPct(1 - entry.successRate)} error rate)`,
+            `  Avg duration: ${fmtMs(entry.avgDurationMs)}`,
+            `  P50 duration: ${fmtMs(entry.p50DurationMs)}`,
+            `  P95 duration: ${fmtMs(entry.p95DurationMs)}`,
+            `  Max duration: ${fmtMs(entry.maxDurationMs)}`,
+            `  Avg output:   ${fmtBytes(entry.avgOutputBytes)}`,
+            `  Total output: ${fmtBytes(entry.totalOutputBytes)}`,
+          ];
+          if (anomaly.outliers.length > 0) {
+            lines.push("");
+            lines.push(theme.warning(`  Anomalies (z > 2.5):`));
+            lines.push(
+              `  Baseline: mean=${fmtMs(anomaly.meanMs)} std=${fmtMs(anomaly.stdMs)}`,
+            );
+            for (const o of anomaly.outliers.slice(0, 5)) {
+              const ts = new Date(o.timestamp).toISOString();
+              lines.push(
+                `    ${ts}  ${fmtMs(o.durationMs)}  z=${o.zScore.toFixed(2)}${o.isError ? "  [error]" : ""}`,
+              );
+            }
+          }
+          lines.push("");
+          ctx.addOutput(lines.join("\n"));
+          return true;
+        }
+
+        // /tool-metrics — ASCII table of all tools
+        const rollups = analytics.rollupByTool();
+        if (rollups.length === 0) {
+          ctx.addOutput(theme.tertiary("\n  No tool metrics recorded yet.\n"));
+          return true;
+        }
+        const lines: string[] = [
+          "",
+          theme.accentBold("  Tool Performance Metrics"),
+          "",
+          "  " +
+            padR("Tool", 20) +
+            padL("Calls", 7) +
+            padL("Errors", 8) +
+            padL("Succ%", 7) +
+            padL("Avg ms", 9) +
+            padL("P95 ms", 9) +
+            padL("Avg out", 9),
+          "  " + "-".repeat(69),
+        ];
+        for (const r of rollups) {
+          lines.push(
+            "  " +
+              padR(r.toolName.slice(0, 19), 20) +
+              padL(String(r.calls), 7) +
+              padL(String(r.errors), 8) +
+              padL(fmtPct(r.successRate), 7) +
+              padL(fmtMs(r.avgDurationMs), 9) +
+              padL(fmtMs(r.p95DurationMs), 9) +
+              padL(fmtBytes(r.avgOutputBytes), 9),
+          );
+        }
+        lines.push("");
+        ctx.addOutput(lines.join("\n"));
+        return true;
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // /speculate <goal> — Speculative execution proposals
+    // -----------------------------------------------------------------------
+    {
+      name: "/speculate",
+      description: "Show speculative tool-call predictions for a goal. Usage: /speculate <goal>",
+      category: "agent",
+      subcommands: ["--stats", "--reset"],
+      handler: async (args, ctx) => {
+        const { getGlobalSpeculationPredictor, formatPredictionProposal, formatSpeculationTelemetry, resetSpeculationTelemetry } = await import(
+          "../agent/speculation-predictor.ts"
+        );
+
+        if (!args?.trim() || args.trim() === "--stats") {
+          if (args?.trim() === "--stats") {
+            ctx.addOutput("\n" + formatSpeculationTelemetry() + "\n");
+            return true;
+          }
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  /speculate — Speculative Tool-Call Proposals"),
+              "",
+              `  ${theme.accent("Usage:")}  /speculate <goal>`,
+              `  ${theme.accent("Stats:")}  /speculate --stats`,
+              `  ${theme.accent("Reset:")}  /speculate --reset`,
+              "",
+              `  ${theme.muted("Analyzes your goal and predicts which tools are likely to be")}`,
+              `  ${theme.muted("called next, with confidence intervals. High-confidence read")}`,
+              `  ${theme.muted("tools are pre-warmed in the speculation cache.")}`,
+              "",
+              `  ${theme.accent("Example:")} /speculate refactor the auth module to use JWT`,
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        if (args.trim() === "--reset") {
+          resetSpeculationTelemetry();
+          ctx.addOutput(theme.success("\n  Speculation telemetry reset.\n"));
+          return true;
+        }
+
+        const predictor = getGlobalSpeculationPredictor();
+
+        // Use the session message history as recent tool context
+        const recentHistory = ctx.state.history
+          .slice(-20)
+          .flatMap((m) => {
+            if (m.role !== "tool") return [];
+            // Tool messages have content as tool_result blocks
+            return [{ name: String((m as any).tool_name ?? ""), input: {}, result: String((m as any).content ?? "") }];
+          });
+
+        const result = predictor.predict(args, recentHistory);
+
+        ctx.addOutput(
+          [
+            "",
+            theme.accentBold("  Speculation Proposal"),
+            theme.muted(`  Goal: ${args.slice(0, 80)}${args.length > 80 ? "..." : ""}`),
+            "",
+            formatPredictionProposal(result),
+            "",
+          ].join("\n"),
+        );
+
+        return true;
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // /estimate <goal> — Pre-flight cost projection
+    // -----------------------------------------------------------------------
+    {
+      name: "/estimate",
+      description: "Project token cost before agents run. Usage: /estimate <goal>",
+      category: "agent",
+      handler: async (args, ctx) => {
+        if (!args?.trim()) {
+          ctx.addOutput(
+            [
+              "",
+              theme.accentBold("  /estimate — Pre-Flight Cost Estimator"),
+              "",
+              `  ${theme.accent("Usage:")}  /estimate <goal>`,
+              "",
+              `  ${theme.muted("Analyzes goal complexity, projects token usage, and shows")}`,
+              `  ${theme.muted("provider cost trade-offs BEFORE burning tokens.")}`,
+              "",
+              `  ${theme.accent("Example:")} /estimate refactor auth module with tests`,
+              "",
+            ].join("\n"),
+          );
+          return true;
+        }
+
+        const { estimateGoalCost, formatCostEstimate } = await import("../agent/cost-estimator.ts");
+        const { historicalAverageCost } = await import("../providers/cost-tracker.ts");
+
+        // Seed with historical data when available
+        const hist = historicalAverageCost(args, ctx.state.router.costTracker);
+        const historicalAvgCostPerTurn = hist && hist.turns > 0
+          ? hist.totalCostUSD / hist.turns
+          : undefined;
+
+        // Retrieve --max-cost from environment or provider config (if set)
+        const maxCostEnv = process.env.ASHLRCODE_MAX_COST ?? process.env.AC_MAX_COST;
+        const maxCostUSD = maxCostEnv ? parseFloat(maxCostEnv) : undefined;
+
+        const defaultProvider = ctx.state.router.currentProvider.name;
+
+        const estimate = estimateGoalCost(args, {
+          maxCostUSD: Number.isFinite(maxCostUSD ?? NaN) ? maxCostUSD : undefined,
+          defaultProvider,
+          historicalAvgCostPerTurn,
+        });
+
+        const formatted = formatCostEstimate(args, estimate, maxCostUSD);
+
+        // Colorize budget status line
+        if (!estimate.budgetOK) {
+          ctx.addOutput(theme.warning(formatted));
+        } else {
+          ctx.addOutput(formatted);
+        }
+
+        if (hist) {
+          ctx.addOutput(
+            theme.muted(
+              `  (Historical session: ${hist.turns} turns, $${hist.totalCostUSD.toFixed(4)} total — used to calibrate estimate)\n`,
+            ),
+          );
+        }
+
         return true;
       },
     },

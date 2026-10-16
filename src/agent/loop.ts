@@ -20,6 +20,16 @@ import type {
 } from "../providers/types.ts";
 import type { SystemPrompt, AgentId } from "../types/branded.ts";
 import { runWithAgentContext, createChildContext, getAgentContext } from "./async-context.ts";
+import {
+  recordTurnBoundary,
+  recordGoalNormalization,
+  recordContextCompression,
+  nextTurn,
+  approxTokens,
+} from "./intent-trace.ts";
+import { getBudgetAllocator } from "./budget-allocator.ts";
+import { checkContextOverflow } from "./context-overflow-handler.ts";
+import { getGlobalReasoningCache } from "./reasoning-cache.ts";
 
 /** Default inactivity timeout for provider streams (5 minutes). */
 const DEFAULT_STREAM_TIMEOUT_MS = 300_000;
@@ -147,14 +157,74 @@ async function _runAgentLoop(
   const allToolCalls: AgentResult["toolCalls"] = [];
   let finalText = "";
 
+  const sid = config.toolContext.sessionId ?? "default";
+  // Record goal normalization at the start of the outer user turn (iteration 0).
+  const turn = nextTurn(sid);
+  void recordGoalNormalization(sid, turn, userMessage, userMessage.slice(0, 200));
+  void recordTurnBoundary(sid, turn, "start");
+
+  // ── Reasoning Cache: inject prior context into system prompt ─────────────
+  // On the first turn, look up cached reasoning for a similar goal and prepend
+  // it to the system prompt so the model can inherit prior thinking chains.
+  let effectiveSystemPrompt = config.systemPrompt as string;
+  try {
+    const reasoningInjection = await getGlobalReasoningCache().buildPromptInjection(userMessage);
+    if (reasoningInjection) {
+      effectiveSystemPrompt = reasoningInjection + "\n\n" + effectiveSystemPrompt;
+      process.stderr.write("[loop] reasoning-cache: prepended prior reasoning context\n");
+    }
+  } catch {
+    // Cache errors are non-fatal — continue without injection
+  }
+
+  // Use a patched config with the enriched system prompt for this run
+  const effectiveConfig: AgentConfig = effectiveSystemPrompt !== config.systemPrompt
+    ? { ...config, systemPrompt: effectiveSystemPrompt }
+    : config;
+
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // ── Pre-flight context overflow check ────────────────────────────────────
+    // Detect imminent context window exhaustion and apply graceful degradation
+    // before sending to the provider. This prevents hard provider-side errors.
+    {
+      const providerName = (config.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      const overflowResult = checkContextOverflow(messages, providerName);
+      if (overflowResult.degraded) {
+        // Replace messages with the compacted version
+        messages.splice(0, messages.length, ...overflowResult.messages);
+        // Emit the user warning if we're still critically full after degradation
+        if (overflowResult.warning && config.onText) {
+          config.onText(overflowResult.warning.message + "\n");
+        }
+      }
+    }
+
+    // Detect context compression: if messages have grown significantly compared
+    // to the last iteration, record a compression event (heuristic: block count drops).
+    const blocksBefore = messages.reduce(
+      (acc, m) => acc + (Array.isArray(m.content) ? m.content.length : 1),
+      0
+    );
+
     const { text, thinking, thinkingSignature, toolCalls, stopReason } = await streamResponse(
       messages,
       tools,
-      config
+      effectiveConfig
     );
 
     finalText = text;
+
+    // ── Reasoning Cache: store thinking block from first iteration ────────
+    // Capture the thinking block produced on iteration 0 (the primary response
+    // to the user goal) so future similar goals can inherit this reasoning.
+    if (iteration === 0 && thinking) {
+      const providerName = (effectiveConfig.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      void getGlobalReasoningCache()
+        .store(userMessage, thinking, providerName)
+        .catch(() => { /* cache write errors are non-fatal */ });
+    }
 
     // Build assistant message with content blocks.
     // Include thinking blocks so Anthropic's API sees them on subsequent turns.
@@ -209,12 +279,28 @@ async function _runAgentLoop(
     }
 
     messages.push({ role: "user", content: resultBlocks });
+
+    // Detect context compression heuristic: measure token delta after appending results.
+    const blocksAfter = messages.reduce(
+      (acc, m) => acc + (Array.isArray(m.content) ? m.content.length : 1),
+      0
+    );
+    if (iteration > 0 && blocksAfter < blocksBefore) {
+      const tokensBefore = approxTokens(JSON.stringify(messages.slice(0, -1)));
+      const tokensAfter = approxTokens(JSON.stringify(messages));
+      if (tokensBefore > tokensAfter) {
+        void recordContextCompression(sid, turn, tokensBefore, tokensAfter, blocksBefore - blocksAfter);
+      }
+    }
   }
 
   // If we hit max iterations with no final text, add a fallback
   if (!finalText && allToolCalls.length > 0) {
     finalText = `[Reached maximum iterations (${maxIterations}). ${allToolCalls.length} tool calls were executed.]`;
   }
+
+  // Record turn end
+  void recordTurnBoundary(sid, turn, "end", allToolCalls.length, finalText.slice(0, 120));
 
   return { messages, finalText, toolCalls: allToolCalls };
 }
@@ -250,6 +336,19 @@ export async function* streamAgentLoop(
   let finalText = "";
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    // ── Pre-flight context overflow check ────────────────────────────────────
+    {
+      const providerName = (config.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      const overflowResult = checkContextOverflow(messages, providerName);
+      if (overflowResult.degraded) {
+        messages.splice(0, messages.length, ...overflowResult.messages);
+        if (overflowResult.warning) {
+          yield { type: "text_delta", text: overflowResult.warning.message + "\n" };
+        }
+      }
+    }
+
     // Stream API response, yielding text deltas as they arrive
     let text = "";
     let thinking = "";
@@ -299,12 +398,24 @@ export async function* streamAgentLoop(
           break;
 
         case "usage":
-          if (event.usage) config.onUsage?.(event.usage);
+          if (event.usage) {
+            config.onUsage?.(event.usage);
+            getBudgetAllocator().recordUsage(event.usage);
+          }
           break;
       }
     }
 
     finalText = text;
+
+    // ── Reasoning Cache: store thinking block from first iteration ────────
+    if (iteration === 0 && thinking) {
+      const providerName = (config.router as { currentProvider?: { name?: string } })
+        ?.currentProvider?.name ?? "anthropic";
+      void getGlobalReasoningCache()
+        .store(userMessage, thinking, providerName)
+        .catch(() => { /* cache write errors are non-fatal */ });
+    }
 
     // Build assistant message with content blocks
     const contentBlocks: ContentBlock[] = [];
@@ -445,7 +556,10 @@ async function streamResponse(
         break;
 
       case "usage":
-        if (event.usage) config.onUsage?.(event.usage);
+        if (event.usage) {
+          config.onUsage?.(event.usage);
+          getBudgetAllocator().recordUsage(event.usage);
+        }
         break;
     }
   }

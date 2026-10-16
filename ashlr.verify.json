@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "mode": "replace-detected",
+  "commands": [
+    {
+      "id": "typecheck",
+      "kind": "typecheck",
+      "cmd": ["bun", "run", "typecheck"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "required": true,
+      "profiles": ["quick", "merge"]
+    },
+    {
+      "id": "build",
+      "kind": "build",
+      "cmd": ["bun", "run", "build"],
+      "cwd": ".",
+      "timeoutMs": 60000,
+      "required": true,
+      "profiles": ["merge"]
+    },
+    {
+      "id": "test",
+      "kind": "test",
+      "cmd": ["bun", "test"],
+      "cwd": ".",
+      "timeoutMs": 180000,
+      "required": true,
+      "profiles": ["merge"]
+    },
+    {
+      "id": "binary-smoke",
+      "kind": "test",
+      "cmd": ["./dist/ac", "--version"],
+      "cwd": ".",
+      "timeoutMs": 30000,
+      "required": true,
+      "profiles": ["merge"]
+    }
+  ]
+}

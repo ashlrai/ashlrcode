@@ -6,6 +6,11 @@ import { createOpenAICompatibleProvider, createXAIProvider } from "./xai.ts";
 import { createAnthropicProvider } from "./anthropic.ts";
 import { CostTracker } from "./cost-tracker.ts";
 import { CircuitBreaker } from "./retry.ts";
+import { emitSpan } from "../telemetry/pulse-hud.ts";
+import { globalPredictor, CONFIDENCE_THRESHOLD } from "./rate-limit-predictor.ts";
+import { getGlobalReasoningCache } from "../agent/reasoning-cache.ts";
+import { resolveToolDispatch, type DispatchResolution } from "../tools/capability-check.ts";
+import type { ProviderId } from "./capability-registry.ts";
 import type {
   Provider,
   ProviderConfig,
@@ -34,7 +39,7 @@ export class ProviderRouter {
       perProvider: new Map<string, { inputTokens: number; outputTokens: number; reasoningTokens: number; costUSD: number }>(
         tracker.getBreakdown().map(e => [
           `${e.provider}`,
-          { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens, reasoningTokens: e.usage.reasoningTokens, costUSD: e.costUSD },
+          { inputTokens: e.usage.inputTokens, outputTokens: e.usage.outputTokens, reasoningTokens: e.usage.reasoningTokens, costUSD: e.cost.totalCostUSD },
         ])
       ),
     };
@@ -112,15 +117,46 @@ export class ProviderRouter {
         );
       }
 
+      // ── Rate-limit prediction pre-check ──────────────────────────────────
+      // Estimate token count for this request (rough: chars / 4)
+      const estimatedTokens = Math.round(
+        request.messages.reduce((sum, m) => {
+          const text = typeof m.content === "string"
+            ? m.content
+            : m.content.map((b) => ("text" in b ? b.text : "thinking" in b ? b.thinking : "")).join("");
+          return sum + text.length;
+        }, 0) / 4,
+      );
+      const prediction = globalPredictor.predict(provider.name, estimatedTokens);
+      if (prediction.confidence >= CONFIDENCE_THRESHOLD) {
+        if (prediction.action === "switch_provider" && i + 1 < this.providers.length) {
+          process.stderr.write(
+            `[router] predictor suggests switching from ${provider.name} (confidence ${(prediction.confidence * 100).toFixed(0)}%): ${prediction.reason}\n`,
+          );
+          this.currentIndex = i + 1;
+          continue;
+        }
+        if (prediction.action === "delay" && prediction.delayMs) {
+          process.stderr.write(
+            `[router] predictor applying ${prediction.delayMs}ms delay before ${provider.name} (confidence ${(prediction.confidence * 100).toFixed(0)}%): ${prediction.reason}\n`,
+          );
+          await new Promise<void>((resolve) => setTimeout(resolve, prediction.delayMs!));
+        }
+      }
+
       try {
+        let usageTokens = 0;
         for await (const event of provider.stream(request)) {
           // Track usage
           if (event.type === "usage" && event.usage) {
             this.trackUsage(provider, event.usage);
+            usageTokens = (event.usage.inputTokens ?? 0) + (event.usage.outputTokens ?? 0);
           }
           yield event;
         }
         breaker.recordSuccess();
+        // Teach the predictor: successful request, actual tokens consumed
+        globalPredictor.record(provider.name, usageTokens || estimatedTokens, false);
         return; // Success — exit
       } catch (err) {
         lastError = err as Error;
@@ -131,11 +167,38 @@ export class ProviderRouter {
           lastError.message.includes("rate_limit") ||
           lastError.message.includes("quota");
 
+        // Teach the predictor regardless of outcome
+        globalPredictor.record(provider.name, estimatedTokens, isRateLimit);
+
         if (isRateLimit && i + 1 < this.providers.length) {
           console.error(
             `\n⚠ ${provider.name} rate limited, falling back to ${this.providers[i + 1]!.name}...`
           );
           this.currentIndex = i + 1;
+          // Capture the goal from the last user message for reasoning cache lookup
+          // so the fallback provider can inherit prior reasoning context.
+          const lastUserMsg = [...request.messages].reverse().find((m) => m.role === "user");
+          if (lastUserMsg) {
+            const goalText = typeof lastUserMsg.content === "string"
+              ? lastUserMsg.content
+              : lastUserMsg.content
+                  .filter((b) => "text" in b && b.type === "text")
+                  .map((b) => ("text" in b ? b.text : ""))
+                  .join(" ");
+            if (goalText) {
+              // Async fire-and-forget: don't block the failover on cache I/O
+              void getGlobalReasoningCache()
+                .buildPromptInjection(goalText)
+                .then((injection) => {
+                  if (injection) {
+                    process.stderr.write(
+                      `[router] reasoning-cache: injecting prior context for fallback provider ${this.providers[this.currentIndex]!.name}\n`
+                    );
+                  }
+                })
+                .catch(() => { /* cache errors are non-fatal */ });
+            }
+          }
           continue;
         }
         throw lastError;
@@ -151,9 +214,38 @@ export class ProviderRouter {
       outputTokens: usage.outputTokens,
       reasoningTokens: usage.reasoningTokens ?? 0,
     });
+    // Pulse HUD: emit a GenAI-OTel LLM span (no-op unless pulseHud enabled).
+    emitSpan({
+      name: `chat ${provider.name}`,
+      kind: "llm",
+      attrs: {
+        "gen_ai.system": provider.name,
+        "gen_ai.request.model": provider.config.model,
+        "gen_ai.usage.input_tokens": usage.inputTokens,
+        "gen_ai.usage.output_tokens": usage.outputTokens,
+        "gen_ai.usage.reasoning_tokens": usage.reasoningTokens ?? 0,
+      },
+    });
   }
 
   getCostSummary(): string {
     return this.costTracker.formatSummary();
+  }
+
+  /**
+   * Resolve the best provider for a single tool dispatch without committing
+   * to a full session switch.
+   *
+   * When the current provider lacks native support for `toolName` and a
+   * native-supporting provider is available within the cost ceiling (≤1.5×),
+   * returns that provider's id so the caller can route this one invocation
+   * there while the session remains on the current provider.
+   *
+   * @param toolName   Name of the tool about to be dispatched.
+   * @returns          DispatchResolution with resolvedProvider + fallback metadata.
+   */
+  dispatchWithFallback(toolName: string): DispatchResolution {
+    const currentProviderName = this.currentProvider.name as ProviderId;
+    return resolveToolDispatch(toolName, currentProviderName);
   }
 }

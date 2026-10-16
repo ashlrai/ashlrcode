@@ -11,6 +11,15 @@ import type { ToolDefinition } from "../providers/types.ts";
 import { toolToDefinition } from "./types.ts";
 import { runPreToolHooks, runPostToolHooks, type HooksConfig } from "../config/hooks.ts";
 import { checkRules } from "../config/permissions.ts";
+import { emitSpan } from "../telemetry/pulse-hud.ts";
+import {
+  checkSurgicalToolGate,
+  formatSurgicalBlockMessage,
+  type SurgicalGateOptions,
+} from "./guards/surgical-tool-gate.ts";
+import { getMCPFallbackManager } from "../mcp/fallback-manager.ts";
+import type { ProviderId } from "../providers/capability-registry.ts";
+import { checkToolCapability, logCapabilityMismatch } from "./capability-check.ts";
 
 /** Default timeout for tool execution (2 minutes). Configurable via settings.toolTimeoutMs. */
 let DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -69,8 +78,39 @@ function formatInputPreview(toolName: string, input: Record<string, unknown>): s
 export class ToolRegistry {
   private tools = new Map<string, Tool>();
   private hooks: HooksConfig = {};
+  private _surgicalGate: SurgicalGateOptions | null = null;
+  /** Active provider ID used for capability checks at registration time. */
+  private _activeProvider: ProviderId | undefined = undefined;
+
+  /** Set the active provider so capability checks fire on register(). */
+  setActiveProvider(provider: ProviderId): void {
+    this._activeProvider = provider;
+  }
+
+  /** Clear the active provider (disables capability checks at registration). */
+  clearActiveProvider(): void {
+    this._activeProvider = undefined;
+  }
+
+  /** Activate surgical-mode tool restrictions for this registry instance. */
+  setSurgicalGate(opts: SurgicalGateOptions): void {
+    this._surgicalGate = opts;
+  }
+
+  /** Deactivate surgical-mode tool restrictions. */
+  clearSurgicalGate(): void {
+    this._surgicalGate = null;
+  }
 
   register(tool: Tool): void {
+    // Capability check at registration time: log a mismatch when the active
+    // provider does not natively support this tool so operators see it early.
+    if (this._activeProvider) {
+      const capResult = checkToolCapability(tool.name, this._activeProvider);
+      if (!capResult.canExecute || capResult.supportLevel !== "native") {
+        logCapabilityMismatch(tool.name, this._activeProvider, capResult);
+      }
+    }
     this.tools.set(tool.name, tool);
   }
 
@@ -104,15 +144,63 @@ export class ToolRegistry {
     /** Override the default tool execution timeout (ms). */
     timeoutMs?: number
   ): Promise<{ result: string; isError: boolean }> {
+    // Pre-execution fallback check: if this looks like an MCP tool name and
+    // the owning server is degraded, suggest the built-in fallback proactively
+    // so the agent can switch without stalling.
+    if (toolName.startsWith("mcp__")) {
+      const fallbackMgr = getMCPFallbackManager();
+      if (fallbackMgr.isServerDegraded(toolName)) {
+        const suggestion = fallbackMgr.resolveFallback(toolName);
+        if (suggestion) {
+          return {
+            result: `MCP server degraded. Suggested fallback for "${toolName}": use "${suggestion}" instead.`,
+            isError: true,
+          };
+        }
+      }
+    }
+
     const tool = this.tools.get(toolName);
     if (!tool) {
       return { result: `Unknown tool: ${toolName}`, isError: true };
+    }
+
+    // Log capability mismatch at execution time (non-blocking — we log but
+    // still attempt execution so degraded-mode tools can run).
+    if (this._activeProvider) {
+      const capResult = checkToolCapability(toolName, this._activeProvider);
+      if (!capResult.canExecute || capResult.supportLevel !== "native") {
+        logCapabilityMismatch(toolName, this._activeProvider, capResult);
+      }
     }
 
     // Validate input first (before permissions — don't prompt for invalid input)
     const validationError = tool.validateInput(input);
     if (validationError) {
       return { result: `Validation error: ${validationError}`, isError: true };
+    }
+
+    // Semantic validation — deeper checks (path traversal, dangerous patterns, glob breadth).
+    // Runs after schema validation but before permission prompts.
+    if (tool.validateSemantics) {
+      const semanticError = await tool.validateSemantics(input, context);
+      if (semanticError) {
+        return { result: `Permission denied (semantic validation): ${semanticError}`, isError: true };
+      }
+    }
+
+    // Surgical tool gate — in surgical mode, restrict which tools and Bash
+    // patterns are allowed based on the active ScopeTier. Runs after semantic
+    // validation but before permission prompts so blocked tools never surface
+    // a permission dialog.
+    if (this._surgicalGate) {
+      const gateResult = checkSurgicalToolGate(toolName, input, this._surgicalGate);
+      if (gateResult.verdict === "block") {
+        return {
+          result: formatSurgicalBlockMessage(gateResult),
+          isError: true,
+        };
+      }
     }
 
     // Check permissions for non-read-only tools.
@@ -161,6 +249,7 @@ export class ToolRegistry {
     // Execute tool with timeout protection (exempt tools that wait for human input or run sub-agents)
     const skipTimeout = NO_TIMEOUT_TOOLS.has(toolName);
     const timeout = timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
+    const _spanStart = Date.now();
     try {
       const result = skipTimeout
         ? await tool.call(input, context)
@@ -177,9 +266,11 @@ export class ToolRegistry {
       // Run post-tool hooks (fire and forget)
       runPostToolHooks(this.hooks, toolName, input, result).catch(() => {});
 
+      emitSpan({ name: `tool ${toolName}`, kind: "tool", durationMs: Date.now() - _spanStart, attrs: { "gen_ai.tool.name": toolName } });
       return { result, isError: false };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      emitSpan({ name: `tool ${toolName}`, kind: "tool", durationMs: Date.now() - _spanStart, error: message, attrs: { "gen_ai.tool.name": toolName } });
       return { result: `Error: ${message}`, isError: true };
     }
   }

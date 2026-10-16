@@ -37,6 +37,17 @@ export interface Tool {
   /** Validate input before execution */
   validateInput(input: Record<string, unknown>): string | null;
 
+  /**
+   * Semantic validation — deeper checks beyond JSON schema (path traversal,
+   * dangerous patterns, glob breadth, etc.).  Return null if valid, or an
+   * error string with a suggested fix if invalid.  Called by the registry
+   * after validateInput and before permissions.
+   */
+  validateSemantics?(
+    input: Record<string, unknown>,
+    context: ToolContext
+  ): Promise<string | null> | string | null;
+
   /** Tool-specific permission check. Return null if allowed, or error string if denied. */
   checkPermissions?(input: Record<string, unknown>, context: ToolContext): string | null;
 

@@ -15,6 +15,9 @@ import { AnimatedSpinner } from "./AnimatedSpinner.tsx";
 import { BuddyPanel } from "./BuddyPanel.tsx";
 import { getAction, type InputHistory } from "./keybindings.ts";
 import { SlashInput } from "./SlashInput.tsx";
+import type { AggregatorChunk } from "../agent/streaming-result-aggregator.ts";
+import type { ToolResultChunk } from "../agent/tool-result-streaming.ts";
+import { ActiveStreamingTools } from "./tool-result-view.tsx";
 
 /**
  * Extract a file path suggestion for the last word in the input.
@@ -103,10 +106,28 @@ interface AppProps {
   tokenStats: string;
   commands: string[];
   cwd: string;
+  /**
+   * Budget header bar lines (2-line string from ContextBudgetMonitor).
+   * When provided, rendered at the top of the output area.
+   */
+  budgetHeader?: string;
   /** Number of options in the currently pending AskUser question (0 = no pending question). */
   pendingQuestionOptionCount?: number;
   /** Labels for the pending question options (for arrow-key selection UI). */
   pendingQuestionLabels?: string[];
+  /**
+   * Live streaming tool result state — maps toolName → chunk state.
+   * Updated incrementally as chunks arrive via onToolResultChunk callback.
+   * Rendered between the static output history and the spinner.
+   */
+  streamingTools?: Map<
+    string,
+    {
+      chunks: ToolResultChunk[];
+      isComplete: boolean;
+      aggChunks?: AggregatorChunk[];
+    }
+  >;
 }
 
 export function App({
@@ -137,6 +158,8 @@ export function App({
   cwd,
   pendingQuestionOptionCount = 0,
   pendingQuestionLabels = [],
+  streamingTools,
+  budgetHeader,
 }: AppProps) {
   const [input, setInput] = useState("");
   const [inputKey, setInputKey] = useState(0); // Change key to force remount (resets cursor)
@@ -355,8 +378,20 @@ export function App({
 
   return (
     <Box flexDirection="column">
+      {/* Budget header bar — live context telemetry (2 lines when enabled) */}
+      {budgetHeader && (
+        <Box>
+          <Text>{budgetHeader}</Text>
+        </Box>
+      )}
+
       {/* Scrollable output */}
       <Static items={items}>{(item) => <Text key={item.id}>{item.text}</Text>}</Static>
+
+      {/* Live streaming tool results — appear as each chunk completes, before spinner */}
+      {streamingTools && streamingTools.size > 0 && (
+        <ActiveStreamingTools activeTools={streamingTools} />
+      )}
 
       {/* Animated spinner with rotating phrases + token stats */}
       {isProcessing && <AnimatedSpinner text={spinnerText} tokenStats={tokenStats} />}

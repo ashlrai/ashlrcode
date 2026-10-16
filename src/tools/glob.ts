@@ -5,6 +5,7 @@
 import fg from "fast-glob";
 import { resolve } from "path";
 import type { Tool, ToolContext } from "./types.ts";
+import { validateGlob } from "./validators/index.ts";
 
 export const globTool: Tool = {
   name: "Glob",
@@ -45,6 +46,14 @@ export const globTool: Tool = {
       return "pattern is required";
     }
     return null;
+  },
+
+  async validateSemantics(input: Record<string, unknown>, context: ToolContext): Promise<string | null> {
+    return validateGlob(
+      input.pattern as string,
+      context.cwd,
+      input.path as string | undefined
+    );
   },
 
   async call(input, context) {

@@ -24,6 +24,8 @@ import { saveCheckpoint, buildResumePrompt, loadCheckpoint, markCheckpointResume
 import type { ProviderRouter } from "../providers/router.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
+import { DedupCache, setGlobalDedupCache } from "./dedup-cache.ts";
+import { getAgentContext, runWithAgentContext, createChildContext } from "./async-context.ts";
 
 export interface CoordinatorConfig {
   router: ProviderRouter;
@@ -314,6 +316,12 @@ async function dispatchTasks(
   const results: CoordinatorResult["tasks"] = [];
   const waves = buildWaves(tasks);
 
+  // Create a fresh dedup cache for this coordinator run and publish it as the
+  // global cache so tool-executor picks it up for agents without an explicit
+  // AgentContext (e.g. the planning agent).
+  const waveCache = new DedupCache();
+  setGlobalDedupCache(waveCache);
+
   config.onProgress?.({
     type: "plan_ready",
     taskCount: tasks.length,
@@ -322,6 +330,12 @@ async function dispatchTasks(
 
   for (let waveIdx = 0; waveIdx < waves.length; waveIdx++) {
     const wave = waves[waveIdx]!;
+
+    // Flush the dedup cache between waves so agents in a later wave re-read
+    // files that may have been modified by agents in an earlier wave.
+    if (waveIdx > 0) {
+      waveCache.flush();
+    }
 
     config.onProgress?.({
       type: "wave_start",
@@ -415,7 +429,19 @@ async function dispatchTasks(
         };
       });
 
-      const waveResults = await runSubAgentsParallel(agentConfigs);
+      // Run sub-agents inside a coordinator AgentContext that carries the
+      // wave-scoped dedup cache.  createChildContext() propagates dedupCache
+      // to each sub-agent's own context so tool-executor finds it via
+      // getAgentContext().
+      const coordinatorCtx = getAgentContext();
+      const coordCtxWithCache = coordinatorCtx
+        ? { ...coordinatorCtx, dedupCache: waveCache }
+        : createChildContext(null, "coordinator", config.toolContext.cwd, false);
+      coordCtxWithCache.dedupCache = waveCache;
+
+      const waveResults = await runWithAgentContext(coordCtxWithCache, () =>
+        runSubAgentsParallel(agentConfigs)
+      );
 
       for (let i = 0; i < waveResults.length; i++) {
         const task = batchTasks[i]!;

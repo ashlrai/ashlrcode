@@ -8,6 +8,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { DedupCache } from "./dedup-cache.ts";
 
 export interface AgentContext {
   agentId: string;
@@ -18,6 +19,13 @@ export interface AgentContext {
   /** Nesting depth: 0 = root REPL session */
   depth: number;
   startedAt: string;
+  /**
+   * Shared dedup cache for the current coordinator wave.
+   * All sub-agents in a wave inherit the parent's cache so identical
+   * read-only tool calls are not re-executed. Undefined outside of a
+   * coordinator context (root REPL sessions do not share a dedup cache).
+   */
+  dedupCache?: DedupCache;
 }
 
 const storage = new AsyncLocalStorage<AgentContext>();
@@ -47,6 +55,9 @@ export function createChildContext(
     parentAgentId: parentCtx?.agentId,
     depth: (parentCtx?.depth ?? -1) + 1,
     startedAt: new Date().toISOString(),
+    // Propagate the parent's dedup cache so all sub-agents in a coordinator
+    // wave share the same instance and benefit from cross-agent deduplication.
+    dedupCache: parentCtx?.dedupCache,
   };
 }
 

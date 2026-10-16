@@ -14,6 +14,7 @@ import {
   KEYCHAIN_ACCOUNTS,
   KEYCHAIN_PLACEHOLDER,
 } from "./keychain.ts";
+import { resolveSecret } from "@ashlr/config/secrets";
 
 export interface ToolHookRule {
   /** Glob pattern for tool name (e.g. "Bash", "File*") */
@@ -55,6 +56,73 @@ export interface Settings {
   toolTimeoutMs?: number;
   /** System prompt token budget cap (default: 50000) */
   systemPromptBudget?: number;
+
+  // ── Autonomous safety guards (default off) ────────────────────────────────
+
+  /**
+   * Route autonomous bash calls through `phantom exec -- <cmd>` so real
+   * credentials are injected at the network edge rather than appearing in
+   * prompts or transcripts. Requires `phantom` on PATH and an initialized
+   * Phantom vault in the project. Degrades gracefully when unavailable.
+   * Default: false.
+   */
+  phantomSealed?: boolean;
+
+  /**
+   * Scan dependency-install commands (npm/bun/pnpm/yarn/pip install) via
+   * binshield before execution. Blocks on critical/high verdict; allows
+   * otherwise. Degrades gracefully (fail-open) when binshield is unreachable.
+   * Default: false.
+   */
+  binshieldGate?: boolean;
+
+  /** Base URL for the binshield scan API. Default: https://api.binshield.dev */
+  binshieldUrl?: string;
+
+  /** Optional API key for authenticated binshield requests. */
+  binshieldKey?: string;
+
+  // ── Streaming tool result compression ────────────────────────────────────
+
+  /**
+   * Maximum bytes a tool result may occupy in the LLM context before
+   * streaming compression activates. Results up to this size are emitted
+   * verbatim. Default: 15360 (15 KB).
+   */
+  toolResultMaxBytes?: number;
+
+  /**
+   * After the verbatim head is emitted, every additional chunk of this size
+   * is summarised inline as `[SUMMARY: N lines, pattern P detected]` rather
+   * than being forwarded to the LLM context. Default: 2048 (2 KB).
+   */
+  toolChunkSummaryThreshold?: number;
+
+  /**
+   * Record a replayable, branchable timeline of every agent step (tool name,
+   * args, result, and a cheap working-tree marker) to
+   * `~/.ashlrcode/timelines/<sessionId>.jsonl`. Enables scrubbing backward,
+   * forking from any step, and re-running. Never throws; bounded per session.
+   * Default: false.
+   */
+  timeTravel?: boolean;
+
+  /**
+   * Live GenAI-OTel HUD: stream a span per LLM call and per tool call from the
+   * autonomous loop to ashlr-pulse, plus a compact in-TUI cost/token summary.
+   * Telemetry is best-effort and never blocks the agent. Default: false.
+   */
+  pulseHud?: boolean;
+
+  /**
+   * ashlr-pulse OTLP endpoint. Accepts a base Pulse URL (the
+   * `/api/otlp/v1/traces` path is appended automatically) or the full traces
+   * URL. Falls back to the `PULSE_OTLP_URL` env var when unset.
+   */
+  pulseOtlpUrl?: string;
+
+  /** Optional bearer token for the Pulse OTLP endpoint (or PULSE_OTLP_API_KEY). */
+  pulseOtlpApiKey?: string;
 }
 
 let configDirOverride: string | null = null;
@@ -146,9 +214,9 @@ export async function saveSettings(settings: Settings): Promise<void> {
 }
 
 function getDefaultSettings(): Settings {
-  // Filter out empty strings from env vars — treat "" as unset
-  const xaiKey = process.env.XAI_API_KEY?.trim() || "";
-  const anthropicKey = process.env.ANTHROPIC_API_KEY?.trim() || "";
+  // Resolve API keys — phantom vault first, then process.env (resolveSecret handles both)
+  const xaiKey = resolveSecret("XAI_API_KEY") ?? "";
+  const anthropicKey = resolveSecret("ANTHROPIC_API_KEY") ?? "";
 
   return {
     providers: {

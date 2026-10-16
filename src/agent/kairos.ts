@@ -14,6 +14,7 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolContext } from "../tools/types.ts";
 import type { Message } from "../providers/types.ts";
 import { generateAwaySummary, formatAwaySummaryForNotification } from "./away-summary.ts";
+import { sendNotification } from "../ui/notifications.ts";
 
 /* ── Configuration ──────────────────────────────────────────────── */
 
@@ -92,27 +93,6 @@ function getAutonomyPrompt(level: AutonomyLevel): string {
       return "\n\n[COLLABORATIVE MODE — User is watching]\nBe more collaborative. Ask before making significant changes. Explain your reasoning. Use AskUser for decisions.";
     case "autonomous":
       return "\n\n[AUTONOMOUS MODE]\nYou are running autonomously. Complete tasks independently but use good judgment about what requires confirmation.";
-  }
-}
-
-/* ── Push notifications ────────────────────────────────────────── */
-
-/**
- * Send a macOS notification. No-op on other platforms.
- * Uses osascript to display a native notification center alert.
- */
-async function sendNotification(title: string, message: string): Promise<void> {
-  if (process.platform !== "darwin") return;
-  try {
-    const escaped = message.replace(/"/g, '\\"').slice(0, 200);
-    const escapedTitle = title.replace(/"/g, '\\"');
-    const proc = Bun.spawn(
-      ["osascript", "-e", `display notification "${escaped}" with title "${escapedTitle}"`],
-      { stdout: "pipe", stderr: "pipe" },
-    );
-    await proc.exited;
-  } catch {
-    // Notification failure is not critical
   }
 }
 

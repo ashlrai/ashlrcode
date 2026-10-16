@@ -11,7 +11,13 @@ import { coreCommands } from "./core.ts";
 import { gitCommands } from "./git.ts";
 import { CommandRegistry } from "./registry.ts";
 import { sessionCommands } from "./session.ts";
+import { budgetCommands } from "./session-commands.ts";
 import { genomeCommands } from "../genome/commands.ts";
+import { traceCommands } from "./trace.ts";
+import { toolGraphCommands } from "./tool-graph.ts";
+import { toolBatchStatsCommands } from "./tool-batch-stats.ts";
+import { toolRetryDebugCommands } from "./tool-retry-debug.ts";
+import { toolWarmupCommands } from "./tool-warmup.ts";
 
 /**
  * Create a fully populated command registry with all built-in commands.
@@ -47,6 +53,7 @@ export function createCommandRegistry(deps: {
 
   registry.registerAll(agentCommands());
   registry.registerAll(sessionCommands());
+  registry.registerAll(budgetCommands());
 
   registry.registerAll(
     autopilotCommands({
@@ -59,6 +66,11 @@ export function createCommandRegistry(deps: {
   );
 
   registry.registerAll(genomeCommands());
+  registry.registerAll(traceCommands());
+  registry.registerAll(toolGraphCommands());
+  registry.registerAll(toolBatchStatsCommands());
+  registry.registerAll(toolRetryDebugCommands());
+  registry.registerAll(toolWarmupCommands());
 
   return registry;
 }
