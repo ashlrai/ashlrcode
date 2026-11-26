@@ -2,13 +2,13 @@
 
 **Multi-provider AI coding agent for the terminal.**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)]()
-[![Tests](https://img.shields.io/badge/tests-367%2B%20passing-green)]()
+[![Version](https://img.shields.io/npm/v/ashlrcode)](https://www.npmjs.com/package/ashlrcode)
+[![CI](https://github.com/ashlrai/ashlrcode/actions/workflows/ci.yml/badge.svg)](https://github.com/ashlrai/ashlrcode/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**45+ tools | 18 skills | 42+ slash commands | 6 providers | 367+ tests | 130 source files**
+**45+ tools | 18 skills | 42+ slash commands | 6 providers**
 
 ---
 
@@ -38,12 +38,8 @@ ac --migrate                # import MCP servers, skills, and sessions from Clau
 
 ### From source
 
-```bash
-git clone https://github.com/ashlrai/ashlrcode.git
-cd ashlrcode
-bun install
-bun link                    # makes 'ac' available globally
-```
+Follow the [contributor setup](CONTRIBUTING.md#dev-environment-setup), then
+run `bun link` from the AshlrCode checkout to make `ac` available globally.
 
 ---
 
@@ -310,16 +306,19 @@ Species: penguin, cat, ghost, owl, robot, dragon, axolotl (epic), capybara (lege
 
 ## Development
 
+Source builds use the sibling package checkouts listed under
+`dependencies` in [package.json](package.json). See the
+[contributor setup](CONTRIBUTING.md#dev-environment-setup) for the build order.
+
 ```bash
 git clone https://github.com/ashlrai/ashlrcode.git
 cd ashlrcode
-bun install
+bun install --frozen-lockfile
 
-bun run dev                 # watch mode
-bun run start               # run CLI
-bun test                    # 367+ tests, ~10s
-bunx tsc --noEmit           # type check
-bun run build               # bundle to dist/
+bun run dev                 # run the CLI from source
+bun test                    # run the test suite
+bun run typecheck           # type check
+bun run build               # compile the CLI to dist/ac
 ```
 
 ### Architecture
