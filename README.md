@@ -38,12 +38,8 @@ ac --migrate                # import MCP servers, skills, and sessions from Clau
 
 ### From source
 
-```bash
-git clone https://github.com/ashlrai/ashlrcode.git
-cd ashlrcode
-bun install
-bun link                    # makes 'ac' available globally
-```
+Follow the [contributor setup](CONTRIBUTING.md#dev-environment-setup), then
+run `bun link` from the AshlrCode checkout to make `ac` available globally.
 
 ---
 
@@ -310,10 +306,14 @@ Species: penguin, cat, ghost, owl, robot, dragon, axolotl (epic), capybara (lege
 
 ## Development
 
+Source builds use the sibling package checkouts listed under
+`dependencies` in [package.json](package.json). See the
+[contributor setup](CONTRIBUTING.md#dev-environment-setup) for the build order.
+
 ```bash
 git clone https://github.com/ashlrai/ashlrcode.git
 cd ashlrcode
-bun install
+bun install --frozen-lockfile
 
 bun run dev                 # run the CLI from source
 bun test                    # run the test suite

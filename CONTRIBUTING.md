@@ -4,10 +4,18 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ## Dev Environment Setup
 
+Place the `ashlr-auth`, `ashlr-config`, `ashlr-cost`, and
+`ashlr-core-efficiency` checkouts next to `ashlrcode`. Your GitHub account
+needs access to those repositories. From their common parent directory,
+prepare the sibling packages before installing AshlrCode:
+
 ```bash
-git clone https://github.com/ashlrai/ashlrcode.git
+for repo in ashlr-config ashlr-cost ashlr-core-efficiency; do
+  (cd "$repo" && bun install --frozen-lockfile && bun run build) || exit
+done
+
 cd ashlrcode
-bun install
+bun install --frozen-lockfile
 bun link    # makes 'ac' and 'ashlrcode' available globally
 ```
 
