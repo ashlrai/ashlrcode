@@ -243,12 +243,15 @@ export function aggregateStats(events: AuditEvent[]): AuditStats {
   let toolsBlocked = 0;
 
   for (const ev of events) {
+    const toolName = ev.toolName;
     const tierKey = String(ev.tier);
     tiersSet.add(ev.tier);
     turnsSet.add(ev.turn);
 
-    const toolCounts = byTool[ev.toolName] ??= { allowed: 0, blocked: 0 };
-    const tierCounts = byTier[tierKey] ??= { allowed: 0, blocked: 0 };
+    byTool[toolName] ??= { allowed: 0, blocked: 0 };
+    byTier[tierKey] ??= { allowed: 0, blocked: 0 };
+    const toolCounts = byTool[toolName];
+    const tierCounts = byTier[tierKey];
 
     if (ev.verdict === "allow") {
       toolsAllowed++;
