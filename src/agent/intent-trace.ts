@@ -170,6 +170,13 @@ export type TraceEvent =
   | ReplayStartEvent
   | ReplayStepEvent;
 
+type TraceEventInput = {
+  [Kind in TraceEventKind]: Omit<
+    Extract<TraceEvent, { kind: Kind }>,
+    "seq" | "at" | "turn" | "sessionId"
+  >;
+}[TraceEventKind];
+
 // ── Flag gating ───────────────────────────────────────────────────────────────
 
 let _enabledCache: boolean | null = null;
@@ -254,7 +261,7 @@ export function approxTokens(text: string): number {
 async function appendEvent(
   sessionId: string,
   turn: number,
-  partial: Omit<TraceEvent, "seq" | "at" | "turn" | "sessionId">
+  partial: TraceEventInput
 ): Promise<void> {
   try {
     if (!isIntentTraceEnabled()) return;
@@ -267,7 +274,7 @@ async function appendEvent(
     _seqCounters.set(sessionId, seq + 1);
 
     const event: TraceEvent = {
-      ...(partial as TraceEvent),
+      ...partial,
       seq,
       at: new Date().toISOString(),
       turn,

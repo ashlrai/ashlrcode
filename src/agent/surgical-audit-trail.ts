@@ -247,19 +247,17 @@ export function aggregateStats(events: AuditEvent[]): AuditStats {
     tiersSet.add(ev.tier);
     turnsSet.add(ev.turn);
 
-    // byTool
-    if (!byTool[ev.toolName]) byTool[ev.toolName] = { allowed: 0, blocked: 0 };
-    // byTier
-    if (!byTier[tierKey]) byTier[tierKey] = { allowed: 0, blocked: 0 };
+    const toolCounts = byTool[ev.toolName] ??= { allowed: 0, blocked: 0 };
+    const tierCounts = byTier[tierKey] ??= { allowed: 0, blocked: 0 };
 
     if (ev.verdict === "allow") {
       toolsAllowed++;
-      byTool[ev.toolName].allowed++;
-      byTier[tierKey].allowed++;
+      toolCounts.allowed++;
+      tierCounts.allowed++;
     } else {
       toolsBlocked++;
-      byTool[ev.toolName].blocked++;
-      byTier[tierKey].blocked++;
+      toolCounts.blocked++;
+      tierCounts.blocked++;
       if (ev.reason) {
         reasons[ev.reason] = (reasons[ev.reason] ?? 0) + 1;
       }

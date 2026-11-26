@@ -60,11 +60,9 @@ import type { Tool, ToolContext } from "../tools/types.ts";
 // Fixtures
 // ---------------------------------------------------------------------------
 
-import singleLineFix from "./fixtures/surgical-single-line-fix.json" assert { type: "json" };
-import multiFileRefactor from "./fixtures/surgical-multi-file-refactor.json" assert { type: "json" };
-import addFunctions from "./fixtures/surgical-add-functions.json" assert { type: "json" };
-import complexFeature from "./fixtures/surgical-complex-feature.json" assert { type: "json" };
-import readOnlyExplore from "./fixtures/surgical-read-only-explore.json" assert { type: "json" };
+import singleLineFix from "./fixtures/surgical-single-line-fix.json";
+import multiFileRefactor from "./fixtures/surgical-multi-file-refactor.json";
+import readOnlyExplore from "./fixtures/surgical-read-only-explore.json";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -485,16 +483,14 @@ describe("ToolRegistry + surgical gate integration", () => {
 
 describe("Fixture: single-line-fix (tier 2)", () => {
   test("all allowed tools in fixture pass gate at tier 2", () => {
-    const fixture = singleLineFix as { allowedTools: string[]; blockedTools: string[] };
-    for (const tool of fixture.allowedTools) {
+    for (const tool of singleLineFix.allowedTools) {
       const r = checkSurgicalToolGate(tool, {}, gateOpts(2));
       expect(r.verdict).toBe("allow");
     }
   });
 
   test("blocked tools in fixture are actually blocked at tier 2", () => {
-    const fixture = singleLineFix as { allowedTools: string[]; blockedTools: string[] };
-    for (const tool of fixture.blockedTools) {
+    for (const tool of singleLineFix.blockedTools) {
       const r = checkSurgicalToolGate(tool, {}, gateOpts(2));
       // Note: Write and Agent are blocked at tier 2; Bash is blocked at tier 2
       expect(r.verdict).toBe("block");
@@ -504,8 +500,7 @@ describe("Fixture: single-line-fix (tier 2)", () => {
 
 describe("Fixture: multi-file-refactor (tier 4)", () => {
   test("all allowed tools pass gate at tier 4", () => {
-    const fixture = multiFileRefactor as { allowedTools: string[] };
-    for (const tool of fixture.allowedTools) {
+    for (const tool of multiFileRefactor.allowedTools) {
       const r = checkSurgicalToolGate(tool, {}, gateOpts(4));
       expect(r.verdict).toBe("allow");
     }
@@ -519,16 +514,14 @@ describe("Fixture: multi-file-refactor (tier 4)", () => {
 
 describe("Fixture: read-only-explore (tier 1)", () => {
   test("all allowed tools pass gate at tier 1", () => {
-    const fixture = readOnlyExplore as { allowedTools: string[] };
-    for (const tool of fixture.allowedTools) {
+    for (const tool of readOnlyExplore.allowedTools) {
       const r = checkSurgicalToolGate(tool, {}, gateOpts(1));
       expect(r.verdict).toBe("allow");
     }
   });
 
   test("blocked tools in fixture are blocked at tier 1", () => {
-    const fixture = readOnlyExplore as { blockedTools: string[] };
-    for (const tool of fixture.blockedTools) {
+    for (const tool of readOnlyExplore.blockedTools) {
       const r = checkSurgicalToolGate(tool, {}, gateOpts(1));
       expect(r.verdict).toBe("block");
     }

@@ -153,8 +153,7 @@ export async function handleSurgicalWarmup(
   const t0 = Date.now();
 
   // Build a lightweight CodebaseContext from whatever the session knows
-  const cwd = (ctx.state.cwd as string | undefined) ?? process.cwd();
-  const codebaseCtx = { cwd };
+  const codebaseCtx = { cwd: ctx.state.toolContext.cwd };
 
   let computed = 0;
   try {

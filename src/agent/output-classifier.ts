@@ -307,8 +307,7 @@ export function findPausePoint(
         const line = lines[i]!;
         offset += line.length + 1;
         // Extract file prefix (before first :digit: segment)
-        const m = line.match(/^([^:\d][^:]*?):\d+:/);
-        const filePrefix = m ? m[1] : null;
+        const filePrefix = line.match(/^([^:\d][^:]*?):\d+:/)?.[1] ?? null;
 
         if (currentFile !== null && filePrefix !== null && filePrefix !== currentFile) {
           // File section changed — pause at end of previous line
