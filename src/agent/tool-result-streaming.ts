@@ -457,13 +457,13 @@ export function generateChunkSummary(
       try {
         const parsed = JSON.parse(chunk.text);
         if (Array.isArray(parsed)) {
-          const errCount = parsed.filter(
-            (item: unknown) =>
-              typeof item === "object" &&
-              item !== null &&
-              ("error" in (item as object) || "status" in (item as object) &&
-                (item as Record<string, unknown>)["status"] >= 400)
-          ).length;
+          const errCount = parsed.filter((item: unknown) => {
+            if (typeof item !== "object" || item === null) return false;
+            if ("error" in item) return true;
+            const status = "status" in item ? item.status : undefined;
+            return (typeof status === "number" || typeof status === "string")
+              && Number(status) >= 400;
+          }).length;
           return `[json array: ${parsed.length} item(s)${errCount > 0 ? `, ${errCount} error(s)` : ""}, ${kb} KB]`;
         }
       } catch { /* partial */ }

@@ -32,14 +32,8 @@ function padL(s: string, n: number): string {
  * Uses unicode block chars for a dense bar.
  */
 function bar(fill: number, width = 20): string {
-  const filled = Math.round(Math.clamp(fill, 0, 1) * width);
+  const filled = Math.round(Math.max(0, Math.min(1, fill)) * width);
   return "█".repeat(filled) + "░".repeat(width - filled);
-}
-
-// Polyfill Math.clamp for safety
-if (typeof (Math as any).clamp !== "function") {
-  (Math as any).clamp = (v: number, lo: number, hi: number) =>
-    Math.max(lo, Math.min(hi, v));
 }
 
 /**

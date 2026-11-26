@@ -1,0 +1,4 @@
+{
+  "allowedTools": ["Read", "Grep", "Glob", "LS", "Edit"],
+  "blockedTools": ["Write", "Bash", "Agent", "Coordinate"]
+}
