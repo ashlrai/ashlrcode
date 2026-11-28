@@ -2,13 +2,12 @@
 
 **Multi-provider AI coding agent for the terminal.**
 
-[![Version](https://img.shields.io/badge/version-2.0.0-blue)]()
-[![Tests](https://img.shields.io/badge/tests-367%2B%20passing-green)]()
+[![npm version](https://img.shields.io/npm/v/ashlrcode)](https://www.npmjs.com/package/ashlrcode)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)]()
 [![Runtime](https://img.shields.io/badge/runtime-Bun-black)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 
-**45+ tools | 18 skills | 42+ slash commands | 6 providers | 367+ tests | 130 source files**
+[Project site](https://ashlr.ai/ashlrcode) · [AshlrAI open-source ecosystem](https://github.com/ashlrai#the-open-source-ecosystem)
 
 ---
 
